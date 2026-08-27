@@ -130,11 +130,16 @@ pub struct TargetFileStatus {
     pub found_at: Option<String>,
 }
 
-/// What the destination holds today: lookup key -> path as stored, and size.
+/// What the destination holds today: lookup key -> path as stored, its size,
+/// and when it changed.
+///
+/// The modification time is carried from the directory walk so the digest
+/// cache never has to look at the file a second time.
 #[derive(Debug, Clone)]
 struct TargetFile {
     path: String,
     size: u64,
+    modified: i64,
 }
 
 type Inventory = HashMap<String, TargetFile>;
@@ -167,12 +172,14 @@ fn read_inventory(root: &Path) -> Result<Inventory> {
                     .context("A destination entry escaped the destination root.")?
                     .to_string_lossy(),
             );
-            let size = entry.metadata()?.len();
+            let metadata = entry.metadata()?;
+            let stat = crate::fingerprint::Stat::of(&metadata);
             files.insert(
                 relative.to_lowercase(),
                 TargetFile {
                     path: relative,
-                    size,
+                    size: stat.size,
+                    modified: stat.modified,
                 },
             );
         }
@@ -344,6 +351,8 @@ impl<'a> PlanBuilder<'a> {
                 TargetFile {
                     path: moved_path.clone(),
                     size: file.size,
+                    // A move does not change the file, only where it sits.
+                    modified: file.modified,
                 },
             );
             self.result.push(TransferResultEntry {
@@ -579,20 +588,30 @@ fn compare_folder_file(root: &Path, relative_path: &str, source: &Path) -> Resul
 /// has actually changed.
 fn content_index(
     connection: &Connection,
+    cache: &mut crate::fingerprint::DigestCache,
     root: &Path,
     on_progress: crate::fingerprint::OnProgress<'_>,
 ) -> Result<HashMap<String, Vec<String>>> {
     let inventory = read_inventory(root)?;
     let paths = inventory
         .values()
-        .map(|file| root.join(&file.path).to_string_lossy().into_owned())
+        .map(|file| {
+            (
+                root.join(&file.path).to_string_lossy().into_owned(),
+                crate::fingerprint::Stat {
+                    size: file.size,
+                    modified: file.modified,
+                },
+            )
+        })
         .collect::<Vec<_>>();
 
     // Every location, not just one: the same contents may sit both where this
     // profile would write them and somewhere else, and which of those is true
     // decides whether there is anything to do.
     let mut index: HashMap<String, Vec<String>> = HashMap::new();
-    for fingerprint in crate::fingerprint::fingerprint_all(connection, &paths, on_progress)? {
+    for fingerprint in crate::fingerprint::fingerprint_all(connection, cache, &paths, on_progress)?
+    {
         let relative = Path::new(&fingerprint.path)
             .strip_prefix(root)
             .map(|value| to_posix(&value.to_string_lossy()))
@@ -644,36 +663,50 @@ pub fn compare_files(
         } else {
             canonical(&target_path)?
         };
+        // Loaded once for the whole call: one query instead of one per file.
+        let mut cache = crate::fingerprint::DigestCache::load(connection)?;
         // Built once for the whole call, from content rather than filenames.
         let by_content = if image_target {
             HashMap::new()
         } else {
-            content_index(connection, &root, on_progress)?
+            content_index(connection, &mut cache, &root, on_progress)?
         };
 
         operations
             .into_iter()
             .map(|operation| {
                 let source = Path::new(&operation.source);
-                if !matches_indexed_size(source, operation.size) {
+                // Looked at once. The size check and the digest both need this,
+                // and over a few thousand files a second look is not free.
+                let metadata = fs::metadata(source)
+                    .ok()
+                    .filter(|metadata| metadata.is_file())
+                    .filter(|metadata| metadata.len() == operation.size);
+                let Some(metadata) = metadata else {
                     return Ok(TargetFileStatus {
                         source: operation.source,
                         relative_path: operation.relative_path,
                         status: FileStatus::Unavailable,
                         found_at: None,
                     });
-                }
+                };
                 safe_relative_path(&operation.relative_path)?;
 
                 // Content first. Where a title is filed, and what it is called,
                 // are output decisions and must not change whether the media
                 // already holds it.
-                let locations = if image_target {
+                let digest = if image_target {
                     None
                 } else {
-                    crate::fingerprint::cached_digest(connection, source)?
-                        .and_then(|fingerprint| by_content.get(&fingerprint.sha256))
+                    Some(cache.digest(
+                        connection,
+                        source,
+                        crate::fingerprint::Stat::of(&metadata),
+                    )?)
                 };
+                let locations = digest
+                    .as_deref()
+                    .and_then(|sha256| by_content.get(sha256));
                 if let Some(locations) = locations {
                     let wanted = relative_key(&operation.relative_path);
                     // Already where this profile would put it, so there is
