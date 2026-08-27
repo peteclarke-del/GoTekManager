@@ -21,6 +21,7 @@ import type {
   TargetFileStatus,
 } from '../../domain/types'
 import { compareTargetFiles } from '../../native/commands'
+import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
 import type { TablePreferences } from '../../state/useWorkspace'
 
 /** How a library title compares with what is already on the destination. */
@@ -104,6 +105,7 @@ export function LocalLibrary({
   const [statuses, setStatuses] = useState<Record<string, TargetFileStatus>>({})
   const [checking, setChecking] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
+  const fingerprinting = useFingerprintProgress()
 
   const accepted = useMemo(
     () => acceptedFormats(platform.id, profile.firmwareId),
@@ -421,14 +423,21 @@ export function LocalLibrary({
               on the destination, filed somewhere else
             </b>
             <span>
-              This profile writes to <code>{profileFolder || 'the root'}/</code> using{' '}
-              {profile.naming === 'oled' ? 'shortened OLED' : 'original'} names, which is not
-              how the destination is organised
+              Matched on contents, so the names and folders do not have to agree
               {sampleFoundAt ? <> — one of them is at <code>{sampleFoundAt}</code></> : null}.
-              Adding them would write a second copy. Change this profile's layout and naming
-              to match the destination and they will show as already there.
+              This profile would write them to <code>{profileFolder || 'the root'}/</code>{' '}
+              using {profile.naming === 'oled' ? 'shortened OLED' : 'original'} names, which
+              would make a second copy. Change its layout and naming to match the
+              destination and they will show as already in place.
             </span>
           </div>
+        )}
+        {fingerprinting && (
+          <InlineStatus kind="info">
+            Reading contents to identify titles: {fingerprinting.done} of{' '}
+            {fingerprinting.total}. Each file is read once and remembered, so this only
+            happens again when a file changes.
+          </InlineStatus>
         )}
         <div className="table-wrap">
           <table className="library-table">
