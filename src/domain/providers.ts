@@ -12,10 +12,20 @@
  * below was checked against the live API rather than guessed, and the item
  * counts in the comments are what it returned.
  *
- * Two sites are known to refuse crawling outright and must not be added as
- * defaults: `spectrumcomputing.co.uk` and `bbcmicro.co.uk` both disallow all
- * user agents in `robots.txt`. The website adapter would refuse them at
- * runtime anyway; naming them here saves the next person the search.
+ * Checked against the live `robots.txt` of every candidate, reading the
+ * wildcard group the way a crawler does:
+ *
+ * - `bbcmicro.co.uk` refuses a generic client outright (`Disallow: /`, with
+ *   Googlebot named separately). Only reachable with the per-source override.
+ * - `spectrumcomputing.co.uk` refuses everything except `/entry/`, so a scan
+ *   started at an entry page is permitted and the rest of the site is not.
+ * - `itch.io` permits crawling apart from `/search`, `/checkout/` and the
+ *   download endpoints — which is to say, apart from the parts a tool like
+ *   this one would want. It is a storefront selling other people's work, so
+ *   it is not shipped as a default.
+ * - `cpc-power.com`, `plus4world.powweb.com`, `atarimania.com`, `aminet.net`,
+ *   `cpcwiki.eu` and `acornelectron.co.uk` all permit crawling, and can be
+ *   added without any override.
  */
 
 import type { OnlineProvider, ProviderAdapter } from './types'

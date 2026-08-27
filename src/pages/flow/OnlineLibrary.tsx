@@ -460,6 +460,19 @@ function AddSiteDialog({
         </select>
       </label>
       <label>
+        {adapter === 'htmlSite' ? 'Starting page URL' : 'Catalogue URL'}
+        <input
+          type="url"
+          placeholder={
+            adapter === 'htmlSite'
+              ? 'https://example.org/software/'
+              : 'https://example.org/gotek-catalogue.json'
+          }
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+        />
+      </label>
+      <label>
         Applies to
         <select value={scope} onChange={(event) => setScope(event.target.value)}>
           <option value="">All platforms</option>
@@ -501,24 +514,14 @@ function AddSiteDialog({
           </p>
         </>
       )}
-      <label>
-        {adapter === 'htmlSite' ? 'Starting page URL' : 'Catalogue URL'}
-        <input
-          type="url"
-          placeholder={
-            adapter === 'htmlSite'
-              ? 'https://example.org/software/'
-              : 'https://example.org/gotek-catalogue.json'
-          }
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-        />
-      </label>
       <p className="feed-format">
         {adapter === 'htmlSite' ? (
           <>
             Inspection follows same-site catalogue pages to depth 2 and records direct
-            links in this platform's formats. The site's robots rules are enforced.
+            links in this platform's formats.{' '}
+            {ignoreRobots
+              ? 'This source ignores the site’s robots rules and is paced ten times slower.'
+              : 'The site’s robots rules are enforced.'}
           </>
         ) : (
           <>

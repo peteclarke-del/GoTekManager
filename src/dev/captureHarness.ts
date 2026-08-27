@@ -149,6 +149,13 @@ async function seed({ dispatch, setSettings, existingProfileIds }: CaptureContro
 }
 
 async function walkTheFlow(controls: CaptureControls) {
+  // The stored workspace arrives asynchronously and replaces whatever is in
+  // memory, so seeding before it lands would be quietly thrown away.
+  await waitFor(
+    'the stored workspace to load',
+    () => !document.body.textContent?.includes('Opening your library'),
+  )
+
   const profile = await seed(controls)
 
   // 1 · Profile
@@ -164,6 +171,18 @@ async function walkTheFlow(controls: CaptureControls) {
   await click('Choose sources')
   await waitFor('the library table', () => document.querySelector('.library-table tbody tr'))
   await capture('03-sources')
+
+  if (import.meta.env.VITE_CAPTURE_DIALOGS) {
+    await click('Find online')
+    await click('Add site')
+    await waitFor('the add-site dialog', () => document.querySelector('.modal .check-label'))
+    await sleep(400)
+    await capture('90-add-site')
+    // Close it and go back, so the rest of the walk is unaffected.
+    document.querySelector<HTMLButtonElement>('.modal-close')?.click()
+    await click('On this computer')
+    await waitFor('the library table', () => document.querySelector('.library-table tbody tr'))
+  }
 
   // 4 · Verify
   await click('Verify changes')
