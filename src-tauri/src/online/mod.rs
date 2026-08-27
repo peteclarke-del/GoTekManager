@@ -44,6 +44,18 @@ pub struct OnlineProvider {
     pub catalog_url: Option<String>,
     pub query: Option<String>,
     pub platform_id: Option<String>,
+    /// Inspect the site even though its robots.txt refuses.
+    ///
+    /// Off unless the user turned it on for this one source, having been told
+    /// what it means. Nothing ships with it set.
+    #[serde(default)]
+    pub ignore_robots: bool,
+    /// Identify as something other than this application.
+    ///
+    /// The default identifies the tool honestly, which is what lets an operator
+    /// see it in their logs and block it if they would rather not be scanned.
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -146,7 +158,7 @@ pub async fn refresh_provider(
     if safe_cache_part(&provider.id).is_empty() {
         return Err("Provider ID must contain letters or numbers.".into());
     }
-    let client = client()?;
+    let client = client(provider.user_agent.as_deref())?;
     let items = match provider.adapter {
         Adapter::InternetArchive => {
             archive_org::search(&client, &provider, &platform_name, &platform_id).await?
@@ -223,7 +235,7 @@ pub async fn browse_online_title(
         return Ok(vec![title]);
     }
     let extensions = normalise_extensions(extensions);
-    let client = client()?;
+    let client = client(provider.user_agent.as_deref())?;
     let metadata = archive_org::fetch_metadata(&client, &title.remote_id).await?;
     Ok(archive_org::item_files(
         &provider,
@@ -355,7 +367,7 @@ pub async fn download_online_title(
     extensions: Vec<String>,
 ) -> Result<CachedDownload> {
     let extensions = normalise_extensions(extensions);
-    let client = client()?;
+    let client = client(provider.user_agent.as_deref())?;
     let resolved = if provider.adapter == Adapter::InternetArchive {
         archive_org::resolve_download(&client, &title, &extensions).await?
     } else {

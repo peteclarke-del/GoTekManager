@@ -181,6 +181,7 @@ export function OnlineLibrary({
                 <small>
                   {adapterLabel(entry.adapter)} ·{' '}
                   {scopeLabel(entry, (id) => requirePlatform(id).name)}
+                  {entry.ignoreRobots ? ' · ignores robots.txt' : ''}
                 </small>
               </span>
             </button>
@@ -209,8 +210,10 @@ export function OnlineLibrary({
         <div className="provider-note">
           <b>Policy-aware inspection</b>
           <p>
-            Website scans stay on the selected host, obey robots.txt, inspect at most
-            100 pages, pace their requests, and record only supported image links.
+            Website scans stay on the selected host, inspect at most 100 pages, pace
+            their requests, and record only supported image links. They obey robots.txt
+            unless you have overridden it for a source, which is shown against that
+            source and is never set on one that ships with the application.
           </p>
         </div>
       </section>
@@ -434,6 +437,9 @@ function AddSiteDialog({
   // Most sources are machine-specific, so the platform being prepared is the
   // sensible default rather than "everything".
   const [scope, setScope] = useState<string>(platform.id)
+  const [ignoreRobots, setIgnoreRobots] = useState(false)
+  const [userAgent, setUserAgent] = useState('')
+  const [confirming, setConfirming] = useState(false)
   const valid = name.trim().length > 0 && url.startsWith('https://')
 
   return (
@@ -467,6 +473,34 @@ function AddSiteDialog({
       <p className="mode-note">
         A source for one machine only appears when that machine is being prepared.
       </p>
+      {adapter === 'htmlSite' && (
+        <>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={ignoreRobots}
+              onChange={(event) => {
+                // Turning it on asks first; turning it off never needs to.
+                if (event.target.checked) setConfirming(true)
+                else setIgnoreRobots(false)
+              }}
+            />
+            Ignore this site's robots.txt
+          </label>
+          <label>
+            Identify as
+            <input
+              value={userAgent}
+              placeholder="GoTekManager/0.1 (default)"
+              onChange={(event) => setUserAgent(event.target.value)}
+            />
+          </label>
+          <p className="mode-note">
+            Left empty, the scan names this application, which is what lets a site
+            recognise it and decide for itself.
+          </p>
+        </>
+      )}
       <label>
         {adapter === 'htmlSite' ? 'Starting page URL' : 'Catalogue URL'}
         <input
@@ -497,6 +531,16 @@ function AddSiteDialog({
       {url.length > 0 && !url.startsWith('https://') && (
         <p className="inline-error">Online sources must use an HTTPS address.</p>
       )}
+      {confirming && (
+        <RobotsOverrideWarning
+          site={url || 'this site'}
+          cancel={() => setConfirming(false)}
+          accept={() => {
+            setIgnoreRobots(true)
+            setConfirming(false)
+          }}
+        />
+      )}
       <button
         className="button"
         disabled={!valid}
@@ -507,12 +551,70 @@ function AddSiteDialog({
             adapter,
             catalogUrl: url.trim(),
             platformId: scope || undefined,
+            ignoreRobots: ignoreRobots || undefined,
+            userAgent: userAgent.trim() || undefined,
           })
         }
       >
         <Plus />
         Add site
       </button>
+    </Modal>
+  )
+}
+
+/**
+ * Asked before a site's robots.txt is disregarded.
+ *
+ * Deliberately blunt and deliberately not the default. A `robots.txt` is the
+ * operator saying what they want; overriding it is a choice the person at the
+ * keyboard makes about their own traffic and their own risk, so it is worth
+ * one clear sentence rather than a checkbox nobody reads.
+ */
+function RobotsOverrideWarning({
+  site,
+  cancel,
+  accept,
+}: {
+  site: string
+  cancel: () => void
+  accept: () => void
+}) {
+  return (
+    <Modal title="Ignore this site's robots.txt?" onClose={cancel}>
+      <p>
+        <code>{site}</code> publishes a <code>robots.txt</code> asking automated tools
+        not to read it. Turning this on scans it anyway.
+      </p>
+      <p className="mode-note">
+        Things worth knowing before you do:
+      </p>
+      <ul className="plan-files">
+        <li>
+          It may breach the site's terms of use. That is between you and them; this
+          application cannot judge it for you.
+        </li>
+        <li>
+          Your address may be rate-limited or blocked, and hobby archives are often run
+          by one person paying for the bandwidth.
+        </li>
+        <li>
+          On a storefront, links found this way may point at paid content. Downloading
+          it without paying is not something the licence you were offered allows.
+        </li>
+        <li>
+          Scans with this on are paced ten times slower, and stay on the one site, at
+          most 100 pages deep.
+        </li>
+      </ul>
+      <div className="flow-actions">
+        <button className="button secondary" onClick={cancel}>
+          Leave it alone
+        </button>
+        <button className="button danger" onClick={accept}>
+          Scan anyway, at my own risk
+        </button>
+      </div>
     </Modal>
   )
 }

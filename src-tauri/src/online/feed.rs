@@ -59,6 +59,8 @@ mod tests {
             catalog_url: Some("https://example.org/bbc.json".into()),
             query: None,
             platform_id: None,
+            ignore_robots: false,
+            user_agent: None,
         }
     }
 
