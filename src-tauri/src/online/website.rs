@@ -24,6 +24,11 @@ const MAX_DOWNLOADS: usize = 1000;
 const MAX_DEPTH: usize = 2;
 /// Courtesy delay between requests to the same host.
 const REQUEST_DELAY: Duration = Duration::from_millis(100);
+/// The delay used when a site's robots.txt has been overridden.
+///
+/// Ten times slower on purpose. If the operator's stated preference is being
+/// ignored, the least this can do is cost them almost nothing to serve.
+const OVERRIDE_DELAY: Duration = Duration::from_millis(1000);
 
 const PAGE_EXTENSIONS: [&str; 5] = ["html", "htm", "php", "asp", "aspx"];
 
@@ -63,17 +68,34 @@ pub async fn inspect(
             .context("A website provider requires a starting URL.")?,
     )?;
 
-    let mut robots_url = start.clone();
-    robots_url.set_path("/robots.txt");
-    robots_url.set_query(None);
-    robots_url.set_fragment(None);
-    let robots = match client.get(robots_url).send().await {
-        Ok(response) if response.status().is_success() => response.text().await.unwrap_or_default(),
-        _ => String::new(),
+    // With the override on, robots.txt is not fetched at all: reading it only
+    // to disregard it would be theatre.
+    let robots = if provider.ignore_robots {
+        String::new()
+    } else {
+        let mut robots_url = start.clone();
+        robots_url.set_path("/robots.txt");
+        robots_url.set_query(None);
+        robots_url.set_fragment(None);
+        match client.get(robots_url).send().await {
+            Ok(response) if response.status().is_success() => {
+                response.text().await.unwrap_or_default()
+            }
+            _ => String::new(),
+        }
     };
-    if !robots::allows(&robots, start.path()) {
-        return Err("This site disallows automated catalogue inspection in robots.txt.".into());
+    if !provider.ignore_robots && !robots::allows(&robots, start.path()) {
+        return Err(
+            "This site disallows automated catalogue inspection in robots.txt. You can \
+             override that for this source, at your own risk, in its settings."
+                .into(),
+        );
     }
+    let delay = if provider.ignore_robots {
+        OVERRIDE_DELAY
+    } else {
+        REQUEST_DELAY
+    };
 
     let selector = Selector::parse("a[href]").map_err(|error| error.to_string())?;
     let origin = start.origin().ascii_serialization();
@@ -85,11 +107,13 @@ pub async fn inspect(
         if visited.len() >= MAX_PAGES || downloads.len() >= MAX_DOWNLOADS {
             break;
         }
-        if !visited.insert(url.as_str().to_string()) || !robots::allows(&robots, url.path()) {
+        if !visited.insert(url.as_str().to_string())
+            || (!provider.ignore_robots && !robots::allows(&robots, url.path()))
+        {
             continue;
         }
         if visited.len() > 1 {
-            tokio::time::sleep(REQUEST_DELAY).await;
+            tokio::time::sleep(delay).await;
         }
         let response = client
             .get(url.clone())
@@ -123,7 +147,7 @@ pub async fn inspect(
             };
             if link.scheme() != "https"
                 || link.origin().ascii_serialization() != origin
-                || !robots::allows(&robots, link.path())
+                || (!provider.ignore_robots && !robots::allows(&robots, link.path()))
             {
                 continue;
             }
@@ -184,6 +208,52 @@ mod tests {
         assert_eq!(link_label(&anchors[1], &second), "b.ssd");
     }
 
+    fn provider(ignore_robots: bool, user_agent: Option<&str>) -> crate::online::OnlineProvider {
+        crate::online::OnlineProvider {
+            id: "site".into(),
+            name: "Site".into(),
+            adapter: crate::online::Adapter::HtmlSite,
+            catalog_url: Some("https://example.org/games/".into()),
+            query: None,
+            platform_id: Some("bbc".into()),
+            ignore_robots,
+            user_agent: user_agent.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_override_is_off_unless_it_was_asked_for() {
+        // Nothing shipped enables it, and a source deserialised without the
+        // field must not acquire it.
+        let parsed: crate::online::OnlineProvider = serde_json::from_str(
+            r#"{"id":"s","name":"S","adapter":"htmlSite","catalogUrl":"https://x/"}"#,
+        )
+        .unwrap();
+
+        assert!(!parsed.ignore_robots);
+        assert!(parsed.user_agent.is_none());
+        assert!(!provider(false, None).ignore_robots);
+    }
+
+    #[test]
+    fn overriding_slows_the_crawl_right_down() {
+        // Disregarding the operator's stated preference is not a licence to
+        // cost them more; it is a reason to cost them less.
+        assert!(super::OVERRIDE_DELAY >= super::REQUEST_DELAY * 10);
+    }
+
+    #[test]
+    fn the_default_identity_names_the_application() {
+        use crate::online::http::USER_AGENT;
+        assert!(USER_AGENT.starts_with("GoTekManager/"));
+        // A source may override it; the application does not ship doing so.
+        assert!(provider(false, None).user_agent.is_none());
+        assert_eq!(
+            provider(true, Some("Custom/1.0")).user_agent.as_deref(),
+            Some("Custom/1.0")
+        );
+    }
+
     #[test]
     fn only_catalogue_page_types_are_followed() {
         assert!(PAGE_EXTENSIONS.contains(&"html"));
@@ -205,11 +275,13 @@ mod tests {
             catalog_url: Some("https://www.stairwaytohell.com/bbc/homepage.html".into()),
             query: None,
             platform_id: Some("bbc".into()),
+            ignore_robots: false,
+            user_agent: None,
         };
         let extensions = normalise_extensions(vec!["ssd".into(), "dsd".into(), "zip".into()]);
 
         let titles = tauri::async_runtime::block_on(super::inspect(
-            &client().unwrap(),
+            &client(None).unwrap(),
             &provider,
             "bbc",
             &extensions,

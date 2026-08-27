@@ -563,6 +563,23 @@ check('every shipped source is complete and points somewhere real', () => {
   }
 })
 
+check('nothing that ships ignores a site or disguises itself', () => {
+  // The override is a decision the person at the keyboard makes for one source.
+  // A default that arrived with it set would be making that decision for them,
+  // and for everyone who builds this repository.
+  for (const provider of defaultProviders) {
+    assert.ok(
+      !provider.ignoreRobots,
+      `${provider.id} ships ignoring robots.txt, which must never be a default`,
+    )
+    assert.equal(
+      provider.userAgent,
+      undefined,
+      `${provider.id} ships with a custom identity; the default names the application`,
+    )
+  }
+})
+
 check('the sidebar says what each source covers', () => {
   const name = (id: string) => requirePlatform(id).name
   const scoped = defaultProviders.find((provider) => provider.id === 'ia-cpc464')!
