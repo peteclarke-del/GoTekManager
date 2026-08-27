@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 /// Bumped whenever the schema changes; `migrate` moves an older file forward.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS items (
     indexed_at           INTEGER
 );
 CREATE INDEX IF NOT EXISTS items_by_source ON items (source);
+-- Content fingerprints, so identity is the contents rather than the filename.
+-- Keyed by path and validated against size and modification time, so a file is
+-- read once and re-read only when it actually changes.
+CREATE TABLE IF NOT EXISTS digests (
+    path     TEXT PRIMARY KEY,
+    size     INTEGER NOT NULL,
+    modified INTEGER NOT NULL,
+    sha256   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS digests_by_hash ON digests (sha256);
 CREATE TABLE IF NOT EXISTS collection_items (
     profile_id TEXT NOT NULL,
     item_id    TEXT NOT NULL,
@@ -158,6 +168,12 @@ fn database_path(app: &tauri::AppHandle) -> Result<PathBuf> {
     Ok(folder.join("gotek-manager.db"))
 }
 
+/// A prepared connection. Shared with the fingerprint cache, which lives in the
+/// same database so digests survive a restart.
+pub fn connection(app: &tauri::AppHandle) -> Result<Connection> {
+    open(app)
+}
+
 fn open(app: &tauri::AppHandle) -> Result<Connection> {
     let path = database_path(app)?;
     let connection = Connection::open(&path)
@@ -166,7 +182,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection> {
     Ok(connection)
 }
 
-fn prepare(connection: &Connection) -> Result<()> {
+pub fn prepare(connection: &Connection) -> Result<()> {
     // Write-ahead logging survives an abrupt exit far better than the default
     // journal, which matters for an application that talks to removable media.
     connection
@@ -195,8 +211,9 @@ fn migrate(connection: &Connection) -> Result<()> {
         )
         .into());
     }
-    // Version 0 is a database this build has just created, so there is nothing
-    // to move; later versions add their steps here.
+    // The schema statements above all use CREATE ... IF NOT EXISTS and have
+    // already run, so moving an older database forward is a matter of stamping
+    // it. A version that needs data reshaped adds its step here.
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }

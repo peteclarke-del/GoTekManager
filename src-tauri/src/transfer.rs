@@ -16,6 +16,7 @@ use crate::paths::{
     readers_equal, relative_key, safe_relative_path, safe_target_path, sha256_reader, to_posix,
 };
 use crate::task::blocking;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -569,25 +570,40 @@ fn compare_folder_file(root: &Path, relative_path: &str, source: &Path) -> Resul
     Ok(Some(readers_equal(&mut source_file, &mut target_file)?))
 }
 
-/// Indexes a destination by filename and size.
+/// Indexes a destination by the contents of its files.
 ///
-/// Used to answer "is this title already here, under some other name?" without
-/// reading a byte of content. Name and size together is not proof, and is
-/// reported as such, but it is the difference between telling someone they have
-/// none of their collection and telling them where it is.
-fn name_index(root: &Path) -> Result<HashMap<(String, u64), String>> {
-    Ok(read_inventory(root)?
-        .into_values()
-        .map(|file| {
-            let name = file
-                .path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&file.path)
-                .to_lowercase();
-            ((name, file.size), file.path)
-        })
-        .collect())
+/// This is what makes presence independent of naming: a title shortened for a
+/// two-line display, or filed under a different folder scheme, has the same
+/// digest and is recognised as the same disk image. Digests come from the
+/// cache, so the destination is fully read once and only re-read where a file
+/// has actually changed.
+fn content_index(
+    connection: &Connection,
+    root: &Path,
+    on_progress: crate::fingerprint::OnProgress<'_>,
+) -> Result<HashMap<String, Vec<String>>> {
+    let inventory = read_inventory(root)?;
+    let paths = inventory
+        .values()
+        .map(|file| root.join(&file.path).to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    // Every location, not just one: the same contents may sit both where this
+    // profile would write them and somewhere else, and which of those is true
+    // decides whether there is anything to do.
+    let mut index: HashMap<String, Vec<String>> = HashMap::new();
+    for fingerprint in crate::fingerprint::fingerprint_all(connection, &paths, on_progress)? {
+        let relative = Path::new(&fingerprint.path)
+            .strip_prefix(root)
+            .map(|value| to_posix(&value.to_string_lossy()))
+            .unwrap_or_else(|_| fingerprint.path.clone());
+        index.entry(fingerprint.sha256).or_default().push(relative);
+    }
+    // Deterministic, so the reported location does not depend on walk order.
+    for locations in index.values_mut() {
+        locations.sort();
+    }
+    Ok(index)
 }
 
 /// Reports, per source file, whether the destination already holds it.
@@ -596,11 +612,27 @@ fn name_index(root: &Path) -> Result<HashMap<(String, u64), String>> {
 /// library responsive while still giving an exact answer.
 #[tauri::command]
 pub async fn compare_target_files(
+    app: tauri::AppHandle,
     target: String,
     operations: Vec<TransferOperation>,
 ) -> Result<Vec<TargetFileStatus>> {
     blocking(move || {
-        let target_path = PathBuf::from(&target);
+        let connection = crate::store::connection(&app)?;
+        let mut report = crate::fingerprint::emitter(&app);
+        compare_files(&connection, &target, operations, &mut report)
+    })
+    .await
+}
+
+/// The comparison itself, with no dependency on a running application.
+pub fn compare_files(
+    connection: &Connection,
+    target: &str,
+    operations: Vec<TransferOperation>,
+    on_progress: crate::fingerprint::OnProgress<'_>,
+) -> Result<Vec<TargetFileStatus>> {
+    {
+        let target_path = PathBuf::from(target);
         let image_target = target_path.is_file();
         if !image_target && !target_path.is_dir() {
             return Err(
@@ -612,13 +644,11 @@ pub async fn compare_target_files(
         } else {
             canonical(&target_path)?
         };
-        // Built once for the whole call. A folder destination is walked a
-        // second time here, which is far cheaper than digesting a library that
-        // may sit on a network share.
-        let elsewhere = if image_target {
+        // Built once for the whole call, from content rather than filenames.
+        let by_content = if image_target {
             HashMap::new()
         } else {
-            name_index(&root)?
+            content_index(connection, &root, on_progress)?
         };
 
         operations
@@ -634,39 +664,56 @@ pub async fn compare_target_files(
                     });
                 }
                 safe_relative_path(&operation.relative_path)?;
+
+                // Content first. Where a title is filed, and what it is called,
+                // are output decisions and must not change whether the media
+                // already holds it.
+                let locations = if image_target {
+                    None
+                } else {
+                    crate::fingerprint::cached_digest(connection, source)?
+                        .and_then(|fingerprint| by_content.get(&fingerprint.sha256))
+                };
+                if let Some(locations) = locations {
+                    let wanted = relative_key(&operation.relative_path);
+                    // Already where this profile would put it, so there is
+                    // nothing to do, whatever other copies exist elsewhere.
+                    let here = locations
+                        .iter()
+                        .any(|location| relative_key(location) == wanted);
+                    return Ok(TargetFileStatus {
+                        source: operation.source,
+                        relative_path: operation.relative_path,
+                        status: if here {
+                            FileStatus::Identical
+                        } else {
+                            FileStatus::Elsewhere
+                        },
+                        found_at: (!here).then(|| locations[0].clone()),
+                    });
+                }
+
+                // The contents are not on the destination at all. The only
+                // question left is whether something else occupies the path
+                // this profile would write to.
                 let comparison = if image_target {
                     compare_image_file(&root, &operation.relative_path, source)?
                 } else {
                     compare_folder_file(&root, &operation.relative_path, source)?
                 };
-
-                // Only look further when the profile's own path holds nothing.
-                let found_at = if comparison.is_none() {
-                    let name = source
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_lowercase();
-                    elsewhere.get(&(name, operation.size)).cloned()
-                } else {
-                    None
-                };
-
                 Ok(TargetFileStatus {
                     source: operation.source,
                     relative_path: operation.relative_path,
-                    status: match (comparison, &found_at) {
-                        (Some(true), _) => FileStatus::Identical,
-                        (Some(false), _) => FileStatus::Different,
-                        (None, Some(_)) => FileStatus::Elsewhere,
-                        (None, None) => FileStatus::New,
+                    status: match comparison {
+                        None => FileStatus::New,
+                        Some(true) => FileStatus::Identical,
+                        Some(false) => FileStatus::Different,
                     },
-                    found_at,
+                    found_at: None,
                 })
             })
             .collect()
-    })
-    .await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,8 +1224,11 @@ mod checksum_tests {
 
 #[cfg(test)]
 mod elsewhere_tests {
-    use super::{compare_target_files, FileStatus, TransferOperation};
-    use std::{fs, path::PathBuf};
+    use super::{FileStatus, TransferOperation};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     fn fixture(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -1193,13 +1243,20 @@ mod elsewhere_tests {
     }
 
     fn compare(
-        target: &PathBuf,
+        target: &Path,
         operations: Vec<TransferOperation>,
     ) -> Vec<super::TargetFileStatus> {
-        tauri::async_runtime::block_on(compare_target_files(
-            target.to_string_lossy().into_owned(),
+        // An in-memory database gives the digest cache somewhere to live
+        // without needing a running application.
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::store::prepare(&connection).unwrap();
+        let mut quiet = crate::fingerprint::ignore_progress;
+        super::compare_files(
+            &connection,
+            &target.to_string_lossy(),
             operations,
-        ))
+            &mut quiet,
+        )
         .unwrap()
     }
 
@@ -1229,6 +1286,64 @@ mod elsewhere_tests {
             result[0].found_at.as_deref(),
             Some("Z/Zynaps (1987)(Hewson Consultants).dsk")
         );
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn a_shortened_name_is_still_recognised_as_the_same_disk_image() {
+        // The case that started this: OLED naming truncates the title, so the
+        // file on the media is called something else entirely. Identity is the
+        // contents, so the rename must not make a present title look missing.
+        let library = fixture("renamed-library");
+        let target = fixture("renamed-target");
+        let source = library.join("Zynaps (1987)(Hewson Consultants).dsk");
+        fs::write(&source, vec![0xC9u8; 194_816]).unwrap();
+        fs::create_dir(target.join("CPC464")).unwrap();
+        fs::copy(&source, target.join("CPC464/Zynaps (1987)(Hewson.dsk")).unwrap();
+
+        let result = compare(
+            &target,
+            vec![TransferOperation {
+                source: source.to_string_lossy().into_owned(),
+                // A different layout and the full name: neither matches what
+                // is on the media, but the contents do.
+                relative_path: "Z/Zynaps (1987)(Hewson Consultants).dsk".into(),
+                size: 194_816,
+            }],
+        );
+
+        assert_eq!(result[0].status, FileStatus::Elsewhere);
+        assert_eq!(
+            result[0].found_at.as_deref(),
+            Some("CPC464/Zynaps (1987)(Hewson.dsk")
+        );
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn a_different_release_of_the_same_title_is_not_mistaken_for_it() {
+        // Same name, same length, different contents: a cracked or alternate
+        // release. Content identity is what keeps these apart.
+        let library = fixture("release-library");
+        let target = fixture("release-target");
+        let source = library.join("Elite.dsk");
+        fs::write(&source, vec![0xAAu8; 194_816]).unwrap();
+        fs::create_dir(target.join("E")).unwrap();
+        fs::write(target.join("E/Elite.dsk"), vec![0xBBu8; 194_816]).unwrap();
+
+        let result = compare(
+            &target,
+            vec![TransferOperation {
+                source: source.to_string_lossy().into_owned(),
+                relative_path: "CPC464/Elite.dsk".into(),
+                size: 194_816,
+            }],
+        );
+
+        assert_eq!(result[0].status, FileStatus::New);
+        assert!(result[0].found_at.is_none());
         fs::remove_dir_all(library).unwrap();
         fs::remove_dir_all(target).unwrap();
     }
@@ -1283,7 +1398,7 @@ mod elsewhere_tests {
     }
 
     #[test]
-    fn a_same_named_file_of_a_different_size_is_not_claimed_to_be_the_same() {
+    fn a_same_named_file_of_different_contents_is_not_claimed_to_be_the_same() {
         let library = fixture("size-library");
         let target = fixture("size-target");
         let source = library.join("Elite.dsk");

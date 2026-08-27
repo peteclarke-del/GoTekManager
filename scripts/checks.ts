@@ -279,6 +279,40 @@ check('a custom layout drives the actual destination path', () => {
   assert.equal(operation.relativePath, 'BBC/E/Elite (1984).ssd')
 })
 
+check('naming and layout decide where a title is written, never what it is', () => {
+  // The property the whole comparison now rests on: two profiles that write the
+  // same title to completely different paths are still describing one file, so
+  // whether the media already holds it cannot depend on either setting.
+  const item: MediaItem = {
+    ...classifyMedia(entry('Zynaps (1987)(Hewson Consultants).dsk'), '/library'),
+    assignedPlatformId: 'cpc464',
+  }
+  const oledPlatform: Profile = {
+    ...bbcProfile,
+    platformId: 'cpc464',
+    folderLayout: 'platform',
+    naming: 'oled',
+  }
+  const originalInitial: Profile = {
+    ...bbcProfile,
+    platformId: 'cpc464',
+    folderLayout: 'custom',
+    folderTemplate: '{initial}',
+    naming: 'original',
+  }
+
+  const [a] = transferOperations([item], oledPlatform)
+  const [b] = transferOperations([item], originalInitial)
+
+  assert.equal(a.relativePath, 'CPC464/Zynaps (1987)(Hewson.dsk')
+  assert.equal(b.relativePath, 'Z/Zynaps (1987)(Hewson Consultants).dsk')
+  // Different destinations, same source file. Identity lives in the contents,
+  // which the native side compares; neither path is the file's identity.
+  assert.notEqual(a.relativePath, b.relativePath)
+  assert.equal(a.source, b.source)
+  assert.equal(a.size, b.size)
+})
+
 check('a display alias decides the written name and nothing else', () => {
   const item: MediaItem = {
     ...classifyMedia(entry('Elite (1984).ssd'), '/library'),
