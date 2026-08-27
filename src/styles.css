@@ -121,3 +121,10 @@ button[aria-pressed="true"]{box-shadow:inset 0 -4px 0 #a46800;background:#fff1c7
 .table-title small svg{width:11px;height:11px}
 .target-state.elsewhere{background:#e7f0ff;border-color:#4a72b8;color:#23456f}
 .dark .target-state.elsewhere,.system-theme .target-state.elsewhere{background:#1d2b40;border-color:#4a72b8;color:#a9c6f0}
+
+/* Selecting sources to narrow the title list */
+.managed-list .source-select{display:grid;justify-items:start;gap:2px;width:100%;min-width:0;padding:0;text-align:left}
+.managed-list .source-select b,.managed-list .source-select small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.managed-list>div.selected{border-color:#a46800;box-shadow:inset 0 0 0 1px #a46800}
+.dark .managed-list>div.selected,.system-theme .managed-list>div.selected{border-color:#f2b84a;box-shadow:inset 0 0 0 1px #f2b84a}
+.coverage-filter button:disabled{opacity:.45;cursor:default}

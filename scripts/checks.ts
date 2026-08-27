@@ -55,6 +55,7 @@ import {
   toPosix,
 } from '../src/domain/paths'
 import { isOnDestination, summarisePlan } from '../src/domain/plan'
+import { defaultProviders, providersFor, scopeLabel } from '../src/domain/providers'
 import { countBy, omitKey, upsertById } from '../src/domain/records'
 import type {
   FileEntry,
@@ -508,6 +509,67 @@ check('destination files this drive cannot load are flagged, not counted as ours
 
   assert.equal(summary.mismatches.length, 1)
   assert.deepEqual(summary.mismatchFormats, ['.atr'])
+})
+
+// ---------------------------------------------------------------------------
+// Online sources
+// ---------------------------------------------------------------------------
+
+check('every platform has at least one online source', () => {
+  for (const platform of platforms) {
+    const available = providersFor(defaultProviders, platform.id)
+    assert.ok(
+      available.length > 0,
+      `${platform.name} has no online source at all, not even the general one`,
+    )
+  }
+})
+
+check('a source for one machine never appears while preparing another', () => {
+  const forCpc = providersFor(defaultProviders, 'cpc464').map((provider) => provider.id)
+
+  // The BBC archives are useless here and must not be offered.
+  assert.ok(!forCpc.includes('stairway-bbc'))
+  assert.ok(!forCpc.includes('ia-c64'))
+  assert.ok(forCpc.includes('ia-cpc464'))
+  // The unscoped source applies everywhere.
+  assert.ok(forCpc.includes('internet-archive'))
+
+  const forBbc = providersFor(defaultProviders, 'bbc').map((provider) => provider.id)
+  assert.ok(forBbc.includes('stairway-bbc'))
+  assert.ok(!forBbc.includes('stairway-electron'))
+})
+
+check('every shipped source is complete and points somewhere real', () => {
+  const ids = new Set<string>()
+  for (const provider of defaultProviders) {
+    assert.ok(!ids.has(provider.id), `duplicate provider id ${provider.id}`)
+    ids.add(provider.id)
+    assert.ok(provider.name.trim().length > 0)
+    assert.equal(provider.builtIn, true)
+
+    if (provider.platformId) {
+      assert.ok(
+        platforms.some((platform) => platform.id === provider.platformId),
+        `${provider.id} names a platform that does not exist: ${provider.platformId}`,
+      )
+    }
+    if (provider.adapter === 'htmlSite') {
+      // Anything crawled must be HTTPS; the native side enforces this too.
+      assert.ok(provider.catalogUrl?.startsWith('https://'), `${provider.id} needs an HTTPS URL`)
+    } else {
+      assert.ok(provider.query, `${provider.id} needs a query`)
+    }
+  }
+})
+
+check('the sidebar says what each source covers', () => {
+  const name = (id: string) => requirePlatform(id).name
+  const scoped = defaultProviders.find((provider) => provider.id === 'ia-cpc464')!
+  const general = defaultProviders.find((provider) => provider.id === 'internet-archive')!
+
+  assert.equal(scopeLabel(scoped, name), 'Amstrad CPC464 only')
+  assert.equal(scopeLabel(general, name), 'All platforms')
 })
 
 // ---------------------------------------------------------------------------
