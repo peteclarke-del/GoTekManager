@@ -208,6 +208,15 @@ export type OnlineProvider = {
   query?: string
   platformId?: string
   builtIn?: boolean
+  /**
+   * Inspect the site even though its robots.txt refuses.
+   *
+   * Never set on a shipped source. The user turns it on per source, having
+   * been told plainly what it means and that the consequences are theirs.
+   */
+  ignoreRobots?: boolean
+  /** Identify as something other than this application. */
+  userAgent?: string
 }
 
 export type OnlineTitle = {

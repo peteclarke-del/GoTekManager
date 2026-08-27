@@ -4,14 +4,22 @@ use crate::error::{Context, Result};
 
 /// Identifies the application to every site it contacts, so operators can see
 /// and, if they wish, block it.
-const USER_AGENT: &str = concat!("GoTekManager/", env!("CARGO_PKG_VERSION"));
+///
+/// This is the default and it is deliberately honest. A source may override it,
+/// which is the user's decision to make about their own traffic, but the
+/// application does not ship pretending to be a browser.
+pub const USER_AGENT: &str = concat!("GoTekManager/", env!("CARGO_PKG_VERSION"));
 
 /// Nothing larger than this is downloaded or extracted.
 pub const DOWNLOAD_BYTE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 
-pub fn client() -> Result<reqwest::Client> {
+pub fn client(user_agent: Option<&str>) -> Result<reqwest::Client> {
+    let identity = user_agent
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(USER_AGENT);
     reqwest::Client::builder()
-        .user_agent(USER_AGENT)
+        .user_agent(identity)
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .context("Unable to start the network client")

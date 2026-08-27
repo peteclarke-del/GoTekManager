@@ -127,10 +127,24 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     question: 'Why are some online sites unavailable?',
     answer: (
       <>
-        GoTek Manager follows each site's access policy and will not bypass robots
-        rules, authentication, payment, licensing, or blocked download routes. Sites
-        that disallow inspection need an approved API or export instead, which can still
-        be added as a JSON reference list.
+        Every source that ships with GoTek Manager obeys the site's <code>robots.txt</code>,
+        identifies itself honestly, and never bypasses authentication, payment, or
+        licensing. Sites that disallow inspection are better served by an approved API
+        or export, which can be added as a JSON reference list.
+      </>
+    ),
+  },
+  {
+    question: 'Can I scan a site that asks not to be scanned?',
+    answer: (
+      <>
+        You can, per source, and you are told what it means before you do. A{' '}
+        <code>robots.txt</code> is the operator stating a preference, and overriding it
+        may breach their terms, may get your address blocked, and on a storefront may
+        surface links to content you have not paid for. Those consequences are yours,
+        not the application's, which is why nothing ships with it enabled and why the
+        source list shows which sources have it on. Scans with it on are paced ten times
+        slower.
       </>
     ),
   },

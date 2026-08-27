@@ -258,6 +258,8 @@ mod tests {
             catalog_url: None,
             query: Some("collection:softwarelibrary_cpc".into()),
             platform_id: Some("cpc464".into()),
+            ignore_robots: false,
+            user_agent: None,
         };
 
         // Adding `title:"Amstrad CPC464"` here would return almost nothing:
