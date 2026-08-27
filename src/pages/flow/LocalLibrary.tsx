@@ -24,6 +24,24 @@ import { compareTargetFiles } from '../../native/commands'
 import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
 import type { TablePreferences } from '../../state/useWorkspace'
 
+/** Which titles to show, by whether the destination already holds them. */
+type PresenceFilter = 'all' | 'missing' | 'present'
+
+const PRESENCE_FILTERS: Array<[PresenceFilter, string]> = [
+  ['all', 'All'],
+  ['missing', 'Not on target'],
+  ['present', 'On target'],
+]
+
+/**
+ * Present means the destination holds these contents somewhere, whether or not
+ * it is where this profile would write them. Unavailable counts as missing:
+ * whatever is wrong with it, it is not on the media.
+ */
+function isOnTarget(presence: Presence): boolean {
+  return presence === 'Identical' || presence === 'Elsewhere'
+}
+
 /** How a library title compares with what is already on the destination. */
 type Presence = 'Checking' | 'New' | 'Identical' | 'Different' | 'Elsewhere' | 'Unavailable'
 
@@ -100,6 +118,9 @@ export function LocalLibrary({
   busySourceId: string
 }) {
   const [query, setQuery] = useState('')
+  /** Source paths to narrow the table to. Empty means every source. */
+  const [selectedSources, setSelectedSources] = useState<string[]>([])
+  const [presenceFilter, setPresenceFilter] = useState<PresenceFilter>('all')
   const [editing, setEditing] = useState<SourceLocation | null>(null)
   const [renaming, setRenaming] = useState<MediaItem | null>(null)
   const [statuses, setStatuses] = useState<Record<string, TargetFileStatus>>({})
@@ -119,10 +140,21 @@ export function LocalLibrary({
       items.filter(
         (item) =>
           belongsToPlatform(item, platform.id) &&
-          item.name.toLowerCase().includes(query.trim().toLowerCase()),
+          item.name.toLowerCase().includes(query.trim().toLowerCase()) &&
+          (!selectedSources.length || selectedSources.includes(item.source)),
       ),
-    [items, platform.id, query],
+    [items, platform.id, query, selectedSources],
   )
+
+  /** How many titles each source contributes for this platform. */
+  const countBySource = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const item of items) {
+      if (!belongsToPlatform(item, platform.id)) continue
+      counts.set(item.source, (counts.get(item.source) || 0) + 1)
+    }
+    return counts
+  }, [items, platform.id])
 
   // Comparing every title with the destination is exact but not free, so it
   // runs once per profile and library change rather than on every keystroke.
@@ -201,6 +233,13 @@ export function LocalLibrary({
         foundAt: statuses[item.path]?.foundAt,
         location: sourceName(item),
       }))
+      // While the contents are still being read nothing is known yet, so the
+      // filter is held back rather than emptying the table as it works.
+      .filter((row) =>
+        presenceFilter === 'all' || checking
+          ? true
+          : (presenceFilter === 'present') === isOnTarget(row.presence),
+      )
       .sort((left, right) => {
         const a = value(left)
         const b = value(right)
@@ -210,8 +249,9 @@ export function LocalLibrary({
             : String(a).localeCompare(String(b))
         return direction === 'asc' ? ordered : -ordered
       })
-  }, [matching, staged, statuses, checking, preferences.sort, sources])
+  }, [matching, staged, statuses, checking, preferences.sort, sources, presenceFilter])
 
+  const total = items.filter((item) => belongsToPlatform(item, platform.id)).length
   const elsewhereCount = rows.filter((row) => row.presence === 'Elsewhere').length
   const sampleFoundAt = rows.find((row) => row.foundAt)?.foundAt
   const profileFolder = rows.length ? outputFolder(rows[0].item, profile) : ''
@@ -364,12 +404,27 @@ export function LocalLibrary({
           </div>
           <h3>Local sources</h3>
           <div className="managed-list">
-            {sources.map((source) => (
-              <div key={source.id}>
-                <span>
+            {sources.map((source) => {
+              const chosen = selectedSources.includes(source.path)
+              return (
+              <div key={source.id} className={chosen ? 'selected' : ''}>
+                <button
+                  className="source-select"
+                  aria-pressed={chosen}
+                  title={`${source.path}\nShow only this source, or combine it with others`}
+                  onClick={() =>
+                    setSelectedSources((current) =>
+                      current.includes(source.path)
+                        ? current.filter((path) => path !== source.path)
+                        : [...current, source.path],
+                    )
+                  }
+                >
                   <b>{source.name}</b>
-                  <small title={source.path}>{source.path}</small>
-                </span>
+                  <small>
+                    {countBySource.get(source.path) || 0} {platform.name} titles
+                  </small>
+                </button>
                 <button
                   disabled={Boolean(busySourceId)}
                   title={`Re-index ${source.name} and its subfolders`}
@@ -387,9 +442,18 @@ export function LocalLibrary({
                   <Trash2 />
                 </button>
               </div>
-            ))}
+              )
+            })}
             {!sources.length && <p>No source locations added</p>}
           </div>
+          {selectedSources.length > 0 && (
+            <button
+              className="button secondary compact"
+              onClick={() => setSelectedSources([])}
+            >
+              Show all {sources.length} sources
+            </button>
+          )}
         </div>
         <button className="button" onClick={addLocation}>
           <FolderOpen />
@@ -403,9 +467,27 @@ export function LocalLibrary({
           <div>
             <h2>{platform.name} titles</h2>
             <p>
-              {rows.length} matching file{rows.length === 1 ? '' : 's'} ·{' '}
-              {requireFirmware(profile.firmwareId).name}
+              {rows.length === total
+                ? `${total} title${total === 1 ? '' : 's'}`
+                : `${rows.length} of ${total} titles`}
+              {selectedSources.length
+                ? ` · ${selectedSources.length} source${selectedSources.length === 1 ? '' : 's'}`
+                : ''}{' '}
+              · {requireFirmware(profile.firmwareId).name}
             </p>
+          </div>
+          <div className="coverage-filter" role="group" aria-label="Show titles by presence">
+            {PRESENCE_FILTERS.map(([value, label]) => (
+              <button
+                key={value}
+                className={presenceFilter === value ? 'active' : ''}
+                aria-pressed={presenceFilter === value}
+                disabled={checking && value !== 'all'}
+                onClick={() => setPresenceFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           <div className="search">
             <Search />
@@ -480,9 +562,17 @@ export function LocalLibrary({
           </table>
           {!rows.length && (
             <Empty
-              title={items.length ? 'No matching titles' : 'No titles indexed yet'}
-              action="Add location"
-              run={addLocation}
+              title={
+                !items.length
+                  ? 'No titles indexed yet'
+                  : presenceFilter !== 'all'
+                    ? `No ${platform.name} titles are ${presenceFilter === 'present' ? 'on the target' : 'missing from the target'}`
+                    : selectedSources.length
+                      ? 'No titles from the selected sources'
+                      : 'No matching titles'
+              }
+              action={items.length ? undefined : 'Add location'}
+              run={items.length ? undefined : addLocation}
             />
           )}
         </div>
