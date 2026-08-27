@@ -13,17 +13,24 @@ import {
   transferOperations,
 } from '../../domain/media'
 import { relativeTo } from '../../domain/paths'
-import type { FileStatus, MediaItem, Profile, SourceLocation } from '../../domain/types'
+import type {
+  FileStatus,
+  MediaItem,
+  Profile,
+  SourceLocation,
+  TargetFileStatus,
+} from '../../domain/types'
 import { compareTargetFiles } from '../../native/commands'
 import type { TablePreferences } from '../../state/useWorkspace'
 
 /** How a library title compares with what is already on the destination. */
-type Presence = 'Checking' | 'New' | 'Identical' | 'Different' | 'Unavailable'
+type Presence = 'Checking' | 'New' | 'Identical' | 'Different' | 'Elsewhere' | 'Unavailable'
 
 const PRESENCE_BY_STATUS: Record<FileStatus, Presence> = {
   new: 'New',
   identical: 'Identical',
   different: 'Different',
+  elsewhere: 'Elsewhere',
   unavailable: 'Unavailable',
 }
 
@@ -31,6 +38,7 @@ const PRESENCE_BY_STATUS: Record<FileStatus, Presence> = {
 const PRESENCE_ORDER: Presence[] = [
   'New',
   'Different',
+  'Elsewhere',
   'Identical',
   'Unavailable',
   'Checking',
@@ -50,6 +58,8 @@ type Row = {
   item: MediaItem
   staged: boolean
   presence: Presence
+  /** Where the title actually sits, when it is filed somewhere unexpected. */
+  foundAt?: string
   location: string
 }
 
@@ -91,7 +101,7 @@ export function LocalLibrary({
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<SourceLocation | null>(null)
   const [renaming, setRenaming] = useState<MediaItem | null>(null)
-  const [statuses, setStatuses] = useState<Record<string, FileStatus>>({})
+  const [statuses, setStatuses] = useState<Record<string, TargetFileStatus>>({})
   const [checking, setChecking] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
 
@@ -136,7 +146,7 @@ export function LocalLibrary({
     )
       .then((results) => {
         if (!active) return
-        setStatuses(Object.fromEntries(results.map((entry) => [entry.source, entry.status])))
+        setStatuses(Object.fromEntries(results.map((entry) => [entry.source, entry])))
       })
       .catch(() => active && setStatuses({}))
       .finally(() => {
@@ -185,7 +195,8 @@ export function LocalLibrary({
         staged: staged.has(item.id),
         presence: checking
           ? 'Checking'
-          : PRESENCE_BY_STATUS[statuses[item.path]] || 'Checking',
+          : PRESENCE_BY_STATUS[statuses[item.path]?.status] || 'Checking',
+        foundAt: statuses[item.path]?.foundAt,
         location: sourceName(item),
       }))
       .sort((left, right) => {
@@ -198,6 +209,10 @@ export function LocalLibrary({
         return direction === 'asc' ? ordered : -ordered
       })
   }, [matching, staged, statuses, checking, preferences.sort, sources])
+
+  const elsewhereCount = rows.filter((row) => row.presence === 'Elsewhere').length
+  const sampleFoundAt = rows.find((row) => row.foundAt)?.foundAt
+  const profileFolder = rows.length ? outputFolder(rows[0].item, profile) : ''
 
   const sortBy = (key: string) =>
     setPreferences((current) => ({
@@ -224,7 +239,16 @@ export function LocalLibrary({
       case 'presence':
         return (
           <td key={column}>
-            <span className={`target-state ${row.presence.toLowerCase()}`}>{row.presence}</span>
+            <span
+              className={`target-state ${row.presence.toLowerCase()}`}
+              title={
+                row.foundAt
+                  ? `Already on the destination at ${row.foundAt}, which is not where this profile would write it.`
+                  : undefined
+              }
+            >
+              {row.presence === 'Elsewhere' ? 'On target' : row.presence}
+            </span>
           </td>
         )
       case 'title':
@@ -390,6 +414,22 @@ export function LocalLibrary({
             />
           </div>
         </div>
+        {elsewhereCount > 0 && (
+          <div className="profile-mismatch">
+            <b>
+              {elsewhereCount} of these titles {elsewhereCount === 1 ? 'is' : 'are'} already
+              on the destination, filed somewhere else
+            </b>
+            <span>
+              This profile writes to <code>{profileFolder || 'the root'}/</code> using{' '}
+              {profile.naming === 'oled' ? 'shortened OLED' : 'original'} names, which is not
+              how the destination is organised
+              {sampleFoundAt ? <> — one of them is at <code>{sampleFoundAt}</code></> : null}.
+              Adding them would write a second copy. Change this profile's layout and naming
+              to match the destination and they will show as already there.
+            </span>
+          </div>
+        )}
         <div className="table-wrap">
           <table className="library-table">
             <thead>

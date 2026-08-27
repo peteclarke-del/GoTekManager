@@ -103,9 +103,18 @@ pub struct TransferPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileStatus {
+    /// Not on the destination anywhere.
     New,
+    /// Present at the path this profile would write it to, byte for byte.
     Identical,
+    /// Something else already occupies that path.
     Different,
+    /// Present on the destination, but somewhere else.
+    ///
+    /// This is what a library organised one way looks like against a profile
+    /// configured another way. Reporting it as `New` was accurate about the
+    /// path and badly misleading about the media: the title is on the stick.
+    Elsewhere,
     Unavailable,
 }
 
@@ -115,6 +124,9 @@ pub struct TargetFileStatus {
     pub source: String,
     pub relative_path: String,
     pub status: FileStatus,
+    /// Where it actually is, when the status is `elsewhere`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub found_at: Option<String>,
 }
 
 /// What the destination holds today: lookup key -> path as stored, and size.
@@ -557,6 +569,27 @@ fn compare_folder_file(root: &Path, relative_path: &str, source: &Path) -> Resul
     Ok(Some(readers_equal(&mut source_file, &mut target_file)?))
 }
 
+/// Indexes a destination by filename and size.
+///
+/// Used to answer "is this title already here, under some other name?" without
+/// reading a byte of content. Name and size together is not proof, and is
+/// reported as such, but it is the difference between telling someone they have
+/// none of their collection and telling them where it is.
+fn name_index(root: &Path) -> Result<HashMap<(String, u64), String>> {
+    Ok(read_inventory(root)?
+        .into_values()
+        .map(|file| {
+            let name = file
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&file.path)
+                .to_lowercase();
+            ((name, file.size), file.path)
+        })
+        .collect())
+}
+
 /// Reports, per source file, whether the destination already holds it.
 ///
 /// Only paths that could actually collide are opened, which keeps a large
@@ -579,6 +612,15 @@ pub async fn compare_target_files(
         } else {
             canonical(&target_path)?
         };
+        // Built once for the whole call. A folder destination is walked a
+        // second time here, which is far cheaper than digesting a library that
+        // may sit on a network share.
+        let elsewhere = if image_target {
+            HashMap::new()
+        } else {
+            name_index(&root)?
+        };
+
         operations
             .into_iter()
             .map(|operation| {
@@ -588,6 +630,7 @@ pub async fn compare_target_files(
                         source: operation.source,
                         relative_path: operation.relative_path,
                         status: FileStatus::Unavailable,
+                        found_at: None,
                     });
                 }
                 safe_relative_path(&operation.relative_path)?;
@@ -596,14 +639,29 @@ pub async fn compare_target_files(
                 } else {
                     compare_folder_file(&root, &operation.relative_path, source)?
                 };
+
+                // Only look further when the profile's own path holds nothing.
+                let found_at = if comparison.is_none() {
+                    let name = source
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_lowercase();
+                    elsewhere.get(&(name, operation.size)).cloned()
+                } else {
+                    None
+                };
+
                 Ok(TargetFileStatus {
                     source: operation.source,
                     relative_path: operation.relative_path,
-                    status: match comparison {
-                        None => FileStatus::New,
-                        Some(true) => FileStatus::Identical,
-                        Some(false) => FileStatus::Different,
+                    status: match (comparison, &found_at) {
+                        (Some(true), _) => FileStatus::Identical,
+                        (Some(false), _) => FileStatus::Different,
+                        (None, Some(_)) => FileStatus::Elsewhere,
+                        (None, None) => FileStatus::New,
                     },
+                    found_at,
                 })
             })
             .collect()
@@ -1114,5 +1172,137 @@ mod checksum_tests {
         assert_eq!(fs::read(root.join("with.ssd")).unwrap(), content);
         assert_eq!(fs::read(root.join("without.ssd")).unwrap(), content);
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod elsewhere_tests {
+    use super::{compare_target_files, FileStatus, TransferOperation};
+    use std::{fs, path::PathBuf};
+
+    fn fixture(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "gotek-elsewhere-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn compare(
+        target: &PathBuf,
+        operations: Vec<TransferOperation>,
+    ) -> Vec<super::TargetFileStatus> {
+        tauri::async_runtime::block_on(compare_target_files(
+            target.to_string_lossy().into_owned(),
+            operations,
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_title_filed_under_a_different_layout_is_found_where_it_really_is() {
+        // Exactly the shape of a real collection: the destination groups by
+        // initial letter, while the profile is set to platform folders.
+        let library = fixture("layout-library");
+        let target = fixture("layout-target");
+        let source = library.join("Zynaps (1987)(Hewson Consultants).dsk");
+        fs::write(&source, vec![0xC9u8; 194816]).unwrap();
+        fs::create_dir(target.join("Z")).unwrap();
+        fs::copy(&source, target.join("Z/Zynaps (1987)(Hewson Consultants).dsk")).unwrap();
+
+        let result = compare(
+            &target,
+            vec![TransferOperation {
+                source: source.to_string_lossy().into_owned(),
+                // Where this profile would put it: nothing is there.
+                relative_path: "CPC464/Zynaps (1987)(Hewson.dsk".into(),
+                size: 194816,
+            }],
+        );
+
+        assert_eq!(result[0].status, FileStatus::Elsewhere);
+        assert_eq!(
+            result[0].found_at.as_deref(),
+            Some("Z/Zynaps (1987)(Hewson Consultants).dsk")
+        );
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn a_genuinely_absent_title_is_still_new() {
+        let library = fixture("absent-library");
+        let target = fixture("absent-target");
+        let source = library.join("Elite.dsk");
+        fs::write(&source, b"disk").unwrap();
+
+        let result = compare(
+            &target,
+            vec![TransferOperation {
+                source: source.to_string_lossy().into_owned(),
+                relative_path: "CPC464/Elite.dsk".into(),
+                size: 4,
+            }],
+        );
+
+        assert_eq!(result[0].status, FileStatus::New);
+        assert!(result[0].found_at.is_none());
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn the_exact_path_still_wins_over_a_copy_elsewhere() {
+        let library = fixture("exact-library");
+        let target = fixture("exact-target");
+        let source = library.join("Elite.dsk");
+        fs::write(&source, b"disk").unwrap();
+        fs::create_dir(target.join("CPC464")).unwrap();
+        fs::copy(&source, target.join("CPC464/Elite.dsk")).unwrap();
+        fs::create_dir(target.join("E")).unwrap();
+        fs::copy(&source, target.join("E/Elite.dsk")).unwrap();
+
+        let result = compare(
+            &target,
+            vec![TransferOperation {
+                source: source.to_string_lossy().into_owned(),
+                relative_path: "CPC464/Elite.dsk".into(),
+                size: 4,
+            }],
+        );
+
+        // Present where it belongs, so the copy elsewhere is not the story.
+        assert_eq!(result[0].status, FileStatus::Identical);
+        assert!(result[0].found_at.is_none());
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn a_same_named_file_of_a_different_size_is_not_claimed_to_be_the_same() {
+        let library = fixture("size-library");
+        let target = fixture("size-target");
+        let source = library.join("Elite.dsk");
+        fs::write(&source, vec![0u8; 194816]).unwrap();
+        fs::create_dir(target.join("E")).unwrap();
+        // Same name, different content and length: a different release.
+        fs::write(target.join("E/Elite.dsk"), vec![0u8; 1024]).unwrap();
+
+        let result = compare(
+            &target,
+            vec![TransferOperation {
+                source: source.to_string_lossy().into_owned(),
+                relative_path: "CPC464/Elite.dsk".into(),
+                size: 194816,
+            }],
+        );
+
+        assert_eq!(result[0].status, FileStatus::New);
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
     }
 }

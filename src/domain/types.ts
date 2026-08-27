@@ -143,12 +143,20 @@ export type TransferOperation = {
   size: number
 }
 
-export type FileStatus = 'new' | 'identical' | 'different' | 'unavailable'
+export type FileStatus =
+  | 'new'
+  | 'identical'
+  | 'different'
+  /** On the destination, but not where this profile would write it. */
+  | 'elsewhere'
+  | 'unavailable'
 
 export type TargetFileStatus = {
   source: string
   relativePath: string
   status: FileStatus
+  /** Where it actually is, when the status is `elsewhere`. */
+  foundAt?: string
 }
 
 export type EditKind = 'move' | 'delete'

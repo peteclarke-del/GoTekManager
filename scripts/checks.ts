@@ -247,9 +247,12 @@ check('a custom folder template expands its tokens', () => {
 
   // A typo stays visible rather than silently reshaping the whole layout.
   assert.equal(renderFolderTemplate('{platfrm}', item), '{platfrm}')
-  // A title starting with a digit or symbol still gets a bucket.
-  const numeric = { ...item, canonicalTitle: '1942.ssd' }
-  assert.equal(renderFolderTemplate('{initial}', numeric), '1')
+  // Digits share one bucket and symbols another, which is the convention every
+  // large collection uses and what a real GoTek stick looks like.
+  assert.equal(renderFolderTemplate('{initial}', { ...item, canonicalTitle: '1942.ssd' }), '0-9')
+  assert.equal(renderFolderTemplate('{initial}', { ...item, canonicalTitle: '007.dsk' }), '0-9')
+  assert.equal(renderFolderTemplate('{initial}', { ...item, canonicalTitle: '!Boot.ssd' }), 'B')
+  assert.equal(renderFolderTemplate('{initial}', { ...item, canonicalTitle: '___.ssd' }), '#')
 })
 
 check('an unassigned title lands in a named bucket, not a broken path', () => {
