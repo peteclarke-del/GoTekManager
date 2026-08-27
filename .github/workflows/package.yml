@@ -1,0 +1,81 @@
+name: Package desktop application
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            bundles: deb,rpm,appimage
+            target: x86_64-unknown-linux-gnu
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            bundles: deb
+            target: aarch64-unknown-linux-gnu
+          - name: windows-x86_64
+            os: windows-latest
+            bundles: msi,nsis
+            target: x86_64-pc-windows-msvc
+          - name: windows-aarch64
+            os: windows-11-arm
+            bundles: msi,nsis
+            target: aarch64-pc-windows-msvc
+          - name: macos-aarch64
+            os: macos-14
+            bundles: app,dmg
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-13
+            bundles: app,dmg
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev rpm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build bundles
+        run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Verify Unix executable name
+        if: runner.os != 'Windows'
+        shell: bash
+        run: test -x "src-tauri/target/${{ matrix.target }}/release/gotek-manager"
+      - name: Verify Windows executable name
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "src-tauri/target/${{ matrix.target }}/release/gotek-manager.exe")) {
+            throw "Expected gotek-manager.exe was not built"
+          }
+      - name: Verify Debian command installation
+        if: startsWith(matrix.name, 'linux-')
+        shell: bash
+        run: |
+          package="$(find "src-tauri/target/${{ matrix.target }}/release/bundle/deb" -name '*.deb' -print -quit)"
+          dpkg-deb --contents "$package" | grep -q 'usr/bin/gotek-manager$'
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: gotek-manager-${{ matrix.name }}
+          path: src-tauri/target/release/bundle/
+          if-no-files-found: error
