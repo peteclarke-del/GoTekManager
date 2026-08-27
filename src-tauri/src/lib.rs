@@ -22,6 +22,7 @@ mod devices;
 mod hardware;
 mod image;
 mod error;
+mod fingerprint;
 mod media;
 mod online;
 mod paths;
@@ -63,6 +64,8 @@ pub fn run() {
             store::load_workspace,
             store::save_workspace,
             store::read_document,
+            fingerprint::fingerprint_paths,
+            fingerprint::prune_digests,
             store::write_document,
             cache::cache_summary,
             cache::evict_cache,
