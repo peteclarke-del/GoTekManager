@@ -43,7 +43,8 @@ const PAGE_TITLES: Record<Page, string> = {
 export function App() {
   const [page, setPage] = useState<Page>('Flow')
   const [settings, setSettings] = useSettings()
-  const [providers, setCustomProviders] = useProviders()
+  const { providers, setCustom: setCustomProviders, configPath: providersPath, problems: providerProblems } =
+    useProviders()
   const [preferences, setPreferences] = useTablePreferences()
   const {
     workspace,
@@ -157,6 +158,11 @@ export function App() {
         </header>
 
         {notice && <NoticeBar notice={notice} dismiss={() => setNotice(null)} />}
+        {providerProblems.length > 0 && (
+          <div className="notice error">
+            Online sources: {providerProblems.join('; ')}.
+          </div>
+        )}
         {storeError && (
           <div className="notice error">
             The library could not be saved: {storeError}
@@ -203,6 +209,7 @@ export function App() {
         <SettingsDialog
           settings={settings}
           setSettings={setSettings}
+          providersPath={providersPath}
           close={() => setSettingsOpen(false)}
           clearLibrary={() => {
             dispatch({ type: 'libraryCleared' })

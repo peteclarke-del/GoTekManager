@@ -1,11 +1,16 @@
 /** Wires the workspace reducer to persistence and derives the active profile. */
 
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { defaultProviders } from '../domain/providers'
+import {
+  defaultProviders,
+  PROVIDERS_FILE,
+  readProviderConfig,
+} from '../domain/providers'
 import { upsertById } from '../domain/records'
 import type { AppSettings, OnlineProvider } from '../domain/types'
 import { loadSettings, PROVIDERS_KEY, SETTINGS_KEY, TABLE_PREFS_KEY } from './migrations'
 import { loadPersistedWorkspace, persistWorkspace } from './persistence.native'
+import { isDesktop, readConfigFile } from '../native/commands'
 import { readStored, usePersistentState } from './persistence'
 import {
   activeProfileOf,
@@ -68,16 +73,46 @@ export function useSettings() {
 }
 
 /**
- * Built-in providers are always present and always current; user-added sites
- * are stored separately and merged on top, so a future change to a built-in
- * definition reaches everyone.
+ * The shipped list, a hand-written override if there is one, and the user's own
+ * sites on top.
+ *
+ * The override is read once at startup. A file that cannot be parsed, or whose
+ * entries are unusable, leaves the bundled list in place and reports why rather
+ * than starting with no sources and no explanation.
  */
 export function useProviders() {
   const [custom, setCustom] = usePersistentState<OnlineProvider[]>(PROVIDERS_KEY, () =>
     readStored<OnlineProvider[]>('gm.providers', []).filter((provider) => !provider.builtIn),
   )
-  const providers = useMemo(() => upsertById(defaultProviders, ...custom), [custom])
-  return [providers, setCustom] as const
+  const [shipped, setShipped] = useState<OnlineProvider[]>(defaultProviders)
+  const [configPath, setConfigPath] = useState('')
+  const [problems, setProblems] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!isDesktop()) return
+    let active = true
+    readConfigFile(PROVIDERS_FILE)
+      .then((file) => {
+        if (!active) return
+        setConfigPath(file.path)
+        if (!file.contents?.trim()) return
+        try {
+          const load = readProviderConfig(JSON.parse(file.contents))
+          setProblems(load.problems)
+          if (load.providers.length) setShipped(load.providers)
+          else setProblems((current) => [...current, 'no usable sources; keeping the built-in list'])
+        } catch (reason) {
+          setProblems([`${PROVIDERS_FILE} is not valid JSON: ${String(reason)}`])
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const providers = useMemo(() => upsertById(shipped, ...custom), [shipped, custom])
+  return { providers, setCustom, configPath, problems }
 }
 
 export type TablePreferences = {

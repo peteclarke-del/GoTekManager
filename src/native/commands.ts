@@ -250,6 +250,17 @@ export async function chooseSaveImagePath(): Promise<string | null> {
 // Download cache
 // ---------------------------------------------------------------------------
 
+/** A configuration file the user may edit by hand. */
+export type ConfigFile = {
+  /** Returned whether or not the file exists, so the path can be shown. */
+  path: string
+  contents?: string
+}
+
+export function readConfigFile(name: string): Promise<ConfigFile> {
+  return invokeNative<ConfigFile>('read_config_file', { name })
+}
+
 export function cacheSummary(): Promise<CacheSummary> {
   return invokeNative<CacheSummary>('cache_summary')
 }
