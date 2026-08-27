@@ -21,7 +21,7 @@ use crate::paths::sha256_reader;
 use crate::store;
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 use tauri::Emitter;
 
 /// Emitted while a batch is being fingerprinted.
@@ -53,52 +53,86 @@ fn digest_of(path: &Path) -> Result<String> {
         .collect())
 }
 
-/// The digest of one file, read from the cache when the file has not changed.
+/// A file the caller has already looked at, so it need not be looked at again.
+#[derive(Debug, Clone, Copy)]
+pub struct Stat {
+    pub size: u64,
+    pub modified: i64,
+}
+
+impl Stat {
+    pub fn of(metadata: &fs::Metadata) -> Self {
+        Self {
+            size: metadata.len(),
+            modified: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| value.as_secs() as i64)
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// Every digest already known, held for the length of one operation.
 ///
-/// Size and modification time together are what decide whether a cached digest
-/// still applies. Neither is proof on its own, and together they are what every
-/// backup tool in existence relies on.
-pub fn cached_digest(connection: &Connection, path: &Path) -> Result<Option<Fingerprint>> {
-    let Ok(metadata) = fs::metadata(path) else {
-        return Ok(None);
-    };
-    if !metadata.is_file() {
-        return Ok(None);
-    }
-    let size = metadata.len();
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|value| value.as_secs() as i64)
-        .unwrap_or(0);
-    let key = path.to_string_lossy().into_owned();
+/// Loading the table once and consulting it in memory replaces a query per
+/// file. Over a few thousand files that is the difference between a fifth of a
+/// second and nothing, and the comparison runs on every change to a profile.
+pub struct DigestCache {
+    entries: HashMap<String, (u64, i64, String)>,
+}
 
-    let cached: Option<String> = connection
-        .query_row(
-            "SELECT sha256 FROM digests WHERE path = ?1 AND size = ?2 AND modified = ?3",
-            params![key, size as i64, modified],
-            |row| row.get(0),
-        )
-        .ok();
-    if let Some(sha256) = cached {
-        return Ok(Some(Fingerprint {
-            path: key,
-            sha256,
-            size,
-        }));
+impl DigestCache {
+    pub fn load(connection: &Connection) -> Result<Self> {
+        let mut statement =
+            connection.prepare("SELECT path, size, modified, sha256 FROM digests")?;
+        let entries = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (
+                        row.get::<_, i64>(1)? as u64,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ),
+                ))
+            })?
+            .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+        Ok(Self { entries })
     }
 
-    let sha256 = digest_of(path)?;
-    connection.execute(
-        "INSERT OR REPLACE INTO digests (path, size, modified, sha256) VALUES (?1,?2,?3,?4)",
-        params![key, size as i64, modified, sha256],
-    )?;
-    Ok(Some(Fingerprint {
-        path: key,
-        sha256,
-        size,
-    }))
+    fn get(&self, path: &str, stat: Stat) -> Option<&str> {
+        self.entries
+            .get(path)
+            .filter(|(size, modified, _)| *size == stat.size && *modified == stat.modified)
+            .map(|(_, _, sha256)| sha256.as_str())
+    }
+
+    /// The digest of a file whose metadata the caller already has.
+    ///
+    /// Taking the stat as an argument is the point: the destination walk and
+    /// the source check have both already looked at the file, and looking again
+    /// doubles the cost of the whole comparison for nothing.
+    pub fn digest(
+        &mut self,
+        connection: &Connection,
+        path: &Path,
+        stat: Stat,
+    ) -> Result<String> {
+        let key = path.to_string_lossy().into_owned();
+        if let Some(sha256) = self.get(&key, stat) {
+            return Ok(sha256.to_string());
+        }
+        let sha256 = digest_of(path)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO digests (path, size, modified, sha256) VALUES (?1,?2,?3,?4)",
+            params![key, stat.size as i64, stat.modified, sha256],
+        )?;
+        self.entries
+            .insert(key, (stat.size, stat.modified, sha256.clone()));
+        Ok(sha256)
+    }
 }
 
 /// Somewhere to report progress to.
@@ -117,12 +151,13 @@ pub fn ignore_progress(_: Progress) {}
 /// unreadable file in a library of thousands should not stop the rest.
 pub fn fingerprint_all(
     connection: &Connection,
-    paths: &[String],
+    cache: &mut DigestCache,
+    files: &[(String, Stat)],
     on_progress: OnProgress<'_>,
 ) -> Result<Vec<Fingerprint>> {
-    let total = paths.len();
+    let total = files.len();
     let mut results = Vec::with_capacity(total);
-    for (index, path) in paths.iter().enumerate() {
+    for (index, (path, stat)) in files.iter().enumerate() {
         // Reported before the read, so a slow file is visible while it is slow
         // rather than only after it finishes.
         on_progress(Progress {
@@ -130,8 +165,12 @@ pub fn fingerprint_all(
             total,
             current: path.clone(),
         });
-        if let Ok(Some(fingerprint)) = cached_digest(connection, Path::new(path)) {
-            results.push(fingerprint);
+        if let Ok(sha256) = cache.digest(connection, Path::new(path), *stat) {
+            results.push(Fingerprint {
+                path: path.clone(),
+                sha256,
+                size: stat.size,
+            });
         }
     }
     on_progress(Progress {
@@ -156,8 +195,16 @@ pub async fn fingerprint_paths(
 ) -> Result<Vec<Fingerprint>> {
     crate::task::blocking(move || {
         let connection = store::connection(&app)?;
+        let mut cache = DigestCache::load(&connection)?;
+        let files = paths
+            .into_iter()
+            .filter_map(|path| {
+                let metadata = fs::metadata(&path).ok()?;
+                metadata.is_file().then(|| (path, Stat::of(&metadata)))
+            })
+            .collect::<Vec<_>>();
         let mut report = emitter(&app);
-        fingerprint_all(&connection, &paths, &mut report)
+        fingerprint_all(&connection, &mut cache, &files, &mut report)
     })
     .await
 }
@@ -185,9 +232,13 @@ pub async fn prune_digests(app: tauri::AppHandle) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cached_digest, digest_of};
+    use super::{digest_of, DigestCache, Stat};
     use rusqlite::Connection;
-    use std::{fs, path::PathBuf};
+    use std::{fs, path::{Path, PathBuf}};
+
+    fn stat_of(path: &Path) -> Stat {
+        Stat::of(&fs::metadata(path).unwrap())
+    }
 
     fn fixture(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -235,22 +286,25 @@ mod tests {
     }
 
     #[test]
-    fn a_digest_is_cached_and_reused() {
+    fn a_file_is_read_once_and_remembered() {
         let root = fixture("cache");
         let connection = connection();
         let file = root.join("Elite.dsk");
         fs::write(&file, b"disk").unwrap();
+        let stat = stat_of(&file);
 
-        let first = cached_digest(&connection, &file).unwrap().unwrap();
-        let rows: i64 = connection
-            .query_row("SELECT count(*) FROM digests", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(rows, 1);
+        let mut cache = DigestCache::load(&connection).unwrap();
+        let first = cache.digest(&connection, &file, stat).unwrap();
 
-        // Removing the file proves the second answer came from the cache.
+        // Removing the file proves the second answer never touched the disk:
+        // this is what stops a library being re-read on every comparison.
         fs::remove_file(&file).unwrap();
-        assert!(cached_digest(&connection, &file).unwrap().is_none());
-        assert!(!first.sha256.is_empty());
+        let second = cache.digest(&connection, &file, stat).unwrap();
+        assert_eq!(first, second);
+
+        // And it survives a restart, because it is in the database.
+        let mut reopened = DigestCache::load(&connection).unwrap();
+        assert_eq!(reopened.digest(&connection, &file, stat).unwrap(), first);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -260,24 +314,52 @@ mod tests {
         let connection = connection();
         let file = root.join("Elite.dsk");
         fs::write(&file, b"first").unwrap();
-        let before = cached_digest(&connection, &file).unwrap().unwrap();
+        let mut cache = DigestCache::load(&connection).unwrap();
+        let before = cache.digest(&connection, &file, stat_of(&file)).unwrap();
 
-        // A different length invalidates the cached digest on its own.
         fs::write(&file, b"second version").unwrap();
-        let after = cached_digest(&connection, &file).unwrap().unwrap();
+        let after = cache.digest(&connection, &file, stat_of(&file)).unwrap();
 
-        assert_ne!(before.sha256, after.sha256);
-        assert_eq!(after.size, 14);
+        // A different length invalidates the entry on its own.
+        assert_ne!(before, after);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn a_missing_file_is_not_an_error() {
-        let root = fixture("missing");
+    fn contents_that_change_without_changing_length_are_still_noticed() {
+        let root = fixture("same-length");
+        let connection = connection();
+        let file = root.join("Elite.dsk");
+        fs::write(&file, b"aaaa").unwrap();
+        let mut cache = DigestCache::load(&connection).unwrap();
+        let before = cache.digest(&connection, &file, stat_of(&file)).unwrap();
 
-        assert!(cached_digest(&connection(), &root.join("nope.dsk"))
-            .unwrap()
-            .is_none());
+        // Same size, different bytes: only the modification time separates
+        // them, which is why it is part of the key.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(&file, b"bbbb").unwrap();
+        let after = cache.digest(&connection, &file, stat_of(&file)).unwrap();
+
+        assert_ne!(before, after);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_missing_file_reports_a_failure_rather_than_a_wrong_answer() {
+        let root = fixture("missing");
+        let connection = connection();
+        let mut cache = DigestCache::load(&connection).unwrap();
+
+        let outcome = cache.digest(
+            &connection,
+            &root.join("nope.dsk"),
+            super::Stat {
+                size: 4,
+                modified: 0,
+            },
+        );
+
+        assert!(outcome.is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }
