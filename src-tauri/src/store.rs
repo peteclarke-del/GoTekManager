@@ -641,3 +641,41 @@ mod tests {
         assert_eq!(version, SCHEMA_VERSION);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Editable configuration files
+// ---------------------------------------------------------------------------
+
+/// A configuration file the user may edit by hand.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigFile {
+    /// Always returned, whether or not the file is there, so the interface can
+    /// say where to put one.
+    pub path: String,
+    pub contents: Option<String>,
+}
+
+/// Reads a named file from the application's configuration folder.
+///
+/// The name is a bare filename: anything with a separator in it is refused, so
+/// this can only ever read from that one folder.
+#[tauri::command]
+pub async fn read_config_file(app: tauri::AppHandle, name: String) -> Result<ConfigFile> {
+    blocking(move || {
+        if name.contains(['/', '\\']) || name.contains("..") || name.is_empty() {
+            return Err("A configuration file name cannot contain a path.".into());
+        }
+        let folder = app
+            .path()
+            .app_config_dir()
+            .context("Unable to resolve the configuration folder")?;
+        std::fs::create_dir_all(&folder)?;
+        let path = folder.join(&name);
+        Ok(ConfigFile {
+            contents: std::fs::read_to_string(&path).ok(),
+            path: path.to_string_lossy().into_owned(),
+        })
+    })
+    .await
+}

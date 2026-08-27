@@ -1,0 +1,369 @@
+{
+  "$comment": [
+    "Online sources shipped with GoTek Manager. Edit this file rather than the code.",
+    "",
+    "It is bundled at build time, and overridden at run time by a providers.json placed",
+    "in the application's configuration folder, whose path is shown in Settings. An",
+    "override replaces this list entirely; entries that fail validation are dropped and",
+    "reported rather than silently ignored.",
+    "",
+    "Fields: id (unique), name, adapter (internetArchive | htmlSite | jsonFeed),",
+    "platformId (omit for every platform), query (search adapters), catalogUrl (site and",
+    "feed adapters), note (shown in the interface), ignoreRobots, userAgent.",
+    "",
+    "Every URL below was checked for reachability and against the site's robots.txt,",
+    "reading the wildcard group the way a crawler does. What none of that can tell you",
+    "is whether a crawl finds anything: website inspection follows same-site pages two",
+    "levels deep and records links ending in a format this platform uses, which suits a",
+    "file index and does not suit a database whose downloads sit behind a script. Sites",
+    "of the second kind are included because they are where the software is, and are",
+    "marked as such. Refresh one to find out what it yields.",
+    "",
+    "A GoTek presents floppy images. New software for the 8-bit Commodores is almost",
+    "always .d64, which is a 1541 GCR recording a GoTek cannot reproduce, so those",
+    "sources will mostly show titles that cannot be used until someone converts them."
+  ],
+  "version": 1,
+  "providers": [
+    {
+      "id": "internet-archive",
+      "name": "Internet Archive",
+      "adapter": "internetArchive",
+      "query": "mediatype:software",
+      "note": "Searches any machine by name. The one source that applies whatever you are preparing."
+    },
+
+    {
+      "id": "stairway-bbc",
+      "name": "Stairway to Hell: BBC",
+      "adapter": "htmlSite",
+      "platformId": "bbc",
+      "catalogUrl": "https://www.stairwaytohell.com/bbc/homepage.html",
+      "note": "A file index, which is the shape this adapter handles best."
+    },
+    {
+      "id": "8bs-bbc",
+      "name": "8-Bit Software",
+      "adapter": "htmlSite",
+      "platformId": "bbc",
+      "catalogUrl": "https://8bs.com/",
+      "note": "The 8BS archive, still publishing new BBC material. Downloads are ZIP archives, which are unpacked automatically."
+    },
+    {
+      "id": "stardot-bbc",
+      "name": "Stardot",
+      "adapter": "htmlSite",
+      "platformId": "bbc",
+      "catalogUrl": "https://www.stardot.org.uk/forums/viewforum.php?f=53",
+      "note": "Where most new BBC and Electron software is announced. A forum, so expect attachments rather than a tidy index."
+    },
+    {
+      "id": "bbcmicro-co-uk",
+      "name": "BBC Micro Games Archive",
+      "adapter": "htmlSite",
+      "platformId": "bbc",
+      "catalogUrl": "https://bbcmicro.co.uk/",
+      "note": "By far the richest BBC source found: thirty-six .ssd links on its front page alone. Its robots.txt refuses automated clients, so it does nothing until you enable the override on this source and accept what that means."
+    },
+
+    {
+      "id": "stairway-electron",
+      "name": "Stairway to Hell: Electron",
+      "adapter": "htmlSite",
+      "platformId": "electron",
+      "catalogUrl": "https://www.stairwaytohell.com/electron/homepage.html",
+      "note": "A file index, which is the shape this adapter handles best."
+    },
+    {
+      "id": "acorn-electron-world",
+      "name": "Acorn Electron World",
+      "adapter": "htmlSite",
+      "platformId": "electron",
+      "catalogUrl": "https://www.acornelectron.co.uk/",
+      "note": "Long-running Electron archive, including recent releases. Publishes no robots.txt."
+    },
+    {
+      "id": "8bs-electron",
+      "name": "8-Bit Software",
+      "adapter": "htmlSite",
+      "platformId": "electron",
+      "catalogUrl": "https://8bs.com/",
+      "note": "Covers the Electron alongside the BBC."
+    },
+
+    {
+      "id": "ia-cpc464",
+      "name": "Internet Archive: Amstrad CPC",
+      "adapter": "internetArchive",
+      "platformId": "cpc464",
+      "query": "collection:softwarelibrary_cpc",
+      "note": "3,809 items."
+    },
+    {
+      "id": "cpcrulez-464",
+      "name": "CPCRulez",
+      "adapter": "htmlSite",
+      "platformId": "cpc464",
+      "catalogUrl": "https://cpcrulez.fr/",
+      "note": "Active CPC community with new releases and type-ins. Database-driven, so a crawl may find less than the site holds."
+    },
+    {
+      "id": "cpc-power-464",
+      "name": "CPC-POWER",
+      "adapter": "htmlSite",
+      "platformId": "cpc464",
+      "catalogUrl": "https://www.cpc-power.com/",
+      "note": "The largest CPC catalogue, new releases included. Database-driven. Publishes no robots.txt."
+    },
+
+    {
+      "id": "ia-cpc6128",
+      "name": "Internet Archive: Amstrad CPC",
+      "adapter": "internetArchive",
+      "platformId": "cpc6128",
+      "query": "collection:softwarelibrary_cpc",
+      "note": "3,809 items."
+    },
+    {
+      "id": "cpcrulez-6128",
+      "name": "CPCRulez",
+      "adapter": "htmlSite",
+      "platformId": "cpc6128",
+      "catalogUrl": "https://cpcrulez.fr/",
+      "note": "Active CPC community with new releases and type-ins."
+    },
+    {
+      "id": "cpc-power-6128",
+      "name": "CPC-POWER",
+      "adapter": "htmlSite",
+      "platformId": "cpc6128",
+      "catalogUrl": "https://www.cpc-power.com/",
+      "note": "The largest CPC catalogue, new releases included."
+    },
+
+    {
+      "id": "ia-c64",
+      "name": "Internet Archive: Commodore 64",
+      "adapter": "internetArchive",
+      "platformId": "c64",
+      "query": "collection:softwarelibrary_c64",
+      "note": "98,846 items, of which a sample is fetched."
+    },
+    {
+      "id": "csdb-c64",
+      "name": "CSDb",
+      "adapter": "htmlSite",
+      "platformId": "c64",
+      "catalogUrl": "https://csdb.dk/",
+      "note": "Where the C64 scene publishes new demos and games first. Most releases are .d64, which a GoTek cannot present; only .d81 and .hfe are usable."
+    },
+    {
+      "id": "rgcd-c64",
+      "name": "RGCD",
+      "adapter": "htmlSite",
+      "platformId": "c64",
+      "catalogUrl": "https://www.rgcd.co.uk/",
+      "note": "Publishes new commercial C64 games. Small catalogue, cartridge and disk."
+    },
+    {
+      "id": "protovision-c64",
+      "name": "Protovision",
+      "adapter": "htmlSite",
+      "platformId": "c64",
+      "catalogUrl": "https://www.protovision.games/",
+      "note": "New commercial C64 titles. A shop, so most links lead to a purchase rather than a download."
+    },
+
+    {
+      "id": "ia-c128",
+      "name": "Internet Archive: Commodore 128",
+      "adapter": "internetArchive",
+      "platformId": "c128",
+      "query": "mediatype:software AND (subject:\"commodore 128\" OR title:\"C128\")",
+      "note": "No collection of its own; a subject search returning tens of items."
+    },
+    {
+      "id": "csdb-c128",
+      "name": "CSDb",
+      "adapter": "htmlSite",
+      "platformId": "c128",
+      "catalogUrl": "https://csdb.dk/",
+      "note": "Covers the 128 alongside the 64. The 1581 is the drive a GoTek can stand in for, so look for .d81."
+    },
+    {
+      "id": "protovision-c128",
+      "name": "Protovision",
+      "adapter": "htmlSite",
+      "platformId": "c128",
+      "catalogUrl": "https://www.protovision.games/",
+      "note": "Occasionally publishes 128-compatible titles."
+    },
+
+    {
+      "id": "ia-plus4",
+      "name": "Internet Archive: Commodore Plus/4",
+      "adapter": "internetArchive",
+      "platformId": "plus4",
+      "query": "mediatype:software AND (subject:\"plus/4\" OR title:\"Plus/4\" OR subject:\"commodore plus4\")",
+      "note": "No collection of its own; a subject search returning tens of items."
+    },
+    {
+      "id": "plus4world",
+      "name": "Plus/4 World",
+      "adapter": "htmlSite",
+      "platformId": "plus4",
+      "catalogUrl": "https://plus4world.powweb.com/",
+      "note": "The Plus/4 archive, and where new Plus/4 software appears. Database-driven."
+    },
+    {
+      "id": "csdb-plus4",
+      "name": "CSDb",
+      "adapter": "htmlSite",
+      "platformId": "plus4",
+      "catalogUrl": "https://csdb.dk/",
+      "note": "Carries Plus/4 releases among the Commodore scene output."
+    },
+
+    {
+      "id": "ia-amiga",
+      "name": "Internet Archive: Amiga",
+      "adapter": "internetArchive",
+      "platformId": "amiga",
+      "query": "collection:softwarelibrary_amiga",
+      "note": "13,207 items."
+    },
+    {
+      "id": "aminet-amiga",
+      "name": "Aminet",
+      "adapter": "htmlSite",
+      "platformId": "amiga",
+      "catalogUrl": "https://aminet.net/",
+      "note": "Still the largest Amiga archive and still receiving new uploads. Most files are .lha rather than .adf, so a crawl finds fewer usable images than the size of the archive suggests."
+    },
+    {
+      "id": "eab-amiga",
+      "name": "English Amiga Board",
+      "adapter": "htmlSite",
+      "platformId": "amiga",
+      "catalogUrl": "https://eab.abime.net/",
+      "note": "Where new Amiga work is announced and shared. A forum, so expect attachments."
+    },
+
+    {
+      "id": "ia-spectrum48",
+      "name": "Internet Archive: ZX Spectrum",
+      "adapter": "internetArchive",
+      "platformId": "spectrum48",
+      "query": "collection:softwarelibrary_zx_spectrum",
+      "note": "12,305 items."
+    },
+    {
+      "id": "zxart-48",
+      "name": "ZX-Art",
+      "adapter": "htmlSite",
+      "platformId": "spectrum48",
+      "catalogUrl": "https://zxart.ee/eng/software/",
+      "note": "Catalogues new Spectrum releases as they appear. Much of it is tape, which a GoTek cannot present; look for .trd and .mgt."
+    },
+    {
+      "id": "wos-48",
+      "name": "World of Spectrum",
+      "adapter": "htmlSite",
+      "platformId": "spectrum48",
+      "catalogUrl": "https://worldofspectrum.org/",
+      "note": "The long-standing Spectrum archive, now including modern releases."
+    },
+
+    {
+      "id": "ia-spectrum128",
+      "name": "Internet Archive: ZX Spectrum",
+      "adapter": "internetArchive",
+      "platformId": "spectrum128",
+      "query": "collection:softwarelibrary_zx_spectrum",
+      "note": "12,305 items. A 48K title runs on a 128K."
+    },
+    {
+      "id": "zxart-128",
+      "name": "ZX-Art",
+      "adapter": "htmlSite",
+      "platformId": "spectrum128",
+      "catalogUrl": "https://zxart.ee/eng/software/",
+      "note": "New Spectrum releases. The +3 uses .dsk, which this platform accepts."
+    },
+    {
+      "id": "wos-128",
+      "name": "World of Spectrum",
+      "adapter": "htmlSite",
+      "platformId": "spectrum128",
+      "catalogUrl": "https://worldofspectrum.org/",
+      "note": "The long-standing Spectrum archive, now including modern releases."
+    },
+
+    {
+      "id": "specnext-next",
+      "name": "ZX Spectrum Next",
+      "adapter": "htmlSite",
+      "platformId": "next",
+      "catalogUrl": "https://www.specnext.com/",
+      "note": "The official site, which carries the system distribution and links to new software."
+    },
+    {
+      "id": "itch-next",
+      "name": "itch.io: ZX Spectrum",
+      "adapter": "htmlSite",
+      "platformId": "next",
+      "catalogUrl": "https://itch.io/games/tag-zx-spectrum",
+      "note": "Where most new Next software is published. itch.io permits crawling but refuses its own download endpoints, so this finds pages rather than files, and much of what it lists is paid. Buy it there."
+    },
+
+    {
+      "id": "ia-atari-st",
+      "name": "Internet Archive: Atari ST",
+      "adapter": "internetArchive",
+      "platformId": "atari-st",
+      "query": "collection:softwarelibrary_atari_st_games",
+      "note": "884 items."
+    },
+    {
+      "id": "atarimania-st",
+      "name": "Atarimania",
+      "adapter": "htmlSite",
+      "platformId": "atari-st",
+      "catalogUrl": "https://www.atarimania.com/",
+      "note": "The most complete ST catalogue. Database-driven: a two-level crawl of its listings found no direct images, so treat this as a place to look rather than a source that fills a stick."
+    },
+    {
+      "id": "demozoo-st",
+      "name": "Demozoo: Atari ST",
+      "adapter": "htmlSite",
+      "platformId": "atari-st",
+      "catalogUrl": "https://demozoo.org/platforms/12/",
+      "note": "New ST demos and intros, actively curated. Downloads are hosted elsewhere, so results vary."
+    },
+
+    {
+      "id": "ia-atari-8bit",
+      "name": "Internet Archive: Atari 8-bit",
+      "adapter": "internetArchive",
+      "platformId": "atari-8bit",
+      "query": "collection:atari_8bit_library_games",
+      "note": "4,729 items."
+    },
+    {
+      "id": "abbuc-8bit",
+      "name": "ABBUC",
+      "adapter": "htmlSite",
+      "platformId": "atari-8bit",
+      "catalogUrl": "https://www.abbuc.de/",
+      "note": "Runs the annual software competition that produces most new Atari 8-bit games. Publishes no robots.txt."
+    },
+    {
+      "id": "atariage-8bit",
+      "name": "AtariAge",
+      "adapter": "htmlSite",
+      "platformId": "atari-8bit",
+      "catalogUrl": "https://atariage.com/",
+      "note": "The main homebrew community for Atari hardware. A forum and a shop, so expect links to purchases as well as downloads."
+    }
+  ]
+}
