@@ -55,7 +55,12 @@ import {
   toPosix,
 } from '../src/domain/paths'
 import { isOnDestination, summarisePlan } from '../src/domain/plan'
-import { defaultProviders, providersFor, scopeLabel } from '../src/domain/providers'
+import {
+  defaultProviders,
+  providersFor,
+  readProviderConfig,
+  scopeLabel,
+} from '../src/domain/providers'
 import { countBy, omitKey, upsertById } from '../src/domain/records'
 import type {
   FileEntry,
@@ -515,14 +520,58 @@ check('destination files this drive cannot load are flagged, not counted as ours
 // Online sources
 // ---------------------------------------------------------------------------
 
-check('every platform has at least one online source', () => {
+check('every platform has somewhere to look beyond the Internet Archive', () => {
   for (const platform of platforms) {
     const available = providersFor(defaultProviders, platform.id)
+    assert.ok(available.length > 0, `${platform.name} has no online source at all`)
+
+    // The Archive is one catalogue with one set of gaps. New software for these
+    // machines is published on community sites, so each platform needs at least
+    // a couple of those as well.
+    const elsewhere = available.filter(
+      (provider) => provider.adapter !== 'internetArchive' && provider.platformId,
+    )
     assert.ok(
-      available.length > 0,
-      `${platform.name} has no online source at all, not even the general one`,
+      elsewhere.length >= 2,
+      `${platform.name} has ${elsewhere.length} non-Archive sources; it needs at least 2`,
     )
   }
+})
+
+check('a hand-written source list is validated rather than half-obeyed', () => {
+  const load = readProviderConfig({
+    version: 1,
+    providers: [
+      { id: 'good', name: 'Good', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+      { id: 'good', name: 'Duplicate', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+      { id: '', name: 'Nameless', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+      { id: 'insecure', name: 'Insecure', adapter: 'htmlSite', catalogUrl: 'http://example.org/' },
+      { id: 'unknown', name: 'Unknown', adapter: 'telepathy' },
+      { id: 'noquery', name: 'No query', adapter: 'internetArchive' },
+      'not an object',
+    ],
+  })
+
+  assert.deepEqual(load.providers.map((provider) => provider.id), ['good'])
+  assert.equal(load.problems.length, 6)
+  // Every rejection names what was wrong, so a typo is findable.
+  assert.ok(load.problems.some((problem) => problem.includes('repeats the id')))
+  assert.ok(load.problems.some((problem) => problem.includes('https://')))
+  assert.ok(load.problems.some((problem) => problem.includes('unknown adapter')))
+})
+
+check('a file with no providers array is refused outright', () => {
+  assert.deepEqual(readProviderConfig(null).providers, [])
+  assert.deepEqual(readProviderConfig({ version: 1 }).providers, [])
+  assert.ok(readProviderConfig({}).problems[0].includes('providers'))
+})
+
+check('the shipped file parses and every entry survives validation', () => {
+  // The bundled JSON is hand-edited, so a stray comma or a mistyped adapter
+  // would otherwise only show up as sources quietly missing at runtime.
+  assert.ok(defaultProviders.length > 20)
+  const load = readProviderConfig({ version: 1, providers: defaultProviders })
+  assert.deepEqual(load.problems, [])
 })
 
 check('a source for one machine never appears while preparing another', () => {

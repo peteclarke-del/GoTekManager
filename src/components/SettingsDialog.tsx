@@ -98,11 +98,14 @@ function DownloadCache() {
 export function SettingsDialog({
   settings,
   setSettings,
+  providersPath,
   close,
   clearLibrary,
 }: {
   settings: AppSettings
   setSettings: React.Dispatch<React.SetStateAction<AppSettings>>
+  /** Where a hand-written source list is read from. */
+  providersPath: string
   close: () => void
   clearLibrary: () => void
 }) {
@@ -181,6 +184,17 @@ export function SettingsDialog({
           <option value="oled">OLED friendly</option>
           <option value="original">Original</option>
         </select>
+      </label>
+
+      <h3>Online sources</h3>
+      <p className="mode-note">
+        The list of sites is a JSON file. Put one at the path below to replace the
+        built-in list; it is read when the application starts, and anything unusable in
+        it is reported rather than ignored.
+      </p>
+      <label>
+        Source list
+        <input readOnly value={providersPath || 'Available in the desktop application'} />
       </label>
 
       <DownloadCache />

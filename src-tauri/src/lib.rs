@@ -64,6 +64,7 @@ pub fn run() {
             store::load_workspace,
             store::save_workspace,
             store::read_document,
+            store::read_config_file,
             fingerprint::fingerprint_paths,
             fingerprint::prune_digests,
             store::write_document,

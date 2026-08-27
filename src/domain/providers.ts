@@ -1,131 +1,92 @@
 /**
- * Online providers shipped with the application.
+ * Online providers.
+ *
+ * The list itself lives in `providers.json` beside this file, so it can be
+ * changed without reading any code. That file is bundled at build time and
+ * replaced at run time by a `providers.json` in the application's
+ * configuration folder, whose path the settings screen shows.
+ *
+ * This module is only the rules: what a valid entry looks like, which entries
+ * apply to a machine, and how a source's reach reads on screen.
  *
  * Each entry is a deliberate integration with a specific source. Adding one
  * means reviewing that site's terms and access policy first; the application
  * never performs generic scraping and never bypasses authentication, payment,
- * licensing, or `robots.txt`.
- *
- * That rule is why almost every default here is an Internet Archive collection:
- * it is a public, documented search API meant to be queried, rather than a
- * hobby site being crawled without being asked. Every collection identifier
- * below was checked against the live API rather than guessed, and the item
- * counts in the comments are what it returned.
- *
- * Checked against the live `robots.txt` of every candidate, reading the
- * wildcard group the way a crawler does:
- *
- * - `bbcmicro.co.uk` refuses a generic client outright (`Disallow: /`, with
- *   Googlebot named separately). Only reachable with the per-source override.
- * - `spectrumcomputing.co.uk` refuses everything except `/entry/`, so a scan
- *   started at an entry page is permitted and the rest of the site is not.
- * - `itch.io` permits crawling apart from `/search`, `/checkout/` and the
- *   download endpoints — which is to say, apart from the parts a tool like
- *   this one would want. It is a storefront selling other people's work, so
- *   it is not shipped as a default.
- * - `cpc-power.com`, `plus4world.powweb.com`, `atarimania.com`, `aminet.net`,
- *   `cpcwiki.eu` and `acornelectron.co.uk` all permit crawling, and can be
- *   added without any override.
+ * licensing, or `robots.txt` unless a source has been given the override by
+ * hand.
  */
 
+import bundled from './providers.json'
 import type { OnlineProvider, ProviderAdapter } from './types'
 
-/** Convenience for the many Internet Archive collections below. */
-function archive(
-  id: string,
-  name: string,
-  platformId: string,
-  query: string,
-): OnlineProvider {
-  return { id, name, adapter: 'internetArchive', platformId, query, builtIn: true }
+const ADAPTERS: ProviderAdapter[] = ['internetArchive', 'htmlSite', 'jsonFeed']
+
+/** What a provider file holds. */
+export type ProviderConfig = {
+  version: number
+  providers: OnlineProvider[]
 }
 
-export const defaultProviders: OnlineProvider[] = [
-  // Unscoped: searches any platform by name. Kept first because it is the one
-  // source that applies whatever machine is being prepared.
-  {
-    id: 'internet-archive',
-    name: 'Internet Archive',
-    adapter: 'internetArchive',
-    query: 'mediatype:software',
-    builtIn: true,
-  },
+export type ProviderLoad = {
+  providers: OnlineProvider[]
+  /** Anything rejected, said plainly rather than dropped in silence. */
+  problems: string[]
+}
 
-  // Acorn. The Internet Archive holds very little for these machines — around
-  // thirty items between them — so Stairway to Hell, which is the long-standing
-  // archive for both, does the work. Its robots.txt permits inspection.
-  {
-    id: 'stairway-bbc',
-    name: 'Stairway to Hell: BBC',
-    adapter: 'htmlSite',
-    catalogUrl: 'https://www.stairwaytohell.com/bbc/homepage.html',
-    platformId: 'bbc',
-    builtIn: true,
-  },
-  {
-    id: 'stairway-electron',
-    name: 'Stairway to Hell: Electron',
-    adapter: 'htmlSite',
-    catalogUrl: 'https://www.stairwaytohell.com/electron/homepage.html',
-    platformId: 'electron',
-    builtIn: true,
-  },
+/**
+ * Checks one entry from a file a person may have typed by hand.
+ *
+ * Returns the reason it is unusable rather than a boolean, because a config
+ * file that is quietly half-ignored is worse than one that says what is wrong.
+ */
+function faultIn(entry: unknown, index: number, seen: Set<string>): string | null {
+  const where = `entry ${index + 1}`
+  if (typeof entry !== 'object' || entry === null) return `${where} is not an object`
+  const provider = entry as Partial<OnlineProvider>
 
-  // Amstrad: Software Library: Amstrad CPC, 3,809 items.
-  archive('ia-cpc464', 'Internet Archive: Amstrad CPC', 'cpc464', 'collection:softwarelibrary_cpc'),
-  archive('ia-cpc6128', 'Internet Archive: Amstrad CPC', 'cpc6128', 'collection:softwarelibrary_cpc'),
+  if (!provider.id?.trim()) return `${where} has no id`
+  if (seen.has(provider.id)) return `${where} repeats the id "${provider.id}"`
+  if (!provider.name?.trim()) return `${provider.id} has no name`
+  if (!provider.adapter || !ADAPTERS.includes(provider.adapter)) {
+    return `${provider.id} has an unknown adapter "${provider.adapter}"`
+  }
+  if (provider.adapter === 'internetArchive') {
+    if (!provider.query?.trim()) return `${provider.id} needs a query`
+  } else if (!provider.catalogUrl?.startsWith('https://')) {
+    // Enforced natively too; catching it here names the offending entry.
+    return `${provider.id} needs an https:// URL`
+  }
+  return null
+}
 
-  // Commodore: Software Library: C64, 98,846 items. Only a sample is fetched.
-  archive('ia-c64', 'Internet Archive: Commodore 64', 'c64', 'collection:softwarelibrary_c64'),
-  // The 128 and the Plus/4 have no collection of their own, so these are
-  // subject searches and return tens of items rather than thousands.
-  archive(
-    'ia-c128',
-    'Internet Archive: Commodore 128',
-    'c128',
-    'mediatype:software AND (subject:"commodore 128" OR title:"C128")',
-  ),
-  archive(
-    'ia-plus4',
-    'Internet Archive: Commodore Plus/4',
-    'plus4',
-    'mediatype:software AND (subject:"plus/4" OR title:"Plus/4" OR subject:"commodore plus4")',
-  ),
-  // Software Library: Amiga, 13,207 items.
-  archive('ia-amiga', 'Internet Archive: Amiga', 'amiga', 'collection:softwarelibrary_amiga'),
+/** Validates a parsed provider file, keeping the entries that are usable. */
+export function readProviderConfig(value: unknown): ProviderLoad {
+  const problems: string[] = []
+  const config = value as Partial<ProviderConfig> | null
+  if (!config || !Array.isArray(config.providers)) {
+    return { providers: [], problems: ['the file has no "providers" array'] }
+  }
 
-  // Sinclair: Software Library: ZX Spectrum, 12,305 items. The same collection
-  // serves both machines; a 48K title runs on a 128K.
-  archive(
-    'ia-spectrum48',
-    'Internet Archive: ZX Spectrum',
-    'spectrum48',
-    'collection:softwarelibrary_zx_spectrum',
-  ),
-  archive(
-    'ia-spectrum128',
-    'Internet Archive: ZX Spectrum',
-    'spectrum128',
-    'collection:softwarelibrary_zx_spectrum',
-  ),
-  // Nothing for the Next: it is recent enough that its software lives on
-  // itch.io and the official distribution, neither of which can be indexed
-  // without an authenticated integration.
+  const seen = new Set<string>()
+  const providers: OnlineProvider[] = []
+  config.providers.forEach((entry, index) => {
+    const fault = faultIn(entry, index, seen)
+    if (fault) {
+      problems.push(fault)
+      return
+    }
+    const provider = entry as OnlineProvider
+    seen.add(provider.id)
+    providers.push({ ...provider, builtIn: true })
+  })
+  return { providers, problems }
+}
 
-  // Atari: 4,729 games for the 8-bit line, 884 for the ST.
-  archive(
-    'ia-atari-8bit',
-    'Internet Archive: Atari 8-bit',
-    'atari-8bit',
-    'collection:atari_8bit_library_games',
-  ),
-  archive(
-    'ia-atari-st',
-    'Internet Archive: Atari ST',
-    'atari-st',
-    'collection:softwarelibrary_atari_st_games',
-  ),
-]
+/** The list compiled into the application. */
+export const defaultProviders: OnlineProvider[] = readProviderConfig(bundled).providers
+
+/** Where a hand-written override is looked for. */
+export const PROVIDERS_FILE = 'providers.json'
 
 const ADAPTER_LABELS: Record<ProviderAdapter, string> = {
   internetArchive: 'Search API',
