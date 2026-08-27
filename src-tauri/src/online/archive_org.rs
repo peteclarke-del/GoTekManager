@@ -12,7 +12,9 @@ const METADATA_URL: &str = "https://archive.org/metadata";
 // segment, and a trailing slash would produce an empty one.
 const DOWNLOAD_URL: &str = "https://archive.org/download";
 const DETAILS_URL: &str = "https://archive.org/details";
-const SEARCH_ROWS: &str = "100";
+/// A catalogue is a sample, not a census. Large enough to be useful for
+/// coverage comparison, small enough not to lean on a free public API.
+const SEARCH_ROWS: &str = "500";
 
 #[derive(Deserialize)]
 struct SearchResponse {
@@ -91,6 +93,21 @@ pub async fn fetch_metadata(client: &reqwest::Client, identifier: &str) -> Resul
         .context("Archive metadata was invalid")
 }
 
+/// Builds the search a provider describes.
+///
+/// A provider that names its platform has already said what it covers — its
+/// query is a collection, and narrowing that further by the machine's name
+/// would throw away almost everything, because an item in the Amstrad CPC
+/// collection is not titled "Amstrad CPC464". Only an unscoped provider needs
+/// the platform name as a filter.
+pub fn build_query(provider: &OnlineProvider, platform_name: &str) -> String {
+    let base = provider.query.as_deref().unwrap_or("mediatype:software");
+    if provider.platform_id.is_some() {
+        return base.to_string();
+    }
+    format!("({base}) AND (title:\"{platform_name}\" OR description:\"{platform_name}\")")
+}
+
 /// Searches the software collection for one platform.
 pub async fn search(
     client: &reqwest::Client,
@@ -98,10 +115,7 @@ pub async fn search(
     platform_name: &str,
     platform_id: &str,
 ) -> Result<Vec<OnlineTitle>> {
-    let query = format!(
-        "({}) AND (title:\"{platform_name}\" OR description:\"{platform_name}\")",
-        provider.query.as_deref().unwrap_or("mediatype:software")
-    );
+    let query = build_query(provider, platform_name);
     let response = client
         .get(SEARCH_URL)
         .query(&[
@@ -232,6 +246,36 @@ mod tests {
         assert!(supported("Elite.SSD", &extensions));
         assert!(supported("collection.zip", &extensions));
         assert!(!supported("manual.pdf", &extensions));
+    }
+
+    #[test]
+    fn a_platform_scoped_provider_is_not_narrowed_a_second_time() {
+        use crate::online::{Adapter, OnlineProvider};
+        let scoped = OnlineProvider {
+            id: "ia-cpc".into(),
+            name: "Internet Archive: Amstrad CPC".into(),
+            adapter: Adapter::InternetArchive,
+            catalog_url: None,
+            query: Some("collection:softwarelibrary_cpc".into()),
+            platform_id: Some("cpc464".into()),
+        };
+
+        // Adding `title:"Amstrad CPC464"` here would return almost nothing:
+        // items in that collection are named after the game, not the machine.
+        assert_eq!(
+            super::build_query(&scoped, "Amstrad CPC464"),
+            "collection:softwarelibrary_cpc"
+        );
+
+        let general = OnlineProvider {
+            platform_id: None,
+            query: Some("mediatype:software".into()),
+            ..scoped
+        };
+        assert_eq!(
+            super::build_query(&general, "Amstrad CPC464"),
+            "(mediatype:software) AND (title:\"Amstrad CPC464\" OR description:\"Amstrad CPC464\")"
+        );
     }
 
     #[test]

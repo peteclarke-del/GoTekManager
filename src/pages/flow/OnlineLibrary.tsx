@@ -12,9 +12,15 @@ import {
 } from 'lucide-react'
 import { Empty, InlineStatus, ProgressDialog } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
-import type { Platform } from '../../domain/catalog'
+import { platforms, requirePlatform, type Platform } from '../../domain/catalog'
 import { belongsToPlatform, formatBytes, softwareTitleKey } from '../../domain/media'
-import { adapterLabel, isBrowsable, isDownloadable } from '../../domain/providers'
+import {
+  adapterLabel,
+  isBrowsable,
+  isDownloadable,
+  providersFor,
+  scopeLabel,
+} from '../../domain/providers'
 import type {
   CachedDownload,
   MediaItem,
@@ -58,7 +64,9 @@ export function OnlineLibrary({
   const [addedNotice, setAddedNotice] = useState('')
   const { busyId, error, setError, run } = useBusyItem()
 
-  const provider = providers.find((entry) => entry.id === providerId) || providers[0]
+  // Only the sources that apply to the platform being prepared.
+  const visible = useMemo(() => providersFor(providers, platform.id), [providers, platform.id])
+  const provider = visible.find((entry) => entry.id === providerId) || visible[0]
   const catalog = provider ? catalogs[provider.id] : undefined
 
   // Cached catalogues load without touching the network, so the coverage
@@ -67,7 +75,7 @@ export function OnlineLibrary({
     let active = true
     setError('')
     Promise.all(
-      providers.map(
+      visible.map(
         async (entry) => [entry.id, await loadProviderCatalog(entry.id, platform.id)] as const,
       ),
     )
@@ -83,7 +91,7 @@ export function OnlineLibrary({
     return () => {
       active = false
     }
-  }, [providers, platform.id, setError])
+  }, [visible, platform.id, setError])
 
   /** Normalised titles already held locally for this platform. */
   const localKeys = useMemo(
@@ -161,7 +169,7 @@ export function OnlineLibrary({
       <section className="panel library-sidebar online-sources">
         <p className="eyebrow">{platform.name}</p>
         <h3>Online sites</h3>
-        {providers.map((entry) => (
+        {visible.map((entry) => (
           <div
             className={`provider-row ${entry.id === provider?.id ? 'selected' : ''}`}
             key={entry.id}
@@ -170,7 +178,10 @@ export function OnlineLibrary({
               <Globe2 />
               <span>
                 <b>{entry.name}</b>
-                <small>{adapterLabel(entry.adapter)}</small>
+                <small>
+                  {adapterLabel(entry.adapter)} ·{' '}
+                  {scopeLabel(entry, (id) => requirePlatform(id).name)}
+                </small>
               </span>
             </button>
             {!entry.builtIn && (
@@ -184,6 +195,12 @@ export function OnlineLibrary({
             )}
           </div>
         ))}
+        {!visible.length && (
+          <p className="mode-note">
+            No online sources apply to {platform.name} yet. Add one below, either for this
+            machine alone or for every platform.
+          </p>
+        )}
         <button className="button secondary add-site" onClick={() => setAdding(true)}>
           <Plus />
           Add site
@@ -369,6 +386,7 @@ export function OnlineLibrary({
 
       {adding && (
         <AddSiteDialog
+          platform={platform}
           close={() => setAdding(false)}
           add={(added) => {
             addProvider(added)
@@ -402,15 +420,20 @@ export function OnlineLibrary({
 }
 
 function AddSiteDialog({
+  platform,
   close,
   add,
 }: {
+  platform: Platform
   close: () => void
   add: (provider: OnlineProvider) => void
 }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [adapter, setAdapter] = useState<'htmlSite' | 'jsonFeed'>('htmlSite')
+  // Most sources are machine-specific, so the platform being prepared is the
+  // sensible default rather than "everything".
+  const [scope, setScope] = useState<string>(platform.id)
   const valid = name.trim().length > 0 && url.startsWith('https://')
 
   return (
@@ -430,6 +453,20 @@ function AddSiteDialog({
           <option value="jsonFeed">JSON catalogue or known list</option>
         </select>
       </label>
+      <label>
+        Applies to
+        <select value={scope} onChange={(event) => setScope(event.target.value)}>
+          <option value="">All platforms</option>
+          {platforms.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="mode-note">
+        A source for one machine only appears when that machine is being prepared.
+      </p>
       <label>
         {adapter === 'htmlSite' ? 'Starting page URL' : 'Catalogue URL'}
         <input
@@ -469,6 +506,7 @@ function AddSiteDialog({
             name: name.trim(),
             adapter,
             catalogUrl: url.trim(),
+            platformId: scope || undefined,
           })
         }
       >
