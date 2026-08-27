@@ -13,6 +13,23 @@ import type { FileEntry, MediaItem, Profile, TransferOperation } from './types'
 export const FOLDER_TOKENS = ['platform', 'family', 'initial', 'format'] as const
 
 /**
+ * The alphabetical bucket a title belongs in.
+ *
+ * Digits share a single `0-9` folder and anything else shares `#`, which is the
+ * convention every large retro collection uses — twenty-six letter folders plus
+ * two catch-alls, rather than ten separate folders holding a handful of titles
+ * between them.
+ */
+export function initialBucket(title: string): string {
+  // The extension is dropped first, or a title of only punctuation would be
+  // filed under the first letter of ".ssd".
+  const stem = title.trim().replace(/\.[^.]+$/, '')
+  const first = stem.match(/[a-z0-9]/i)?.[0]
+  if (!first) return '#'
+  return /[0-9]/.test(first) ? '0-9' : first.toUpperCase()
+}
+
+/**
  * Expands a custom folder template for one title.
  *
  * `{initial}` groups alphabetically, which is what makes a few thousand titles
@@ -26,7 +43,7 @@ export function renderFolderTemplate(template: string, item: MediaItem): string 
   const values: Record<string, string> = {
     platform: platform?.folderName || 'Unsorted',
     family: platform?.family || 'Unsorted',
-    initial: (title.match(/[a-z0-9]/i)?.[0] || '#').toUpperCase(),
+    initial: initialBucket(title),
     format: item.extension.toUpperCase(),
   }
   const expanded = template.replace(/\{(\w+)\}/g, (whole, token: string) =>
