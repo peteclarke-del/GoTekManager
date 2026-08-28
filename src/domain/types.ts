@@ -64,6 +64,21 @@ export type ProfileDefaults = Pick<
 export type AppSettings = {
   theme: ThemeChoice
   defaults: ProfileDefaults
+  /**
+   * Whether indexing converts images the drive cannot read into ones it can.
+   *
+   * The conversion writes a copy into the application's cache; the file it was
+   * made from is never modified.
+   */
+  convertIncompatible: boolean
+}
+
+/** A conversion the application can perform, as the native side describes it. */
+export type ConversionSupport = {
+  conversion: string
+  from: string
+  to: string
+  summary: string
 }
 
 export type SourceLocation = {
@@ -198,7 +213,7 @@ export type TransferPlan = {
 // Online catalogues
 // ---------------------------------------------------------------------------
 
-export type ProviderAdapter = 'internetArchive' | 'jsonFeed' | 'htmlSite'
+export type ProviderAdapter = 'internetArchive' | 'jsonFeed' | 'htmlSite' | 'demozoo'
 
 export type OnlineProvider = {
   id: string

@@ -139,3 +139,14 @@ button[aria-pressed="true"]{box-shadow:inset 0 -4px 0 #a46800;background:#fff1c7
    otherwise its confirm button ends up below the bottom edge, unreachable. */
 .modal{max-height:calc(100vh - 48px);overflow-y:auto}
 .modal-backdrop{padding:24px}
+
+/* A short explanatory list inside a dialog: readable without looking like the
+   data tables elsewhere, which carry their own borders and hover states. */
+.plain-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.plain-list li {
+  margin-bottom: 6px;
+}
