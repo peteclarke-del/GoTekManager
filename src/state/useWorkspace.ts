@@ -8,7 +8,13 @@ import {
   readProviderConfig,
 } from '../domain/providers'
 import type { AppSettings, OnlineProvider } from '../domain/types'
-import { loadSettings, PROVIDERS_KEY, SETTINGS_KEY, TABLE_PREFS_KEY } from './migrations'
+import {
+  loadSettings,
+  PROVIDERS_KEY,
+  reviveSettings,
+  SETTINGS_KEY,
+  TABLE_PREFS_KEY,
+} from './migrations'
 import { loadPersistedWorkspace, persistWorkspace } from './persistence.native'
 import { isDesktop, readConfigFile } from '../native/commands'
 import { readStored, usePersistentState } from './persistence'
@@ -69,7 +75,7 @@ export function useWorkspace() {
 }
 
 export function useSettings() {
-  return usePersistentState<AppSettings>(SETTINGS_KEY, loadSettings)
+  return usePersistentState<AppSettings>(SETTINGS_KEY, loadSettings, reviveSettings)
 }
 
 /**
@@ -126,5 +132,7 @@ export const defaultTablePreferences: TablePreferences = {
 }
 
 export function useTablePreferences() {
-  return usePersistentState<TablePreferences>(TABLE_PREFS_KEY, defaultTablePreferences)
+  return usePersistentState<TablePreferences>(TABLE_PREFS_KEY, defaultTablePreferences, (
+    stored,
+  ) => ({ ...defaultTablePreferences, ...stored }))
 }

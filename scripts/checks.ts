@@ -71,7 +71,12 @@ import type {
   TransferPlan,
   TransferResultEntry,
 } from '../src/domain/types'
-import { loadSettings, loadWorkspace, splitWorkspace } from '../src/state/migrations'
+import {
+  loadSettings,
+  loadWorkspace,
+  reviveSettings,
+  splitWorkspace,
+} from '../src/state/migrations'
 import {
   collectionOf,
   createProfile,
@@ -977,6 +982,28 @@ check('the edit dialog and the source file reject the same things', () => {
     ),
     null,
   )
+})
+
+check('a stored record is revived against the shape being read, not returned as written', () => {
+  // The path the application actually takes: `usePersistentState` reads the key
+  // and hands back what it finds. A record written before a setting existed
+  // therefore arrives without it, and `undefined` in a checkbox reads as off
+  // however the default was declared. `reviveSettings` is what closes that.
+  const written = {
+    theme: 'dark',
+    defaults: { firmwareId: 'hxc', organise: false },
+  } as unknown as ReturnType<typeof loadSettings>
+
+  const revived = reviveSettings(written)
+
+  assert.equal(revived.theme, 'dark')
+  assert.equal(revived.convertIncompatible, true)
+  // A nested default missing from the record fills in too, rather than leaving
+  // a profile created from it with no naming rule at all.
+  assert.equal(revived.defaults.firmwareId, 'hxc')
+  assert.equal(revived.defaults.organise, false)
+  assert.equal(revived.defaults.naming, 'oled')
+  assert.equal(revived.defaults.folderLayout, 'platform')
 })
 
 check('a settings record written before conversion existed gains the new default', () => {

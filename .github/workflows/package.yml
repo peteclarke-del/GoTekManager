@@ -2,6 +2,8 @@ name: Package desktop application
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths: ["src-tauri/**", "src/**", "package.json", ".github/workflows/package.yml"]
   push:
     tags: ["v*"]
 
@@ -9,6 +11,24 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    name: Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: npm ci
+      - name: Type-check, check, and test
+        run: npm run verify
+      - name: Lint the native code
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
   package:
     name: ${{ matrix.name }}
     strategy:
@@ -73,9 +93,11 @@ jobs:
         run: |
           package="$(find "src-tauri/target/${{ matrix.target }}/release/bundle/deb" -name '*.deb' -print -quit)"
           dpkg-deb --contents "$package" | grep -q 'usr/bin/gotek-manager$'
+      # Building for an explicit target writes under target/<target>/, not
+      # under target/. Uploading the latter found nothing on every platform.
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
           name: gotek-manager-${{ matrix.name }}
-          path: src-tauri/target/release/bundle/
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/
           if-no-files-found: error

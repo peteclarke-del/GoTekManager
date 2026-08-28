@@ -43,10 +43,24 @@ export function removeStored(key: string): void {
  * The initial value is computed lazily so a large library is parsed once, on
  * mount, rather than on every render.
  */
-export function usePersistentState<T>(key: string, initial: T | (() => T)) {
+/**
+ * State kept in local storage.
+ *
+ * What was stored is returned as it was written, which is right for a value
+ * that is only ever whole. It is *not* right for a record that grows a field at
+ * a time: a settings record written last month has none of this month's fields,
+ * and handing it back untouched leaves them `undefined`, which reads as "off"
+ * in a checkbox. A record of that kind needs `revive` to fill the gaps.
+ */
+export function usePersistentState<T>(
+  key: string,
+  initial: T | (() => T),
+  revive?: (stored: T) => T,
+) {
   const [value, setValue] = useState<T>(() => {
     const fallback = typeof initial === 'function' ? (initial as () => T)() : initial
-    return readStored(key, fallback)
+    const stored = readStored(key, fallback)
+    return stored === fallback ? fallback : (revive?.(stored) ?? stored)
   })
   useEffect(() => writeStored(key, value), [key, value])
   return [value, setValue] as const
