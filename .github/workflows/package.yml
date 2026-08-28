@@ -92,7 +92,11 @@ jobs:
         shell: bash
         run: |
           package="$(find "src-tauri/target/${{ matrix.target }}/release/bundle/deb" -name '*.deb' -print -quit)"
-          dpkg-deb --contents "$package" | grep -q 'usr/bin/gotek-manager$'
+          # Not piped straight into grep: grep -q closes the pipe on its first
+          # match, dpkg-deb then fails to write, and pipefail fails the step
+          # for a check that in fact passed.
+          contents="$(dpkg-deb --contents "$package")"
+          grep -q 'usr/bin/gotek-manager$' <<<"$contents"
       # Building for an explicit target writes under target/<target>/, not
       # under target/. Uploading the latter found nothing on every platform.
       - name: Upload packages

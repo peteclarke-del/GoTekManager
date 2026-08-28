@@ -4,8 +4,26 @@
   "mainBinaryName": "gotek-manager",
   "version": "0.1.0",
   "identifier": "uk.co.gotekmanager.desktop",
-  "build": { "frontendDist": "../dist", "devUrl": "http://localhost:1420", "beforeDevCommand": "npm run dev", "beforeBuildCommand": "npm run build" },
-  "app": { "windows": [{ "title": "GoTek Manager", "width": 1220, "height": 780, "minWidth": 850, "minHeight": 580 }], "security": { "csp": null } },
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "GoTek Manager",
+        "width": 1220,
+        "height": 780,
+        "minWidth": 850,
+        "minHeight": 580
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -16,13 +34,30 @@
     "license": "MIT",
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libsoup-3.0-0"],
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libsoup-3.0-0"
+        ],
         "section": "utils",
         "priority": "optional"
       },
-      "rpm": { "depends": ["webkit2gtk4.1", "libsoup3"] },
-      "appimage": { "bundleMediaFramework": false }
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "libsoup3"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
     },
-    "icon": ["icons/icon.png"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

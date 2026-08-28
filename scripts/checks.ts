@@ -11,7 +11,7 @@
 
 import { storage } from './environment'
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
@@ -982,6 +982,27 @@ check('the edit dialog and the source file reject the same things', () => {
     ),
     null,
   )
+})
+
+check('every icon the bundle names exists and is one a bundler can read', () => {
+  // Windows needs an .ico and macOS an .icns, and neither is produced from a
+  // PNG at bundle time. Their absence only shows up on those platforms, which
+  // is to say in a release: the application shipped with a single 16-bit PNG
+  // and no Windows or macOS build was possible at all.
+  const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'))
+  const icons: string[] = config.bundle.icon
+
+  assert.ok(icons.some((icon) => icon.endsWith('.ico')), 'no Windows icon')
+  assert.ok(icons.some((icon) => icon.endsWith('.icns')), 'no macOS icon')
+  for (const icon of icons) {
+    assert.ok(existsSync(`src-tauri/${icon}`), `${icon} is named but missing`)
+  }
+
+  // The macOS bundler reads 8-bit PNGs only, and refuses a 16-bit one outright.
+  // Byte 24 of the IHDR chunk is the bit depth.
+  for (const icon of icons.filter((name) => name.endsWith('.png'))) {
+    assert.equal(readFileSync(`src-tauri/${icon}`)[24], 8, `${icon} is not 8-bit`)
+  }
 })
 
 check('a stored record is revived against the shape being read, not returned as written', () => {
