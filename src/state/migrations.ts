@@ -216,8 +216,25 @@ export function loadWorkspace(): Workspace {
   return migrateWorkspace(loadSettings())
 }
 
+/**
+ * Fills in whatever a stored settings record predates.
+ *
+ * Every release that adds a setting makes every record already on disk older
+ * than the shape being read. Spreading the defaults underneath is what stops a
+ * setting added since from arriving as `undefined` — which a checkbox shows as
+ * off, whatever the default was meant to be. The nested defaults are merged in
+ * their own right for the same reason.
+ */
+export function reviveSettings(stored: AppSettings): AppSettings {
+  return {
+    ...defaultSettings,
+    ...stored,
+    defaults: { ...defaultSettings.defaults, ...stored.defaults },
+  }
+}
+
 export function loadSettings(): AppSettings {
   const stored = readStored<AppSettings | null>(SETTINGS_KEY, null)
-  if (stored?.defaults) return { ...defaultSettings, ...stored }
+  if (stored?.defaults) return reviveSettings(stored)
   return migrateSettings()
 }
