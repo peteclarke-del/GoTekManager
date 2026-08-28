@@ -50,6 +50,8 @@ export type FlowPageProps = {
   setCustomProviders: React.Dispatch<React.SetStateAction<OnlineProvider[]>>
   preferences: TablePreferences
   setPreferences: React.Dispatch<React.SetStateAction<TablePreferences>>
+  /** Whether indexing also converts images the drive cannot read. */
+  convertIncompatible: boolean
   notify: (notice: Notice) => void
   manageProfiles: () => void
 }
@@ -63,6 +65,7 @@ export function FlowPage({
   setCustomProviders,
   preferences,
   setPreferences,
+  convertIncompatible,
   notify,
   manageProfiles,
 }: FlowPageProps) {
@@ -169,7 +172,7 @@ export function FlowPage({
   // -------------------------------------------------------------------------
 
   const indexSource = async (source: SourceLocation) => {
-    const entries = await scanFolder(source.path)
+    const entries = await scanFolder(source.path, undefined, convertIncompatible)
     const items = entries.map((entry) => classifyMedia(entry, source.path))
     dispatch({ type: 'sourceIndexed', source, items })
     return items.length

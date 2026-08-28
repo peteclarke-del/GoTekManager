@@ -6,6 +6,7 @@
     "in the application's configuration folder, whose path is shown in Settings. An",
     "override replaces this list entirely; entries that fail validation are dropped and",
     "reported rather than silently ignored.",
+    "The demozoo adapter puts the Demozoo platform number in `query` rather than a URL.",
     "",
     "Fields: id (unique), name, adapter (internetArchive | htmlSite | jsonFeed),",
     "platformId (omit for every platform), query (search adapters), catalogUrl (site and",
@@ -32,7 +33,6 @@
       "query": "mediatype:software",
       "note": "Searches any machine by name. The one source that applies whatever you are preparing."
     },
-
     {
       "id": "stairway-bbc",
       "name": "Stairway to Hell: BBC",
@@ -65,7 +65,6 @@
       "catalogUrl": "https://bbcmicro.co.uk/",
       "note": "By far the richest BBC source found: thirty-six .ssd links on its front page alone. Its robots.txt refuses automated clients, so it does nothing until you enable the override on this source and accept what that means."
     },
-
     {
       "id": "stairway-electron",
       "name": "Stairway to Hell: Electron",
@@ -90,7 +89,6 @@
       "catalogUrl": "https://8bs.com/",
       "note": "Covers the Electron alongside the BBC."
     },
-
     {
       "id": "ia-cpc464",
       "name": "Internet Archive: Amstrad CPC",
@@ -115,7 +113,6 @@
       "catalogUrl": "https://www.cpc-power.com/",
       "note": "The largest CPC catalogue, new releases included. Database-driven. Publishes no robots.txt."
     },
-
     {
       "id": "ia-cpc6128",
       "name": "Internet Archive: Amstrad CPC",
@@ -140,7 +137,6 @@
       "catalogUrl": "https://www.cpc-power.com/",
       "note": "The largest CPC catalogue, new releases included."
     },
-
     {
       "id": "ia-c64",
       "name": "Internet Archive: Commodore 64",
@@ -173,7 +169,6 @@
       "catalogUrl": "https://www.protovision.games/",
       "note": "New commercial C64 titles. A shop, so most links lead to a purchase rather than a download."
     },
-
     {
       "id": "ia-c128",
       "name": "Internet Archive: Commodore 128",
@@ -198,7 +193,6 @@
       "catalogUrl": "https://www.protovision.games/",
       "note": "Occasionally publishes 128-compatible titles."
     },
-
     {
       "id": "ia-plus4",
       "name": "Internet Archive: Commodore Plus/4",
@@ -223,7 +217,6 @@
       "catalogUrl": "https://csdb.dk/",
       "note": "Carries Plus/4 releases among the Commodore scene output."
     },
-
     {
       "id": "ia-amiga",
       "name": "Internet Archive: Amiga",
@@ -248,7 +241,6 @@
       "catalogUrl": "https://eab.abime.net/",
       "note": "Where new Amiga work is announced and shared. A forum, so expect attachments."
     },
-
     {
       "id": "ia-spectrum48",
       "name": "Internet Archive: ZX Spectrum",
@@ -273,7 +265,6 @@
       "catalogUrl": "https://worldofspectrum.org/",
       "note": "The long-standing Spectrum archive, now including modern releases."
     },
-
     {
       "id": "ia-spectrum128",
       "name": "Internet Archive: ZX Spectrum",
@@ -298,7 +289,6 @@
       "catalogUrl": "https://worldofspectrum.org/",
       "note": "The long-standing Spectrum archive, now including modern releases."
     },
-
     {
       "id": "specnext-next",
       "name": "ZX Spectrum Next",
@@ -315,7 +305,6 @@
       "catalogUrl": "https://itch.io/games/tag-zx-spectrum",
       "note": "Where most new Next software is published. itch.io permits crawling but refuses its own download endpoints, so this finds pages rather than files, and much of what it lists is paid. Buy it there."
     },
-
     {
       "id": "ia-atari-st",
       "name": "Internet Archive: Atari ST",
@@ -332,15 +321,6 @@
       "catalogUrl": "https://www.atarimania.com/",
       "note": "The most complete ST catalogue. Database-driven: a two-level crawl of its listings found no direct images, so treat this as a place to look rather than a source that fills a stick."
     },
-    {
-      "id": "demozoo-st",
-      "name": "Demozoo: Atari ST",
-      "adapter": "htmlSite",
-      "platformId": "atari-st",
-      "catalogUrl": "https://demozoo.org/platforms/12/",
-      "note": "New ST demos and intros, actively curated. Downloads are hosted elsewhere, so results vary."
-    },
-
     {
       "id": "ia-atari-8bit",
       "name": "Internet Archive: Atari 8-bit",
@@ -364,6 +344,94 @@
       "platformId": "atari-8bit",
       "catalogUrl": "https://atariage.com/",
       "note": "The main homebrew community for Atari hardware. A forum and a shop, so expect links to purchases as well as downloads."
+    },
+    {
+      "id": "demozoo-bbc",
+      "name": "Demozoo: BBC Micro",
+      "adapter": "demozoo",
+      "platformId": "bbc",
+      "query": "66",
+      "note": "Demoscene and homebrew productions for the BBC Micro, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-cpc464",
+      "name": "Demozoo: Amstrad CPC",
+      "adapter": "demozoo",
+      "platformId": "cpc464",
+      "query": "36",
+      "note": "Demoscene and homebrew productions for the Amstrad CPC, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-cpc6128",
+      "name": "Demozoo: Amstrad CPC",
+      "adapter": "demozoo",
+      "platformId": "cpc6128",
+      "query": "36",
+      "note": "Demoscene and homebrew productions for the Amstrad CPC, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-c64",
+      "name": "Demozoo: Commodore 64",
+      "adapter": "demozoo",
+      "platformId": "c64",
+      "query": "3",
+      "note": "Demoscene and homebrew productions for the Commodore 64, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-c128",
+      "name": "Demozoo: Commodore 128",
+      "adapter": "demozoo",
+      "platformId": "c128",
+      "query": "55",
+      "note": "Demoscene and homebrew productions for the Commodore 128, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-plus4",
+      "name": "Demozoo: Commodore 16/Plus 4",
+      "adapter": "demozoo",
+      "platformId": "plus4",
+      "query": "41",
+      "note": "Demoscene and homebrew productions for the Commodore 16/Plus 4, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-amiga",
+      "name": "Demozoo: Amiga OCS/ECS",
+      "adapter": "demozoo",
+      "platformId": "amiga",
+      "query": "5",
+      "note": "Demoscene and homebrew productions for the Amiga OCS/ECS, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-spectrum48",
+      "name": "Demozoo: ZX Spectrum",
+      "adapter": "demozoo",
+      "platformId": "spectrum48",
+      "query": "2",
+      "note": "Demoscene and homebrew productions for the ZX Spectrum, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-spectrum128",
+      "name": "Demozoo: ZX Spectrum",
+      "adapter": "demozoo",
+      "platformId": "spectrum128",
+      "query": "2",
+      "note": "Demoscene and homebrew productions for the ZX Spectrum, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-atari-st",
+      "name": "Demozoo: Atari ST/E",
+      "adapter": "demozoo",
+      "platformId": "atari-st",
+      "query": "9",
+      "note": "Demoscene and homebrew productions for the Atari ST/E, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "demozoo-atari-8bit",
+      "name": "Demozoo: Atari 8 bit",
+      "adapter": "demozoo",
+      "platformId": "atari-8bit",
+      "query": "16",
+      "note": "Demoscene and homebrew productions for the Atari 8 bit, through Demozoo's documented API. Open a title to see the files attached to it."
     }
   ]
 }

@@ -6,6 +6,7 @@
 //! or ignores a site's stated policy.
 
 pub mod archive_org;
+pub mod demozoo;
 pub mod feed;
 pub mod http;
 pub mod robots;
@@ -33,6 +34,9 @@ pub enum Adapter {
     InternetArchive,
     JsonFeed,
     HtmlSite,
+    /// A documented API, which is what a database-backed site needs: crawling
+    /// one finds nothing, because its downloads sit behind scripts.
+    Demozoo,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -183,6 +187,7 @@ pub async fn refresh_provider(
             let supported = normalise_extensions(extensions);
             website::inspect(&client, &provider, &platform_id, &supported).await?
         }
+        Adapter::Demozoo => demozoo::search(&client, &provider, &platform_id).await?,
     };
 
     let catalog = ProviderCatalog {
@@ -231,18 +236,25 @@ pub async fn browse_online_title(
     title: OnlineTitle,
     extensions: Vec<String>,
 ) -> Result<Vec<OnlineTitle>> {
-    if provider.adapter != Adapter::InternetArchive {
-        return Ok(vec![title]);
-    }
     let extensions = normalise_extensions(extensions);
     let client = client(provider.user_agent.as_deref())?;
-    let metadata = archive_org::fetch_metadata(&client, &title.remote_id).await?;
-    Ok(archive_org::item_files(
-        &provider,
-        &title,
-        &metadata,
-        &extensions,
-    ))
+    match provider.adapter {
+        Adapter::InternetArchive => {
+            let metadata = archive_org::fetch_metadata(&client, &title.remote_id).await?;
+            Ok(archive_org::item_files(
+                &provider,
+                &title,
+                &metadata,
+                &extensions,
+            ))
+        }
+        Adapter::Demozoo => {
+            let detail = demozoo::fetch_detail(&client, &title.remote_id).await?;
+            Ok(demozoo::item_files(&provider, &title, &detail, &extensions))
+        }
+        // Every other adapter already points at a single file.
+        _ => Ok(vec![title]),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -368,10 +380,12 @@ pub async fn download_online_title(
 ) -> Result<CachedDownload> {
     let extensions = normalise_extensions(extensions);
     let client = client(provider.user_agent.as_deref())?;
-    let resolved = if provider.adapter == Adapter::InternetArchive {
-        archive_org::resolve_download(&client, &title, &extensions).await?
-    } else {
-        resolve_direct_download(&title)?
+    let resolved = match provider.adapter {
+        Adapter::InternetArchive => archive_org::resolve_download(&client, &title, &extensions).await?,
+        Adapter::Demozoo => {
+            demozoo::resolve_download(&client, &provider, &title, &extensions).await?
+        }
+        _ => resolve_direct_download(&title)?,
     };
 
     let extension = extension_of(Path::new(&resolved.name));

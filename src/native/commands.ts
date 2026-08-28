@@ -12,6 +12,7 @@ import { supportedExtensionList } from '../domain/catalog'
 import type {
   CachedDownload,
   CacheSummary,
+  ConversionSupport,
   DestinationEdit,
   FileEntry,
   ImageOptions,
@@ -90,11 +91,22 @@ export function listImageDirectory(image: string, innerPath: string): Promise<Fi
   return invokeNative<FileEntry[]>('list_image_directory', { image, innerPath })
 }
 
+/**
+ * Indexes a folder.
+ *
+ * `convert` also turns images the drive cannot read into ones it can, writing
+ * the copy into the cache; the original file is left alone either way.
+ */
 export function scanFolder(
   path: string,
   extensions: string[] = supportedExtensionList,
+  convert = true,
 ): Promise<FileEntry[]> {
-  return invokeNative<FileEntry[]>('scan_folder', { path, extensions })
+  return invokeNative<FileEntry[]>('scan_folder', { path, extensions, convert })
+}
+
+export function supportedConversions(): Promise<ConversionSupport[]> {
+  return invokeNative<ConversionSupport[]>('supported_conversions', {})
 }
 
 // ---------------------------------------------------------------------------

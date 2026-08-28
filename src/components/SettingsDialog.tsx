@@ -2,9 +2,19 @@ import { useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { firmwareProfiles } from '../domain/catalog'
 import { formatBytes } from '../domain/media'
-import type { AppSettings, CacheSummary, ProfileDefaults } from '../domain/types'
+import type {
+  AppSettings,
+  CacheSummary,
+  ConversionSupport,
+  ProfileDefaults,
+} from '../domain/types'
 import { useAsyncAction } from '../hooks/useAsyncAction'
-import { cacheSummary, clearDownloadCache, evictCache } from '../native/commands'
+import {
+  cacheSummary,
+  clearDownloadCache,
+  evictCache,
+  supportedConversions,
+} from '../native/commands'
 import { Modal } from './Modal'
 
 /** Offered cache ceilings, in bytes. */
@@ -83,6 +93,59 @@ function DownloadCache() {
           Empty cache
         </button>
       </div>
+    </>
+  )
+}
+
+/**
+ * The conversions on offer, named by the native side.
+ *
+ * Listing them here rather than writing them out again keeps the interface from
+ * promising a conversion that was never built, and means adding one to
+ * `convert.rs` is enough for it to appear.
+ */
+function Conversions({
+  enabled,
+  setEnabled,
+}: {
+  enabled: boolean
+  setEnabled: (value: boolean) => void
+}) {
+  const [supported, setSupported] = useState<ConversionSupport[]>([])
+
+  useEffect(() => {
+    supportedConversions().then(setSupported, () => setSupported([]))
+  }, [])
+
+  return (
+    <>
+      <h3>Converting images</h3>
+      <p className="mode-note">
+        Some software is only distributed in formats a GoTek cannot present. When this is
+        on, indexing writes a converted copy into the cache and lists that instead. The
+        file it was made from is never changed, and anything that cannot be converted
+        cleanly is left out rather than guessed at.
+      </p>
+      <label className="check-label">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />
+        Convert incompatible images while indexing
+      </label>
+      {supported.length > 0 && (
+        <ul className="mode-note plain-list">
+          {supported.map((entry) => (
+            <li key={entry.conversion}>
+              <b>
+                {entry.from} to {entry.to}
+              </b>{' '}
+              — {entry.summary}
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   )
 }
@@ -185,6 +248,13 @@ export function SettingsDialog({
           <option value="original">Original</option>
         </select>
       </label>
+
+      <Conversions
+        enabled={settings.convertIncompatible}
+        setEnabled={(convertIncompatible) =>
+          setSettings((current) => ({ ...current, convertIncompatible }))
+        }
+      />
 
       <h3>Online sources</h3>
       <p className="mode-note">

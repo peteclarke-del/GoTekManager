@@ -3,7 +3,8 @@
 //! Every command here is read-only.
 
 use crate::archive::{cached_zip_images, EXTRACT_BYTE_LIMIT};
-use crate::cache::{is_archive, local_archive_folder};
+use crate::cache::{converted_folder, is_archive, local_archive_folder};
+use crate::convert::Conversion;
 use crate::devices::{available_space, detected_firmware, probe_writable, total_space};
 use crate::error::{Context, Result};
 use crate::paths::{
@@ -127,7 +128,9 @@ pub async fn scan_folder(
     app: tauri::AppHandle,
     path: String,
     extensions: Vec<String>,
+    convert: Option<bool>,
 ) -> Result<Vec<FileEntry>> {
+    let convert = convert.unwrap_or(true);
     blocking(move || {
         let root = PathBuf::from(&path);
         if !root.is_dir() {
@@ -149,7 +152,7 @@ pub async fn scan_folder(
                 if file_type.is_dir() {
                     pending.push(entry.path());
                 } else if file_type.is_file() {
-                    collect_file(&app, &entry.path(), &extensions, &mut files)?;
+                    collect_file(&app, &entry.path(), &extensions, convert, &mut files)?;
                 }
             }
         }
@@ -168,6 +171,7 @@ fn collect_file(
     app: &tauri::AppHandle,
     path: &Path,
     extensions: &HashSet<String>,
+    convert: bool,
     files: &mut Vec<FileEntry>,
 ) -> Result<()> {
     if extensions.contains(&extension_of(path)) {
@@ -176,14 +180,61 @@ fn collect_file(
         }
         return Ok(());
     }
-    if !is_archive(path) {
+
+    if is_archive(path) {
+        let folder = local_archive_folder(app, path)?;
+        for relative in cached_zip_images(path, &folder, extensions, EXTRACT_BYTE_LIMIT)? {
+            files.push(entry_at(&folder.join(relative))?);
+        }
         return Ok(());
     }
-    let folder = local_archive_folder(app, path)?;
-    for relative in cached_zip_images(path, &folder, extensions, EXTRACT_BYTE_LIMIT)? {
-        files.push(entry_at(&folder.join(relative))?);
+
+    // A format the drive cannot read, which can be turned into one it can.
+    // The converted copy is cached beside the extracted archives and behaves
+    // from here on like any other file; the original is never modified.
+    if convert {
+        if let Some(conversion) = Conversion::for_path(path) {
+            if extensions.contains(conversion.target_extension()) {
+                if let Some(entry) = converted_copy(app, path, conversion)? {
+                    files.push(entry);
+                }
+            }
+        }
     }
     Ok(())
+}
+
+/// Converts one file into the cache, reusing an earlier conversion.
+///
+/// A file that cannot be converted is skipped rather than failing the scan: one
+/// malformed image in a library of thousands should not stop the rest, and the
+/// user will see it simply did not appear.
+fn converted_copy(
+    app: &tauri::AppHandle,
+    path: &Path,
+    conversion: Conversion,
+) -> Result<Option<FileEntry>> {
+    let folder = converted_folder(app, path)?;
+    let name = format!(
+        "{}.{}",
+        path.file_stem().unwrap_or_default().to_string_lossy(),
+        conversion.target_extension()
+    );
+    let output = folder.join(&name);
+    if output.is_file() {
+        return Ok(Some(entry_at(&output)?));
+    }
+
+    let source = fs::read(path).with_context(|| format!("Unable to read {}", path.display()))?;
+    let Ok(converted) = conversion.apply(&source) else {
+        return Ok(None);
+    };
+    // Written under a temporary name so an interrupted conversion cannot be
+    // mistaken for a finished one on the next scan.
+    let temporary = output.with_extension("part");
+    fs::write(&temporary, &converted)?;
+    fs::rename(&temporary, &output)?;
+    Ok(Some(entry_at(&output)?))
 }
 
 #[cfg(test)]

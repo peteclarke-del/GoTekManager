@@ -20,6 +20,10 @@ profile's exact name.
 - Tauri + React desktop application with system, light, and dark themes.
 - Recursive local indexing, including supported images inside ZIP archives,
   with explicit platform assignment for formats shared by several machines.
+- Optional conversion of images a GoTek cannot present into ones it can —
+  `.msa` to `.st` and `.scl` to `.trd` — written into the cache during indexing,
+  leaving the original file untouched. Anything that cannot be converted
+  cleanly is left out rather than guessed at.
 - Persistent named source locations that can be re-indexed, renamed, or removed.
 - Read-only browsing of folders, mounted volumes, Linux GVFS desktop mounts such
   as SMB shares, and FAT `.img`/`.ima` images.
@@ -35,7 +39,9 @@ profile's exact name.
   of the machine and the firmware, so the application never claims a format will
   work when that pairing cannot load it.
 - Online catalogues with per-platform caching: Internet Archive search and item
-  browsing, structured JSON feeds, and bounded robots-aware site inspection.
+  browsing, the Demozoo production API, structured JSON feeds, and bounded
+  robots-aware site inspection. The list of sites is a JSON file that can be
+  replaced without touching the code.
 - Known-title coverage comparison that marks local holdings and likely gaps.
 - Streamed HTTPS downloads with provenance, cache reuse, size limits, and safe
   multi-image ZIP extraction.

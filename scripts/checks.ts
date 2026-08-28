@@ -921,6 +921,26 @@ check('the previous storage layout becomes one workspace', () => {
   ])
 })
 
+check('a settings record written before conversion existed gains the new default', () => {
+  storage.clear()
+  // The stored shape from a previous version: no conversion preference at all.
+  // Reading it must not leave the field undefined, which would send `convert:
+  // undefined` to the scanner and make the behaviour depend on a native default
+  // rather than on what the settings screen shows.
+  storage.setItem(
+    'gm.settings.v2',
+    JSON.stringify({
+      theme: 'dark',
+      defaults: { firmwareId: 'hxc', organise: true, folderLayout: 'flat', naming: 'oled' },
+    }),
+  )
+
+  const settings = loadSettings()
+
+  assert.equal(settings.theme, 'dark')
+  assert.equal(settings.convertIncompatible, true)
+})
+
 check('a corrupt or empty store still yields a usable workspace', () => {
   storage.clear()
   storage.setItem('gm.workspace.v2', '{ this is not json')

@@ -18,6 +18,7 @@
 
 mod archive;
 mod cache;
+mod convert;
 mod devices;
 mod hardware;
 mod image;
@@ -44,6 +45,7 @@ pub fn run() {
             media::list_directory,
             media::list_image_directory,
             media::scan_folder,
+            convert::supported_conversions,
             // Planning and writing.
             transfer::compare_target_files,
             transfer::plan_transfer,
