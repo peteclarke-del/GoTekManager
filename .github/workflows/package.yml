@@ -55,8 +55,11 @@ jobs:
             os: macos-14
             bundles: app,dmg
             target: aarch64-apple-darwin
+          # Built on the Apple Silicon runner rather than an Intel one: the
+          # macos-13 image is retired, so that job simply queued forever. Xcode
+          # carries both SDKs, so the Intel target cross-builds here.
           - name: macos-x86_64
-            os: macos-13
+            os: macos-14
             bundles: app,dmg
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
