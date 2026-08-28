@@ -87,6 +87,27 @@ pub fn local_archive_folder(app: &tauri::AppHandle, archive: &Path) -> Result<Pa
     Ok(folder)
 }
 
+/// Where a converted copy of a file is kept.
+///
+/// The original is never touched. The folder is named after the file's identity
+/// so that editing or replacing it produces a new folder rather than serving a
+/// stale conversion, exactly as extracted archives work.
+pub fn converted_folder(app: &tauri::AppHandle, source: &Path) -> Result<PathBuf> {
+    let metadata = fs::metadata(source)
+        .with_context(|| format!("Unable to read {}", source.display()))?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    let name = source.file_stem().unwrap_or_default().to_string_lossy();
+    let identity = safe_cache_part(&format!("{name}-{}-{modified}", metadata.len()));
+    let folder = cache_root(app)?.join("converted").join(identity);
+    fs::create_dir_all(&folder)?;
+    Ok(folder)
+}
+
 /// True when a name looks like an archive the scanner should look inside.
 pub fn is_archive(path: &Path) -> bool {
     extension_of(path) == "zip"

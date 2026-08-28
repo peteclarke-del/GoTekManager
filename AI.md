@@ -198,13 +198,14 @@ Two invariants worth preserving:
 | `paths.rs` | Entries, extensions, safe relative/target paths, verbatim-prefix stripping, hashing and comparison |
 | `cache.rs` | Every cache location, all resolved through Tauri's `app_cache_dir` |
 | `archive.rs` | Safe, bounded, manifest-cached ZIP extraction |
+| `convert.rs` | `.msa` to `.st` and `.scl` to `.trd`, each tested against format bytes |
 | `media.rs` | `scan_folder`, `list_directory`, `list_image_directory`, `inspect_target` |
 | `devices.rs` | Mount discovery and classification, firmware evidence, destination validation, writability probing |
 | `transfer.rs` | `compare_target_files`, `plan_transfer`, `execute_transfer` |
 | `hardware/` | Physical device identity, one pure parser per platform |
 | `image/` | FAT image creation, population, reading, and unpacking; `mbr`, `region` |
 | `provision.rs` | Destructive device provisioning, and every guard that refuses it |
-| `online/` | `http`, `robots`, `archive_org`, `feed`, `website`, and the commands |
+| `online/` | `http`, `robots`, `archive_org`, `feed`, `website`, `demozoo`, and the commands |
 | `task.rs` | `blocking()` — keeps filesystem work off the UI thread |
 
 Registered commands:

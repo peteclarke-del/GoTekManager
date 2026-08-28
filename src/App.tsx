@@ -181,6 +181,7 @@ export function App() {
             setCustomProviders={setCustomProviders}
             preferences={preferences}
             setPreferences={setPreferences}
+            convertIncompatible={settings.convertIncompatible}
             notify={setNotice}
             manageProfiles={() => setPage('Profiles')}
           />

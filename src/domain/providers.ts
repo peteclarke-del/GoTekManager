@@ -19,7 +19,7 @@
 import bundled from './providers.json'
 import type { OnlineProvider, ProviderAdapter } from './types'
 
-const ADAPTERS: ProviderAdapter[] = ['internetArchive', 'htmlSite', 'jsonFeed']
+const ADAPTERS: ProviderAdapter[] = ['internetArchive', 'htmlSite', 'jsonFeed', 'demozoo']
 
 /** What a provider file holds. */
 export type ProviderConfig = {
@@ -50,7 +50,13 @@ function faultIn(entry: unknown, index: number, seen: Set<string>): string | nul
   if (!provider.adapter || !ADAPTERS.includes(provider.adapter)) {
     return `${provider.id} has an unknown adapter "${provider.adapter}"`
   }
-  if (provider.adapter === 'internetArchive') {
+  if (provider.adapter === 'demozoo') {
+    // The query carries the Demozoo platform number; anything else would be
+    // sent as a filter and quietly return another machine's productions.
+    if (!/^\d+$/.test(provider.query?.trim() || '')) {
+      return `${provider.id} needs a Demozoo platform number in its query`
+    }
+  } else if (provider.adapter === 'internetArchive') {
     if (!provider.query?.trim()) return `${provider.id} needs a query`
   } else if (!provider.catalogUrl?.startsWith('https://')) {
     // Enforced natively too; catching it here names the offending entry.
@@ -92,6 +98,7 @@ const ADAPTER_LABELS: Record<ProviderAdapter, string> = {
   internetArchive: 'Search API',
   htmlSite: 'Website inspection',
   jsonFeed: 'JSON catalogue',
+  demozoo: 'Demozoo API',
 }
 
 export function adapterLabel(adapter: ProviderAdapter): string {
@@ -123,9 +130,14 @@ export function scopeLabel(
   return provider.platformId ? `${platformName(provider.platformId)} only` : 'All platforms'
 }
 
-/** Only the Internet Archive exposes multiple files inside one entry. */
+/**
+ * Which sources hold several files behind one entry.
+ *
+ * Both of these are APIs whose listing gives titles and whose per-item resource
+ * gives the files, so a title is opened to see what is inside it.
+ */
 export function isBrowsable(provider: OnlineProvider | undefined): boolean {
-  return provider?.adapter === 'internetArchive'
+  return provider?.adapter === 'internetArchive' || provider?.adapter === 'demozoo'
 }
 
 /**

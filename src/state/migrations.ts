@@ -36,6 +36,7 @@ export const TABLE_PREFS_KEY = 'gm.tablePrefs.v2'
 
 export const defaultSettings: AppSettings = {
   theme: 'system',
+  convertIncompatible: true,
   defaults: {
     firmwareId: 'flashfloppy',
     organise: true,
@@ -81,6 +82,7 @@ function migrateSettings(): AppSettings {
   const legacy = readStored<LegacySettings>('gm.settings', {})
   return {
     theme: legacy.theme ?? defaultSettings.theme,
+    convertIncompatible: defaultSettings.convertIncompatible,
     defaults: {
       firmwareId: legacy.firmwareId ?? defaultSettings.defaults.firmwareId,
       organise: legacy.organise ?? defaultSettings.defaults.organise,
