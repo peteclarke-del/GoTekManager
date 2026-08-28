@@ -57,6 +57,8 @@ import {
 import { isOnDestination, summarisePlan } from '../src/domain/plan'
 import {
   defaultProviders,
+  faultIn,
+  mergeProviders,
   providersFor,
   readProviderConfig,
   scopeLabel,
@@ -919,6 +921,62 @@ check('the previous storage layout becomes one workspace', () => {
   assert.deepEqual(workspace.sources, [
     { id: 'source:/library', name: 'library', path: '/library' },
   ])
+})
+
+check('a change to a shipped source overrides it and can be put back', () => {
+  const shipped = defaultProviders.filter((provider) => provider.adapter === 'htmlSite')
+  const target = shipped[0]
+  // The case that could not be expressed at all before: turning off robots for
+  // a site that shipped, without adding a second copy of it by hand.
+  const changed = { ...target, ignoreRobots: true }
+  const own = {
+    id: 'site-1',
+    name: 'My list',
+    adapter: 'jsonFeed' as const,
+    catalogUrl: 'https://example.org/list.json',
+  }
+
+  const merged = mergeProviders(shipped, [changed, own])
+  const found = merged.find((provider) => provider.id === target.id)
+
+  // One entry, not two, and it knows it is a shipped source that was changed.
+  assert.equal(merged.filter((provider) => provider.id === target.id).length, 1)
+  assert.equal(found?.ignoreRobots, true)
+  assert.equal(found?.builtIn, true)
+  assert.equal(found?.overridden, true)
+
+  // The user's own source is neither, so it is offered removal rather than
+  // restoration.
+  const mine = merged.find((provider) => provider.id === 'site-1')
+  assert.equal(mine?.builtIn, false)
+  assert.equal(mine?.overridden, false)
+
+  // Dropping the override is what restores the shipped settings.
+  const restored = mergeProviders(shipped, [own])
+  assert.equal(
+    restored.find((provider) => provider.id === target.id)?.ignoreRobots,
+    undefined,
+  )
+})
+
+check('the edit dialog and the source file reject the same things', () => {
+  // One check, so a source typed into the dialog and one written into the file
+  // cannot disagree about what is valid.
+  assert.equal(
+    faultIn({ id: 'x', name: 'X', adapter: 'htmlSite' }, 'This site'),
+    'This site needs an https:// URL',
+  )
+  assert.equal(
+    faultIn({ id: 'x', name: 'X', adapter: 'demozoo', query: 'bbc' }, 'This site'),
+    'This site needs a Demozoo platform number in its query',
+  )
+  assert.equal(
+    faultIn(
+      { id: 'x', name: 'X', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+      'This site',
+    ),
+    null,
+  )
 })
 
 check('a settings record written before conversion existed gains the new default', () => {

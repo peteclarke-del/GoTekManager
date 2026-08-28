@@ -8,17 +8,22 @@
     "reported rather than silently ignored.",
     "The demozoo adapter puts the Demozoo platform number in `query` rather than a URL.",
     "",
-    "Fields: id (unique), name, adapter (internetArchive | htmlSite | jsonFeed),",
+    "Fields: id (unique), name, adapter (internetArchive | htmlSite | jsonFeed | demozoo),",
     "platformId (omit for every platform), query (search adapters), catalogUrl (site and",
     "feed adapters), note (shown in the interface), ignoreRobots, userAgent.",
     "",
-    "Every URL below was checked for reachability and against the site's robots.txt,",
-    "reading the wildcard group the way a crawler does. What none of that can tell you",
-    "is whether a crawl finds anything: website inspection follows same-site pages two",
-    "levels deep and records links ending in a format this platform uses, which suits a",
-    "file index and does not suit a database whose downloads sit behind a script. Sites",
-    "of the second kind are included because they are where the software is, and are",
-    "marked as such. Refresh one to find out what it yields.",
+    "Every htmlSite entry below was crawled the way the application crawls it, and kept",
+    "only if that crawl came back with files. Twenty sites that looked right were dropped",
+    "for coming back with nothing: a link crawler reads a file index, and cannot read a",
+    "database whose downloads sit behind a script, a session, or a page built by",
+    "JavaScript. CPC-POWER, CSDb, ZXArt, World of Spectrum, Atarimania, AtariAge, itch.io",
+    "and the forums are all of that second kind. Their software is real; it is simply not",
+    "reachable by following links, and listing them here only promised something the",
+    "application could not deliver.",
+    "",
+    "Two entries are kept whose robots.txt refuses automated reading. They find nothing",
+    "until the override is turned on in that source's settings, which is a decision for",
+    "the person at the keyboard: nothing ships with it set.",
     "",
     "A GoTek presents floppy images. New software for the 8-bit Commodores is almost",
     "always .d64, which is a 1541 GCR recording a GoTek cannot reproduce, so those",
@@ -39,7 +44,7 @@
       "adapter": "htmlSite",
       "platformId": "bbc",
       "catalogUrl": "https://www.stairwaytohell.com/bbc/homepage.html",
-      "note": "A file index, which is the shape this adapter handles best."
+      "note": "A file index of disc and tape images. A scan finds around 1,700 files."
     },
     {
       "id": "8bs-bbc",
@@ -47,15 +52,7 @@
       "adapter": "htmlSite",
       "platformId": "bbc",
       "catalogUrl": "https://8bs.com/",
-      "note": "The 8BS archive, still publishing new BBC material. Downloads are ZIP archives, which are unpacked automatically."
-    },
-    {
-      "id": "stardot-bbc",
-      "name": "Stardot",
-      "adapter": "htmlSite",
-      "platformId": "bbc",
-      "catalogUrl": "https://www.stardot.org.uk/forums/viewforum.php?f=53",
-      "note": "Where most new BBC and Electron software is announced. A forum, so expect attachments rather than a tidy index."
+      "note": "The 8-Bit Software archive: utilities, type-ins and disc images. Around 230 files."
     },
     {
       "id": "bbcmicro-co-uk",
@@ -63,7 +60,7 @@
       "adapter": "htmlSite",
       "platformId": "bbc",
       "catalogUrl": "https://bbcmicro.co.uk/",
-      "note": "By far the richest BBC source found: thirty-six .ssd links on its front page alone. Its robots.txt refuses automated clients, so it does nothing until you enable the override on this source and accept what that means."
+      "note": "Around 880 .ssd discs including recent homebrew, but the site’s robots.txt refuses automated reading. Nothing is found until you turn on the override in this source’s settings."
     },
     {
       "id": "stairway-electron",
@@ -71,7 +68,7 @@
       "adapter": "htmlSite",
       "platformId": "electron",
       "catalogUrl": "https://www.stairwaytohell.com/electron/homepage.html",
-      "note": "A file index, which is the shape this adapter handles best."
+      "note": "A file index of Electron discs and tapes. Around 1,100 files."
     },
     {
       "id": "acorn-electron-world",
@@ -79,7 +76,7 @@
       "adapter": "htmlSite",
       "platformId": "electron",
       "catalogUrl": "https://www.acornelectron.co.uk/",
-      "note": "Long-running Electron archive, including recent releases. Publishes no robots.txt."
+      "note": "Tape, DFS and ADFS versions of Micro Power and other titles."
     },
     {
       "id": "8bs-electron",
@@ -87,7 +84,7 @@
       "adapter": "htmlSite",
       "platformId": "electron",
       "catalogUrl": "https://8bs.com/",
-      "note": "Covers the Electron alongside the BBC."
+      "note": "The 8-Bit Software archive, which carries Electron material alongside the BBC."
     },
     {
       "id": "ia-cpc464",
@@ -98,44 +95,12 @@
       "note": "3,809 items."
     },
     {
-      "id": "cpcrulez-464",
-      "name": "CPCRulez",
-      "adapter": "htmlSite",
-      "platformId": "cpc464",
-      "catalogUrl": "https://cpcrulez.fr/",
-      "note": "Active CPC community with new releases and type-ins. Database-driven, so a crawl may find less than the site holds."
-    },
-    {
-      "id": "cpc-power-464",
-      "name": "CPC-POWER",
-      "adapter": "htmlSite",
-      "platformId": "cpc464",
-      "catalogUrl": "https://www.cpc-power.com/",
-      "note": "The largest CPC catalogue, new releases included. Database-driven. Publishes no robots.txt."
-    },
-    {
       "id": "ia-cpc6128",
       "name": "Internet Archive: Amstrad CPC",
       "adapter": "internetArchive",
       "platformId": "cpc6128",
       "query": "collection:softwarelibrary_cpc",
       "note": "3,809 items."
-    },
-    {
-      "id": "cpcrulez-6128",
-      "name": "CPCRulez",
-      "adapter": "htmlSite",
-      "platformId": "cpc6128",
-      "catalogUrl": "https://cpcrulez.fr/",
-      "note": "Active CPC community with new releases and type-ins."
-    },
-    {
-      "id": "cpc-power-6128",
-      "name": "CPC-POWER",
-      "adapter": "htmlSite",
-      "platformId": "cpc6128",
-      "catalogUrl": "https://www.cpc-power.com/",
-      "note": "The largest CPC catalogue, new releases included."
     },
     {
       "id": "ia-c64",
@@ -146,52 +111,12 @@
       "note": "98,846 items, of which a sample is fetched."
     },
     {
-      "id": "csdb-c64",
-      "name": "CSDb",
-      "adapter": "htmlSite",
-      "platformId": "c64",
-      "catalogUrl": "https://csdb.dk/",
-      "note": "Where the C64 scene publishes new demos and games first. Most releases are .d64, which a GoTek cannot present; only .d81 and .hfe are usable."
-    },
-    {
-      "id": "rgcd-c64",
-      "name": "RGCD",
-      "adapter": "htmlSite",
-      "platformId": "c64",
-      "catalogUrl": "https://www.rgcd.co.uk/",
-      "note": "Publishes new commercial C64 games. Small catalogue, cartridge and disk."
-    },
-    {
-      "id": "protovision-c64",
-      "name": "Protovision",
-      "adapter": "htmlSite",
-      "platformId": "c64",
-      "catalogUrl": "https://www.protovision.games/",
-      "note": "New commercial C64 titles. A shop, so most links lead to a purchase rather than a download."
-    },
-    {
       "id": "ia-c128",
       "name": "Internet Archive: Commodore 128",
       "adapter": "internetArchive",
       "platformId": "c128",
       "query": "mediatype:software AND (subject:\"commodore 128\" OR title:\"C128\")",
       "note": "No collection of its own; a subject search returning tens of items."
-    },
-    {
-      "id": "csdb-c128",
-      "name": "CSDb",
-      "adapter": "htmlSite",
-      "platformId": "c128",
-      "catalogUrl": "https://csdb.dk/",
-      "note": "Covers the 128 alongside the 64. The 1581 is the drive a GoTek can stand in for, so look for .d81."
-    },
-    {
-      "id": "protovision-c128",
-      "name": "Protovision",
-      "adapter": "htmlSite",
-      "platformId": "c128",
-      "catalogUrl": "https://www.protovision.games/",
-      "note": "Occasionally publishes 128-compatible titles."
     },
     {
       "id": "ia-plus4",
@@ -207,15 +132,7 @@
       "adapter": "htmlSite",
       "platformId": "plus4",
       "catalogUrl": "https://plus4world.powweb.com/",
-      "note": "The Plus/4 archive, and where new Plus/4 software appears. Database-driven."
-    },
-    {
-      "id": "csdb-plus4",
-      "name": "CSDb",
-      "adapter": "htmlSite",
-      "platformId": "plus4",
-      "catalogUrl": "https://csdb.dk/",
-      "note": "Carries Plus/4 releases among the Commodore scene output."
+      "note": "The Plus/4 community archive. A scan finds around 1,000 files."
     },
     {
       "id": "ia-amiga",
@@ -231,15 +148,7 @@
       "adapter": "htmlSite",
       "platformId": "amiga",
       "catalogUrl": "https://aminet.net/",
-      "note": "Still the largest Amiga archive and still receiving new uploads. Most files are .lha rather than .adf, so a crawl finds fewer usable images than the size of the archive suggests."
-    },
-    {
-      "id": "eab-amiga",
-      "name": "English Amiga Board",
-      "adapter": "htmlSite",
-      "platformId": "amiga",
-      "catalogUrl": "https://eab.abime.net/",
-      "note": "Where new Amiga work is announced and shared. A forum, so expect attachments."
+      "note": "The Aminet archive. Its game section is reached from the front page."
     },
     {
       "id": "ia-spectrum48",
@@ -250,22 +159,6 @@
       "note": "12,305 items."
     },
     {
-      "id": "zxart-48",
-      "name": "ZX-Art",
-      "adapter": "htmlSite",
-      "platformId": "spectrum48",
-      "catalogUrl": "https://zxart.ee/eng/software/",
-      "note": "Catalogues new Spectrum releases as they appear. Much of it is tape, which a GoTek cannot present; look for .trd and .mgt."
-    },
-    {
-      "id": "wos-48",
-      "name": "World of Spectrum",
-      "adapter": "htmlSite",
-      "platformId": "spectrum48",
-      "catalogUrl": "https://worldofspectrum.org/",
-      "note": "The long-standing Spectrum archive, now including modern releases."
-    },
-    {
       "id": "ia-spectrum128",
       "name": "Internet Archive: ZX Spectrum",
       "adapter": "internetArchive",
@@ -274,36 +167,20 @@
       "note": "12,305 items. A 48K title runs on a 128K."
     },
     {
-      "id": "zxart-128",
-      "name": "ZX-Art",
-      "adapter": "htmlSite",
-      "platformId": "spectrum128",
-      "catalogUrl": "https://zxart.ee/eng/software/",
-      "note": "New Spectrum releases. The +3 uses .dsk, which this platform accepts."
-    },
-    {
-      "id": "wos-128",
-      "name": "World of Spectrum",
-      "adapter": "htmlSite",
-      "platformId": "spectrum128",
-      "catalogUrl": "https://worldofspectrum.org/",
-      "note": "The long-standing Spectrum archive, now including modern releases."
-    },
-    {
       "id": "specnext-next",
       "name": "ZX Spectrum Next",
       "adapter": "htmlSite",
       "platformId": "next",
       "catalogUrl": "https://www.specnext.com/",
-      "note": "The official site, which carries the system distribution and links to new software."
+      "note": "The official Next distribution. A scan finds the system distribution archives rather than individual titles."
     },
     {
-      "id": "itch-next",
-      "name": "itch.io: ZX Spectrum",
+      "id": "spectrumcomputing-next",
+      "name": "Spectrum Computing",
       "adapter": "htmlSite",
       "platformId": "next",
-      "catalogUrl": "https://itch.io/games/tag-zx-spectrum",
-      "note": "Where most new Next software is published. itch.io permits crawling but refuses its own download endpoints, so this finds pages rather than files, and much of what it lists is paid. Buy it there."
+      "catalogUrl": "https://spectrumcomputing.co.uk/",
+      "note": "A Next runs Spectrum software, so the ZXDB front end applies here too. Its robots.txt refuses automated reading, so nothing is found until you turn on the override in this source’s settings."
     },
     {
       "id": "ia-atari-st",
@@ -314,36 +191,12 @@
       "note": "884 items."
     },
     {
-      "id": "atarimania-st",
-      "name": "Atarimania",
-      "adapter": "htmlSite",
-      "platformId": "atari-st",
-      "catalogUrl": "https://www.atarimania.com/",
-      "note": "The most complete ST catalogue. Database-driven: a two-level crawl of its listings found no direct images, so treat this as a place to look rather than a source that fills a stick."
-    },
-    {
       "id": "ia-atari-8bit",
       "name": "Internet Archive: Atari 8-bit",
       "adapter": "internetArchive",
       "platformId": "atari-8bit",
       "query": "collection:atari_8bit_library_games",
       "note": "4,729 items."
-    },
-    {
-      "id": "abbuc-8bit",
-      "name": "ABBUC",
-      "adapter": "htmlSite",
-      "platformId": "atari-8bit",
-      "catalogUrl": "https://www.abbuc.de/",
-      "note": "Runs the annual software competition that produces most new Atari 8-bit games. Publishes no robots.txt."
-    },
-    {
-      "id": "atariage-8bit",
-      "name": "AtariAge",
-      "adapter": "htmlSite",
-      "platformId": "atari-8bit",
-      "catalogUrl": "https://atariage.com/",
-      "note": "The main homebrew community for Atari hardware. A forum and a shop, so expect links to purchases as well as downloads."
     },
     {
       "id": "demozoo-bbc",
@@ -362,12 +215,28 @@
       "note": "Demoscene and homebrew productions for the Amstrad CPC, through Demozoo's documented API. Open a title to see the files attached to it."
     },
     {
+      "id": "nvg-cpc464",
+      "name": "NVG CPC archive",
+      "adapter": "htmlSite",
+      "platformId": "cpc464",
+      "catalogUrl": "https://ftp.nvg.ntnu.no/pub/cpc/games/",
+      "note": "The long-running CPC file archive at NTNU. A scan finds around 2,000 files."
+    },
+    {
       "id": "demozoo-cpc6128",
       "name": "Demozoo: Amstrad CPC",
       "adapter": "demozoo",
       "platformId": "cpc6128",
       "query": "36",
       "note": "Demoscene and homebrew productions for the Amstrad CPC, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "nvg-cpc6128",
+      "name": "NVG CPC archive",
+      "adapter": "htmlSite",
+      "platformId": "cpc6128",
+      "catalogUrl": "https://ftp.nvg.ntnu.no/pub/cpc/games/",
+      "note": "The long-running CPC file archive at NTNU. A scan finds around 2,000 files."
     },
     {
       "id": "demozoo-c64",
@@ -378,6 +247,14 @@
       "note": "Demoscene and homebrew productions for the Commodore 64, through Demozoo's documented API. Open a title to see the files attached to it."
     },
     {
+      "id": "zimmers-c64",
+      "name": "Zimmers CBM archive",
+      "adapter": "htmlSite",
+      "platformId": "c64",
+      "catalogUrl": "https://www.zimmers.net/anonftp/pub/cbm/c64/",
+      "note": "The Commodore file archive. Around 1,600 files, most of them .d64 rather than a format a GoTek can present."
+    },
+    {
       "id": "demozoo-c128",
       "name": "Demozoo: Commodore 128",
       "adapter": "demozoo",
@@ -386,12 +263,28 @@
       "note": "Demoscene and homebrew productions for the Commodore 128, through Demozoo's documented API. Open a title to see the files attached to it."
     },
     {
+      "id": "zimmers-c128",
+      "name": "Zimmers CBM archive",
+      "adapter": "htmlSite",
+      "platformId": "c128",
+      "catalogUrl": "https://www.zimmers.net/anonftp/pub/cbm/c128/",
+      "note": "The Commodore file archive, C128 section."
+    },
+    {
       "id": "demozoo-plus4",
       "name": "Demozoo: Commodore 16/Plus 4",
       "adapter": "demozoo",
       "platformId": "plus4",
       "query": "41",
       "note": "Demoscene and homebrew productions for the Commodore 16/Plus 4, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "zimmers-plus4",
+      "name": "Zimmers CBM archive",
+      "adapter": "htmlSite",
+      "platformId": "plus4",
+      "catalogUrl": "https://www.zimmers.net/anonftp/pub/cbm/plus4/",
+      "note": "The Commodore file archive, Plus/4 section. Several thousand files."
     },
     {
       "id": "demozoo-amiga",
@@ -410,12 +303,28 @@
       "note": "Demoscene and homebrew productions for the ZX Spectrum, through Demozoo's documented API. Open a title to see the files attached to it."
     },
     {
+      "id": "spectrumcomputing-48",
+      "name": "Spectrum Computing",
+      "adapter": "htmlSite",
+      "platformId": "spectrum48",
+      "catalogUrl": "https://spectrumcomputing.co.uk/",
+      "note": "The ZXDB front end, holding .tap, .tzx and .z80 files including new releases. Its robots.txt refuses automated reading, so nothing is found until you turn on the override in this source’s settings."
+    },
+    {
       "id": "demozoo-spectrum128",
       "name": "Demozoo: ZX Spectrum",
       "adapter": "demozoo",
       "platformId": "spectrum128",
       "query": "2",
       "note": "Demoscene and homebrew productions for the ZX Spectrum, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "spectrumcomputing-128",
+      "name": "Spectrum Computing",
+      "adapter": "htmlSite",
+      "platformId": "spectrum128",
+      "catalogUrl": "https://spectrumcomputing.co.uk/",
+      "note": "The ZXDB front end. Its robots.txt refuses automated reading, so nothing is found until you turn on the override in this source’s settings."
     },
     {
       "id": "demozoo-atari-st",
@@ -426,12 +335,28 @@
       "note": "Demoscene and homebrew productions for the Atari ST/E, through Demozoo's documented API. Open a title to see the files attached to it."
     },
     {
+      "id": "pigwa-st",
+      "name": "Pigwa ST collections",
+      "adapter": "htmlSite",
+      "platformId": "atari-st",
+      "catalogUrl": "https://ftp.pigwa.net/stuff/collections/Atari%20ST%20game%20packs/",
+      "note": "The Pigwa archive’s ST game packs. Around 290 files."
+    },
+    {
       "id": "demozoo-atari-8bit",
       "name": "Demozoo: Atari 8 bit",
       "adapter": "demozoo",
       "platformId": "atari-8bit",
       "query": "16",
       "note": "Demoscene and homebrew productions for the Atari 8 bit, through Demozoo's documented API. Open a title to see the files attached to it."
+    },
+    {
+      "id": "homesoft-8bit",
+      "name": "Homesoft collection",
+      "adapter": "htmlSite",
+      "platformId": "atari-8bit",
+      "catalogUrl": "https://ftp.pigwa.net/stuff/collections/Homesoft%20Game%20Collection/",
+      "note": "Around 470 ready-to-run .atr disks, held on the Pigwa archive."
     }
   ]
 }
