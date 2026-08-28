@@ -7,7 +7,9 @@ import {
   Globe2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
 } from 'lucide-react'
 import { Empty, InlineStatus, ProgressDialog } from '../../components/Feedback'
@@ -16,6 +18,7 @@ import { platforms, requirePlatform, type Platform } from '../../domain/catalog'
 import { belongsToPlatform, formatBytes, softwareTitleKey } from '../../domain/media'
 import {
   adapterLabel,
+  faultIn,
   isBrowsable,
   isDownloadable,
   providersFor,
@@ -26,6 +29,7 @@ import type {
   MediaItem,
   OnlineProvider,
   OnlineTitle,
+  ProviderAdapter,
   ProviderCatalog,
 } from '../../domain/types'
 import { useBusyItem } from '../../hooks/useAsyncAction'
@@ -43,14 +47,16 @@ export function OnlineLibrary({
   platform,
   items,
   providers,
-  addProvider,
+  saveProvider,
   removeProvider,
   imported,
 }: {
   platform: Platform
   items: MediaItem[]
   providers: OnlineProvider[]
-  addProvider: (provider: OnlineProvider) => void
+  /** Adds a site, or records a change to one — including a shipped one. */
+  saveProvider: (provider: OnlineProvider) => void
+  /** Removes the user's own site, or puts a shipped one back as it was. */
   removeProvider: (id: string) => void
   imported: (download: CachedDownload, title: OnlineTitle, provider: OnlineProvider) => void
 }) {
@@ -61,12 +67,14 @@ export function OnlineLibrary({
   const [expandedId, setExpandedId] = useState('')
   const [archiveFiles, setArchiveFiles] = useState<Record<string, OnlineTitle[]>>({})
   const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState('')
   const [addedNotice, setAddedNotice] = useState('')
   const { busyId, error, setError, run } = useBusyItem()
 
   // Only the sources that apply to the platform being prepared.
   const visible = useMemo(() => providersFor(providers, platform.id), [providers, platform.id])
   const provider = visible.find((entry) => entry.id === providerId) || visible[0]
+  const editing = visible.find((entry) => entry.id === editingId)
   const catalog = provider ? catalogs[provider.id] : undefined
 
   // Cached catalogues load without touching the network, so the coverage
@@ -182,17 +190,38 @@ export function OnlineLibrary({
                   {adapterLabel(entry.adapter)} ·{' '}
                   {scopeLabel(entry, (id) => requirePlatform(id).name)}
                   {entry.ignoreRobots ? ' · ignores robots.txt' : ''}
+                  {entry.overridden ? ' · changed' : ''}
                 </small>
               </span>
             </button>
-            {!entry.builtIn && (
+            <button
+              className="edit-provider"
+              title={`Settings for ${entry.name}`}
+              aria-label={`Settings for ${entry.name}`}
+              onClick={() => setEditingId(entry.id)}
+            >
+              <SlidersHorizontal />
+            </button>
+            {entry.overridden ? (
               <button
                 className="remove-provider"
-                title="Remove site"
+                title="Put this site back as it shipped"
+                aria-label={`Restore ${entry.name}`}
                 onClick={() => removeProvider(entry.id)}
               >
-                <Trash2 />
+                <RotateCcw />
               </button>
+            ) : (
+              !entry.builtIn && (
+                <button
+                  className="remove-provider"
+                  title="Remove site"
+                  aria-label={`Remove ${entry.name}`}
+                  onClick={() => removeProvider(entry.id)}
+                >
+                  <Trash2 />
+                </button>
+              )
             )}
           </div>
         ))}
@@ -212,8 +241,8 @@ export function OnlineLibrary({
           <p>
             Website scans stay on the selected host, inspect at most 100 pages, pace
             their requests, and record only supported image links. They obey robots.txt
-            unless you have overridden it for a source, which is shown against that
-            source and is never set on one that ships with the application.
+            unless you have overridden it for a source. Open a source's settings to
+            change that; nothing ships with it set.
           </p>
         </div>
       </section>
@@ -388,15 +417,37 @@ export function OnlineLibrary({
       </section>
 
       {adding && (
-        <AddSiteDialog
+        <SiteDialog
           platform={platform}
           close={() => setAdding(false)}
-          add={(added) => {
-            addProvider(added)
+          save={(added) => {
+            saveProvider(added)
             setProviderId(added.id)
             setAdding(false)
             setAddedNotice(`Added ${added.name}. Choose “Refresh list” to load it.`)
           }}
+        />
+      )}
+
+      {editing && (
+        <SiteDialog
+          platform={platform}
+          existing={editing}
+          close={() => setEditingId('')}
+          save={(changed) => {
+            saveProvider(changed)
+            setEditingId('')
+            setAddedNotice(`Saved ${changed.name}. Choose “Refresh list” to apply it.`)
+          }}
+          restore={
+            editing.overridden
+              ? () => {
+                  removeProvider(editing.id)
+                  setEditingId('')
+                  setAddedNotice(`${editing.name} is back to the settings it shipped with.`)
+                }
+              : undefined
+          }
         />
       )}
 
@@ -422,59 +473,157 @@ export function OnlineLibrary({
   )
 }
 
-function AddSiteDialog({
+/** The fields a source is made of, as one dialog edits them. */
+type SiteDraft = {
+  name: string
+  adapter: ProviderAdapter
+  url: string
+  query: string
+  scope: string
+  ignoreRobots: boolean
+  userAgent: string
+}
+
+/**
+ * The adapters a source can be built with by hand.
+ *
+ * The API adapters are deliberately absent: their query means something
+ * particular to one service, so a source using one is a deliberate integration
+ * that ships with the application rather than something to be typed in.
+ */
+const OWN_ADAPTERS: ProviderAdapter[] = ['htmlSite', 'jsonFeed']
+
+const ADAPTER_OPTIONS: Record<ProviderAdapter, string> = {
+  htmlSite: 'Inspect website',
+  jsonFeed: 'JSON catalogue or known list',
+  internetArchive: 'Internet Archive search',
+  demozoo: 'Demozoo API',
+}
+
+function draftOf(existing: OnlineProvider | undefined, platform: Platform): SiteDraft {
+  return {
+    name: existing?.name || '',
+    adapter: existing?.adapter || 'htmlSite',
+    url: existing?.catalogUrl || '',
+    query: existing?.query || '',
+    // A new source is usually machine-specific, so the platform being prepared
+    // is a better default than "everything".
+    scope: existing ? existing.platformId || '' : platform.id,
+    ignoreRobots: existing?.ignoreRobots || false,
+    userAgent: existing?.userAgent || '',
+  }
+}
+
+/**
+ * The source a draft describes.
+ *
+ * Built on top of the entry being edited so that fields this dialog does not
+ * show — a shipped source's note, for one — survive being changed here.
+ */
+function providerOf(draft: SiteDraft, existing?: OnlineProvider): OnlineProvider {
+  return {
+    ...existing,
+    id: existing?.id || `site-${Date.now()}`,
+    name: draft.name.trim(),
+    adapter: draft.adapter,
+    catalogUrl: draft.url.trim() || undefined,
+    query: draft.query.trim() || undefined,
+    platformId: draft.scope || undefined,
+    ignoreRobots: draft.ignoreRobots || undefined,
+    userAgent: draft.userAgent.trim() || undefined,
+  }
+}
+
+/**
+ * Adding a site, and changing one already added — including one that shipped.
+ *
+ * These were one dialog and one absence, which meant a shipped site could not
+ * be adjusted at all: the only way to scan a site that refuses robots was to
+ * add a second copy of it by hand. The same fields serve both, because they are
+ * the same fields.
+ */
+function SiteDialog({
   platform,
+  existing,
   close,
-  add,
+  save,
+  restore,
 }: {
   platform: Platform
+  existing?: OnlineProvider
   close: () => void
-  add: (provider: OnlineProvider) => void
+  save: (provider: OnlineProvider) => void
+  /** Offered only for a shipped source that has been changed. */
+  restore?: () => void
 }) {
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
-  const [adapter, setAdapter] = useState<'htmlSite' | 'jsonFeed'>('htmlSite')
-  // Most sources are machine-specific, so the platform being prepared is the
-  // sensible default rather than "everything".
-  const [scope, setScope] = useState<string>(platform.id)
-  const [ignoreRobots, setIgnoreRobots] = useState(false)
-  const [userAgent, setUserAgent] = useState('')
+  const [draft, setDraft] = useState<SiteDraft>(() => draftOf(existing, platform))
   const [confirming, setConfirming] = useState(false)
-  const valid = name.trim().length > 0 && url.startsWith('https://')
+
+  const set = <K extends keyof SiteDraft>(key: K, value: SiteDraft[K]) =>
+    setDraft((current) => ({ ...current, [key]: value }))
+
+  const candidate = providerOf(draft, existing)
+  // The same check the source file is read with, so a hand-typed source and a
+  // hand-written one are held to one standard and told the same sentence.
+  const fault = draft.name.trim() ? faultIn(candidate, 'This site') : null
+  const usesUrl = OWN_ADAPTERS.includes(draft.adapter)
+  const adaptable = !existing || OWN_ADAPTERS.includes(existing.adapter)
 
   return (
-    <Modal title="Add online site" onClose={close}>
-      <p>Add a website to inspect, or a structured reference catalogue.</p>
+    <Modal title={existing ? `Settings for ${existing.name}` : 'Add online site'} onClose={close}>
+      {!existing && <p>Add a website to inspect, or a structured reference catalogue.</p>}
+      {existing?.builtIn && (
+        <p className="mode-note">
+          This site ships with the application. Anything you change here is kept
+          separately and can be put back.
+        </p>
+      )}
       <label>
         Site name
-        <input value={name} onChange={(event) => setName(event.target.value)} />
+        <input value={draft.name} onChange={(event) => set('name', event.target.value)} />
       </label>
       <label>
         Source type
-        <select
-          value={adapter}
-          onChange={(event) => setAdapter(event.target.value as 'htmlSite' | 'jsonFeed')}
-        >
-          <option value="htmlSite">Inspect website</option>
-          <option value="jsonFeed">JSON catalogue or known list</option>
-        </select>
+        {adaptable ? (
+          <select
+            value={draft.adapter}
+            onChange={(event) => set('adapter', event.target.value as ProviderAdapter)}
+          >
+            {OWN_ADAPTERS.map((adapter) => (
+              <option key={adapter} value={adapter}>
+                {ADAPTER_OPTIONS[adapter]}
+              </option>
+            ))}
+          </select>
+        ) : (
+          // Changing this would leave a query written for one service being
+          // sent to another, so it is shown rather than offered.
+          <input readOnly value={ADAPTER_OPTIONS[draft.adapter]} />
+        )}
       </label>
-      <label>
-        {adapter === 'htmlSite' ? 'Starting page URL' : 'Catalogue URL'}
-        <input
-          type="url"
-          placeholder={
-            adapter === 'htmlSite'
-              ? 'https://example.org/software/'
-              : 'https://example.org/gotek-catalogue.json'
-          }
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-        />
-      </label>
+      {usesUrl ? (
+        <label>
+          {draft.adapter === 'htmlSite' ? 'Starting page URL' : 'Catalogue URL'}
+          <input
+            type="url"
+            placeholder={
+              draft.adapter === 'htmlSite'
+                ? 'https://example.org/software/'
+                : 'https://example.org/gotek-catalogue.json'
+            }
+            value={draft.url}
+            onChange={(event) => set('url', event.target.value)}
+          />
+        </label>
+      ) : (
+        <label>
+          {draft.adapter === 'demozoo' ? 'Demozoo platform number' : 'Archive search'}
+          <input value={draft.query} onChange={(event) => set('query', event.target.value)} />
+        </label>
+      )}
       <label>
         Applies to
-        <select value={scope} onChange={(event) => setScope(event.target.value)}>
+        <select value={draft.scope} onChange={(event) => set('scope', event.target.value)}>
           <option value="">All platforms</option>
           {platforms.map((entry) => (
             <option key={entry.id} value={entry.id}>
@@ -486,26 +635,26 @@ function AddSiteDialog({
       <p className="mode-note">
         A source for one machine only appears when that machine is being prepared.
       </p>
-      {adapter === 'htmlSite' && (
+      {draft.adapter === 'htmlSite' && (
         <>
           <label className="check-label">
             <input
               type="checkbox"
-              checked={ignoreRobots}
+              checked={draft.ignoreRobots}
               onChange={(event) => {
                 // Turning it on asks first; turning it off never needs to.
                 if (event.target.checked) setConfirming(true)
-                else setIgnoreRobots(false)
+                else set('ignoreRobots', false)
               }}
             />
-            Ignore this site's robots.txt
+            Ignore this site&rsquo;s robots.txt
           </label>
           <label>
             Identify as
             <input
-              value={userAgent}
+              value={draft.userAgent}
               placeholder="GoTekManager/0.1 (default)"
-              onChange={(event) => setUserAgent(event.target.value)}
+              onChange={(event) => set('userAgent', event.target.value)}
             />
           </label>
           <p className="mode-note">
@@ -515,53 +664,54 @@ function AddSiteDialog({
         </>
       )}
       <p className="feed-format">
-        {adapter === 'htmlSite' ? (
+        {draft.adapter === 'htmlSite' ? (
           <>
             Inspection follows same-site catalogue pages to depth 2 and records direct
-            links in this platform's formats.{' '}
-            {ignoreRobots
-              ? 'This source ignores the site’s robots rules and is paced ten times slower.'
-              : 'The site’s robots rules are enforced.'}
+            links in this platform&rsquo;s formats.{' '}
+            {draft.ignoreRobots
+              ? 'This source ignores the site\u2019s robots rules and is paced ten times slower.'
+              : 'The site\u2019s robots rules are enforced.'}
           </>
-        ) : (
+        ) : draft.adapter === 'jsonFeed' ? (
           <>
             Items require <b>remoteId</b> and <b>title</b>. Optional fields are
             downloadUrl, platformId, extension, size, detailsUrl, license, and updated.
             Lists without downloads are used for collection coverage.
           </>
+        ) : (
+          <>
+            This source reads a service API. Its query is what selects the machine, so
+            changing it changes which productions are listed.
+          </>
         )}
       </p>
-      {url.length > 0 && !url.startsWith('https://') && (
-        <p className="inline-error">Online sources must use an HTTPS address.</p>
-      )}
+      {fault && <p className="inline-error">{fault}.</p>}
       {confirming && (
         <RobotsOverrideWarning
-          site={url || 'this site'}
+          site={draft.url || 'this site'}
           cancel={() => setConfirming(false)}
           accept={() => {
-            setIgnoreRobots(true)
+            set('ignoreRobots', true)
             setConfirming(false)
           }}
         />
       )}
-      <button
-        className="button"
-        disabled={!valid}
-        onClick={() =>
-          add({
-            id: `site-${Date.now()}`,
-            name: name.trim(),
-            adapter,
-            catalogUrl: url.trim(),
-            platformId: scope || undefined,
-            ignoreRobots: ignoreRobots || undefined,
-            userAgent: userAgent.trim() || undefined,
-          })
-        }
-      >
-        <Plus />
-        Add site
-      </button>
+      <div className="flow-actions">
+        {restore && (
+          <button className="button secondary" onClick={restore}>
+            <RotateCcw />
+            Restore what shipped
+          </button>
+        )}
+        <button
+          className="button"
+          disabled={!draft.name.trim() || Boolean(fault)}
+          onClick={() => save(candidate)}
+        >
+          {existing ? <SlidersHorizontal /> : <Plus />}
+          {existing ? 'Save changes' : 'Add site'}
+        </button>
+      </div>
     </Modal>
   )
 }

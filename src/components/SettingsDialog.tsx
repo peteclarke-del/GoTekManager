@@ -52,7 +52,7 @@ function DownloadCache() {
     })
 
   return (
-    <>
+    <section className="settings-card">
       <h3>Download cache</h3>
       <p className="mode-note">
         Downloads are kept so a title is never fetched twice. Cached catalogues are small
@@ -93,7 +93,7 @@ function DownloadCache() {
           Empty cache
         </button>
       </div>
-    </>
+    </section>
   )
 }
 
@@ -118,7 +118,7 @@ function Conversions({
   }, [])
 
   return (
-    <>
+    <section className="settings-card">
       <h3>Converting images</h3>
       <p className="mode-note">
         Some software is only distributed in formats a GoTek cannot present. When this is
@@ -146,7 +146,7 @@ function Conversions({
           ))}
         </ul>
       )}
-    </>
+    </section>
   )
 }
 
@@ -179,105 +179,121 @@ export function SettingsDialog({
     }))
 
   return (
-    <Modal title="Settings" onClose={close}>
-      <label>
-        Theme
-        <select
-          value={settings.theme}
-          onChange={(event) =>
-            setSettings((current) => ({
-              ...current,
-              theme: event.target.value as AppSettings['theme'],
-            }))
-          }
-        >
-          <option value="system">Match the system</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
+    <Modal title="Settings" className="settings-dialog" onClose={close}>
+      <div className="settings-grid">
+        <section className="settings-card">
+          <h3>Appearance</h3>
+          <label>
+            Theme
+            <select
+              value={settings.theme}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  theme: event.target.value as AppSettings['theme'],
+                }))
+              }
+            >
+              <option value="system">Match the system</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+        </section>
 
-      <h3>Defaults for new profiles</h3>
-      <p className="mode-note">
-        Existing profiles keep their own settings. Edit a profile to change it.
-      </p>
-      <label>
-        Firmware
-        <select
-          value={settings.defaults.firmwareId}
-          onChange={(event) => setDefault('firmwareId', event.target.value)}
-        >
-          {firmwareProfiles.map((firmware) => (
-            <option key={firmware.id} value={firmware.id}>
-              {firmware.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="check-label">
-        <input
-          type="checkbox"
-          checked={settings.defaults.organise}
-          onChange={(event) => setDefault('organise', event.target.checked)}
+        <section className="settings-card">
+          <h3>Defaults for new profiles</h3>
+          <p className="mode-note">
+            Existing profiles keep their own settings. Edit a profile to change it.
+          </p>
+          <div className="settings-fields">
+            <label>
+              Firmware
+              <select
+                value={settings.defaults.firmwareId}
+                onChange={(event) => setDefault('firmwareId', event.target.value)}
+              >
+                {firmwareProfiles.map((firmware) => (
+                  <option key={firmware.id} value={firmware.id}>
+                    {firmware.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Naming
+              <select
+                value={settings.defaults.naming}
+                onChange={(event) =>
+                  setDefault('naming', event.target.value as ProfileDefaults['naming'])
+                }
+              >
+                <option value="oled">OLED friendly</option>
+                <option value="original">Original</option>
+              </select>
+            </label>
+            <label>
+              Layout
+              <select
+                disabled={!settings.defaults.organise}
+                value={settings.defaults.folderLayout}
+                onChange={(event) =>
+                  setDefault(
+                    'folderLayout',
+                    event.target.value as ProfileDefaults['folderLayout'],
+                  )
+                }
+              >
+                <option value="platform">Platform folders</option>
+                <option value="flat">Flat</option>
+                <option value="custom">Custom folders</option>
+              </select>
+            </label>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={settings.defaults.organise}
+                onChange={(event) => setDefault('organise', event.target.checked)}
+              />
+              Organise output into folders
+            </label>
+          </div>
+        </section>
+
+        <Conversions
+          enabled={settings.convertIncompatible}
+          setEnabled={(convertIncompatible) =>
+            setSettings((current) => ({ ...current, convertIncompatible }))
+          }
         />
-        Organise output into folders
-      </label>
-      <label>
-        Layout
-        <select
-          disabled={!settings.defaults.organise}
-          value={settings.defaults.folderLayout}
-          onChange={(event) =>
-            setDefault('folderLayout', event.target.value as ProfileDefaults['folderLayout'])
-          }
-        >
-          <option value="platform">Platform folders</option>
-          <option value="flat">Flat</option>
-          <option value="custom">Custom folders</option>
-        </select>
-      </label>
-      <label>
-        Naming
-        <select
-          value={settings.defaults.naming}
-          onChange={(event) =>
-            setDefault('naming', event.target.value as ProfileDefaults['naming'])
-          }
-        >
-          <option value="oled">OLED friendly</option>
-          <option value="original">Original</option>
-        </select>
-      </label>
 
-      <Conversions
-        enabled={settings.convertIncompatible}
-        setEnabled={(convertIncompatible) =>
-          setSettings((current) => ({ ...current, convertIncompatible }))
-        }
-      />
+        <section className="settings-card">
+          <h3>Online sources</h3>
+          <p className="mode-note">
+            The list of sites is a JSON file. Put one at the path below to replace the
+            built-in list; it is read when the application starts, and anything unusable
+            in it is reported rather than ignored.
+          </p>
+          <label>
+            Source list
+            <input readOnly value={providersPath || 'Available in the desktop application'} />
+          </label>
+        </section>
 
-      <h3>Online sources</h3>
-      <p className="mode-note">
-        The list of sites is a JSON file. Put one at the path below to replace the
-        built-in list; it is read when the application starts, and anything unusable in
-        it is reported rather than ignored.
-      </p>
-      <label>
-        Source list
-        <input readOnly value={providersPath || 'Available in the desktop application'} />
-      </label>
+        <DownloadCache />
 
-      <DownloadCache />
-
-      <h3>Library</h3>
-      <p className="mode-note">
-        Removes the indexed titles and source locations. No file on disk is touched
-        and no profile is removed.
-      </p>
-      <button className="button secondary danger" onClick={clearLibrary}>
-        <Trash2 />
-        Clear local index
-      </button>
+        <section className="settings-card">
+          <h3>Library</h3>
+          <p className="mode-note">
+            Removes the indexed titles and source locations. No file on disk is touched
+            and no profile is removed.
+          </p>
+          <button className="button secondary danger" onClick={clearLibrary}>
+            <Trash2 />
+            Clear local index
+          </button>
+        </section>
+      </div>
     </Modal>
   )
 }

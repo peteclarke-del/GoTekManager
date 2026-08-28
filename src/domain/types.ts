@@ -222,7 +222,10 @@ export type OnlineProvider = {
   catalogUrl?: string
   query?: string
   platformId?: string
+  /** Shipped with the application, so it can be changed but not deleted. */
   builtIn?: boolean
+  /** A shipped source the user has changed, which can be put back as it was. */
+  overridden?: boolean
   /**
    * Inspect the site even though its robots.txt refuses.
    *
