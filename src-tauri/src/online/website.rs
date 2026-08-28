@@ -55,6 +55,47 @@ fn link_label(anchor: &scraper::ElementRef<'_>, url: &reqwest::Url) -> String {
         .to_string()
 }
 
+/// The origin the inspection is confined to.
+///
+/// Taken from where the starting page landed rather than from what was typed.
+/// A great many sites redirect `www.` to their apex or the reverse, and judging
+/// every later link against the typed origin abandoned the crawl at its first
+/// page, silently and with nothing to show for it. The landing must still be
+/// HTTPS: a redirect down to plain HTTP ends the inspection rather than
+/// quietly continuing over a connection nobody asked for.
+fn landing_origin(landed: &reqwest::Url) -> Result<String> {
+    if landed.scheme() != "https" {
+        return Err(format!(
+            "{} redirected to an address that is not HTTPS.",
+            landed.host_str().unwrap_or("This site")
+        )
+        .into());
+    }
+    Ok(landed.origin().ascii_serialization())
+}
+
+/// The directory a starting URL names.
+///
+/// `/collections/Atari ST/index.html` and `/collections/Atari ST/` both name
+/// the same folder, and that folder is what the user chose.
+fn start_directory(start: &reqwest::Url) -> String {
+    let path = start.path();
+    match path.rfind('/') {
+        Some(at) => path[..=at].to_string(),
+        None => "/".to_string(),
+    }
+}
+
+/// Whether a page may be followed, given where the crawl was pointed.
+///
+/// Sideways and downwards are allowed; upwards is not. Every directory index
+/// carries a link to its parent, and following it turns a deliberate choice of
+/// one collection into a crawl of everything sitting beside it — which is how a
+/// scan of an Atari ST folder fills up with somebody's Atari 8-bit disks.
+fn within_scope(directory: &str, path: &str) -> bool {
+    path == directory || !directory.starts_with(path)
+}
+
 pub async fn inspect(
     client: &reqwest::Client,
     provider: &OnlineProvider,
@@ -98,7 +139,9 @@ pub async fn inspect(
     };
 
     let selector = Selector::parse("a[href]").map_err(|error| error.to_string())?;
-    let origin = start.origin().ascii_serialization();
+    // Both are replaced by where the starting page actually lands.
+    let mut origin = start.origin().ascii_serialization();
+    let mut directory = start_directory(&start);
     let mut pending = VecDeque::from([(start, 0usize)]);
     let mut visited = HashSet::new();
     let mut downloads: HashMap<String, OnlineTitle> = HashMap::new();
@@ -120,6 +163,10 @@ pub async fn inspect(
             .send()
             .await
             .with_context(|| format!("Unable to inspect {url}"))?;
+        if response.status().is_success() && visited.len() == 1 {
+            origin = landing_origin(response.url())?;
+            directory = start_directory(response.url());
+        }
         // A redirect off-site, an error page, or a non-HTML body ends this branch.
         if !response.status().is_success()
             || response.url().origin().ascii_serialization() != origin
@@ -171,6 +218,7 @@ pub async fn inspect(
                 });
             } else if depth < MAX_DEPTH
                 && (extension.is_empty() || PAGE_EXTENSIONS.contains(&extension.as_str()))
+                && within_scope(&directory, link.path())
             {
                 pending.push_back((link, depth + 1));
             }
@@ -252,6 +300,48 @@ mod tests {
             provider(true, Some("Custom/1.0")).user_agent.as_deref(),
             Some("Custom/1.0")
         );
+    }
+
+    #[test]
+    fn the_crawl_follows_the_starting_page_to_where_it_lands() {
+        use super::landing_origin;
+        // Redirecting www to the apex is the commonest arrangement there is.
+        // Holding later pages to the typed origin dropped every such site at
+        // its first page and reported nothing found, which reads as an empty
+        // site rather than as a crawl that never started.
+        let landed = reqwest::Url::parse("https://abbuc.de/index.php").unwrap();
+
+        assert_eq!(landing_origin(&landed).unwrap(), "https://abbuc.de");
+
+        // A redirect down to plain HTTP is refused rather than followed.
+        let insecure = reqwest::Url::parse("http://abbuc.de/").unwrap();
+        assert!(landing_origin(&insecure).is_err());
+    }
+
+    #[test]
+    fn a_crawl_does_not_climb_out_of_the_folder_it_was_pointed_at() {
+        use super::{start_directory, within_scope};
+        let start =
+            reqwest::Url::parse("https://ftp.example.net/collections/Atari%20ST/").unwrap();
+        let directory = start_directory(&start);
+
+        assert_eq!(directory, "/collections/Atari%20ST/");
+        // Down and sideways within the folder: followed.
+        assert!(within_scope(&directory, "/collections/Atari%20ST/packs/"));
+        assert!(within_scope(&directory, "/collections/Atari%20ST/"));
+        // The parent-directory link every index carries, and what lies beside
+        // the chosen folder through it: not followed.
+        assert!(!within_scope(&directory, "/collections/"));
+        assert!(!within_scope(&directory, "/"));
+
+        // A starting page rather than a folder still names its folder.
+        let page = reqwest::Url::parse("https://example.org/bbc/homepage.html").unwrap();
+        assert_eq!(start_directory(&page), "/bbc/");
+        assert!(within_scope("/bbc/", "/bbc/downloads/list.html"));
+        assert!(!within_scope("/bbc/", "/"));
+
+        // A site pointed at its root is not confined to anything.
+        assert!(within_scope("/", "/anywhere/at/all"));
     }
 
     #[test]

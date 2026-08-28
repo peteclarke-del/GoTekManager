@@ -17,6 +17,7 @@
  */
 
 import bundled from './providers.json'
+import { upsertById } from './records'
 import type { OnlineProvider, ProviderAdapter } from './types'
 
 const ADAPTERS: ProviderAdapter[] = ['internetArchive', 'htmlSite', 'jsonFeed', 'demozoo']
@@ -34,33 +35,39 @@ export type ProviderLoad = {
 }
 
 /**
- * Checks one entry from a file a person may have typed by hand.
+ * Checks one source, wherever it came from.
  *
  * Returns the reason it is unusable rather than a boolean, because a config
- * file that is quietly half-ignored is worse than one that says what is wrong.
+ * file that is quietly half-ignored is worse than one that says what is wrong,
+ * and because the same sentence is what the edit dialog should show. `where`
+ * names the entry in that sentence; `seen` is only supplied when reading a
+ * file, where a repeated id is a fault the editor cannot produce.
  */
-function faultIn(entry: unknown, index: number, seen: Set<string>): string | null {
-  const where = `entry ${index + 1}`
+export function faultIn(
+  entry: unknown,
+  where: string,
+  seen: Set<string> = new Set(),
+): string | null {
   if (typeof entry !== 'object' || entry === null) return `${where} is not an object`
   const provider = entry as Partial<OnlineProvider>
 
   if (!provider.id?.trim()) return `${where} has no id`
   if (seen.has(provider.id)) return `${where} repeats the id "${provider.id}"`
-  if (!provider.name?.trim()) return `${provider.id} has no name`
+  if (!provider.name?.trim()) return `${where} has no name`
   if (!provider.adapter || !ADAPTERS.includes(provider.adapter)) {
-    return `${provider.id} has an unknown adapter "${provider.adapter}"`
+    return `${where} has an unknown adapter "${provider.adapter}"`
   }
   if (provider.adapter === 'demozoo') {
     // The query carries the Demozoo platform number; anything else would be
     // sent as a filter and quietly return another machine's productions.
     if (!/^\d+$/.test(provider.query?.trim() || '')) {
-      return `${provider.id} needs a Demozoo platform number in its query`
+      return `${where} needs a Demozoo platform number in its query`
     }
   } else if (provider.adapter === 'internetArchive') {
-    if (!provider.query?.trim()) return `${provider.id} needs a query`
+    if (!provider.query?.trim()) return `${where} needs a query`
   } else if (!provider.catalogUrl?.startsWith('https://')) {
     // Enforced natively too; catching it here names the offending entry.
-    return `${provider.id} needs an https:// URL`
+    return `${where} needs an https:// URL`
   }
   return null
 }
@@ -76,7 +83,7 @@ export function readProviderConfig(value: unknown): ProviderLoad {
   const seen = new Set<string>()
   const providers: OnlineProvider[] = []
   config.providers.forEach((entry, index) => {
-    const fault = faultIn(entry, index, seen)
+    const fault = faultIn(entry, `entry ${index + 1}`, seen)
     if (fault) {
       problems.push(fault)
       return
@@ -86,6 +93,30 @@ export function readProviderConfig(value: unknown): ProviderLoad {
     providers.push({ ...provider, builtIn: true })
   })
   return { providers, problems }
+}
+
+/**
+ * The list the interface works with.
+ *
+ * A source the user changed is kept as an entry with the same id rather than as
+ * a copy of the whole file, so the built-in list stays the thing that is
+ * shipped and an edit stays something that can be undone. Which of the three an
+ * entry is — shipped, shipped-and-changed, or the user's own — is recorded on
+ * it here so that no screen has to work it out again from two lists.
+ */
+export function mergeProviders(
+  shipped: OnlineProvider[],
+  custom: OnlineProvider[],
+): OnlineProvider[] {
+  const shippedIds = new Set(shipped.map((provider) => provider.id))
+  return upsertById(
+    shipped,
+    ...custom.map((provider) => ({
+      ...provider,
+      builtIn: shippedIds.has(provider.id),
+      overridden: shippedIds.has(provider.id),
+    })),
+  )
 }
 
 /** The list compiled into the application. */

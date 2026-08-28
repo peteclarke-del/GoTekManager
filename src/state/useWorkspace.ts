@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   defaultProviders,
+  mergeProviders,
   PROVIDERS_FILE,
   readProviderConfig,
 } from '../domain/providers'
-import { upsertById } from '../domain/records'
 import type { AppSettings, OnlineProvider } from '../domain/types'
 import { loadSettings, PROVIDERS_KEY, SETTINGS_KEY, TABLE_PREFS_KEY } from './migrations'
 import { loadPersistedWorkspace, persistWorkspace } from './persistence.native'
@@ -111,7 +111,7 @@ export function useProviders() {
     }
   }, [])
 
-  const providers = useMemo(() => upsertById(shipped, ...custom), [shipped, custom])
+  const providers = useMemo(() => mergeProviders(shipped, custom), [shipped, custom])
   return { providers, setCustom, configPath, problems }
 }
 

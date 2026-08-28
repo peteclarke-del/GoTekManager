@@ -10,6 +10,7 @@ import {
   transferOperations,
 } from '../../domain/media'
 import { basename } from '../../domain/paths'
+import { upsertById } from '../../domain/records'
 import { summarisePlan } from '../../domain/plan'
 import type {
   CachedDownload,
@@ -596,8 +597,8 @@ export function FlowPage({
               platform={platform}
               items={workspace.items}
               providers={providers}
-              addProvider={(provider) =>
-                setCustomProviders((current) => [...current, provider])
+              saveProvider={(provider) =>
+                setCustomProviders((current) => upsertById(current, provider))
               }
               removeProvider={(id) =>
                 setCustomProviders((current) =>
