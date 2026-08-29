@@ -11,6 +11,7 @@ import {
 } from '../../domain/media'
 import { basename } from '../../domain/paths'
 import { upsertById } from '../../domain/records'
+import { configFor } from '../../domain/firmwareConfig'
 import { summarisePlan } from '../../domain/plan'
 import type {
   CachedDownload,
@@ -28,12 +29,15 @@ import {
   chooseFolder,
   errorMessage,
   executeTransfer,
+  firmwareConfigState,
+  writeFirmwareConfig,
   scanFolder,
   type TransferRequest,
 } from '../../native/commands'
 import type { TablePreferences } from '../../state/useWorkspace'
 import { isWritable, type Workspace, type WorkspaceAction } from '../../state/workspace'
 import { ContentsStep } from './ContentsStep'
+import { DriveConfiguration } from './DriveConfiguration'
 import { LocalLibrary } from './LocalLibrary'
 import { OnlineLibrary } from './OnlineLibrary'
 import { ProfileStep } from './ProfileStep'
@@ -80,6 +84,7 @@ export function FlowPage({
   const [writing, setWriting] = useState(false)
   const [completed, setCompleted] = useState<TransferPlan | null>(null)
   const [failure, setFailure] = useState('')
+  const [configWrites, setConfigWrites] = useState(0)
   const [scanning, setScanning] = useState(false)
   const [busySourceId, setBusySourceId] = useState('')
   const [sourceStatus, setSourceStatus] = useState<
@@ -259,6 +264,36 @@ export function FlowPage({
   // Applying
   // -------------------------------------------------------------------------
 
+  /**
+   * Puts the drive's own configuration on the stick alongside the images.
+   *
+   * A stick of correctly named files still will not behave until the firmware
+   * is told how to read it, so this is part of writing rather than something to
+   * be discovered later. One already on the drive is left alone: it may have
+   * been set up by hand, and replacing it is a decision, not a side effect.
+   *
+   * A failure here does not fail the transfer, which has already succeeded and
+   * been verified. It is reported instead, because a silent one would leave the
+   * user with a stick that looks right and does not work.
+   */
+  const writeDriveConfiguration = async () => {
+    if (!profile) return
+    const contents = configFor(profile, platform)
+    if (!contents) return
+    try {
+      const state = await firmwareConfigState(profile.destination.path)
+      if (state.exists) return
+      const written = await writeFirmwareConfig(profile.destination.path, contents)
+      setConfigWrites((count) => count + 1)
+      notify({ kind: 'info', text: `Wrote ${written} so the drive reads this stick correctly.` })
+    } catch (reason) {
+      notify({
+        kind: 'error',
+        text: `The files were written, but the drive configuration was not: ${errorMessage(reason)}`,
+      })
+    }
+  }
+
   const apply = async () => {
     if (!profile || !request || !plan?.ready || confirmation !== profile.name) return
     setWriting(true)
@@ -269,6 +304,7 @@ export function FlowPage({
       setConfirmation('')
       setEdits([])
       dispatch({ type: 'collectionCleared', profileId: profile.id })
+      await writeDriveConfiguration()
       void browser.refresh()
     } catch (reason) {
       setFailure(errorMessage(reason))
@@ -510,6 +546,11 @@ export function FlowPage({
                   {warning}
                 </p>
               ))}
+              <DriveConfiguration
+                profile={profile}
+                platform={platform}
+                refreshKey={configWrites}
+              />
             </section>
           )}
 

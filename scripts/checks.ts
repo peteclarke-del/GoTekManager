@@ -54,6 +54,11 @@ import {
   safeFileName,
   toPosix,
 } from '../src/domain/paths'
+import {
+  configFor,
+  configSupport,
+  flashFloppyConfig,
+} from '../src/domain/firmwareConfig'
 import { isOnDestination, summarisePlan } from '../src/domain/plan'
 import {
   defaultProviders,
@@ -982,6 +987,47 @@ check('the edit dialog and the source file reject the same things', () => {
     ),
     null,
   )
+})
+
+check('the drive configuration says what the firmware needs and nothing more', () => {
+  const bbc = requirePlatform('bbc')
+  const file = flashFloppyConfig(bbcProfile, bbc)
+
+  // Written in the form the firmware's own example file uses.
+  assert.ok(file.includes('nav-mode = native'))
+  // An Acorn machine gets the two settings FlashFloppy documents for it.
+  assert.ok(file.includes('host = acorn'))
+  assert.ok(file.includes('index-suppression = no'))
+  // The interface is never written: its default follows the JC jumper, which is
+  // already correct for every machine here, and a file that overrode it would
+  // stop a properly jumpered drive working.
+  assert.ok(!/^interface\s*=/m.test(file))
+  // Every setting is explained in the file itself.
+  for (const line of file.split('\n').filter((entry) => entry.includes(' = '))) {
+    assert.ok(line.trim().length > 0, 'a setting was written with no value')
+  }
+  assert.ok(file.endsWith('\n'))
+  // Parsed by an 8-bit drive rather than a text editor, so plain ASCII only —
+  // including when the profile itself is named in another script.
+  const named = flashFloppyConfig({ ...bbcProfile, name: 'Ünité — “x”' }, bbc)
+  assert.ok(/^[\t\x20-\x7e\n]*$/.test(named), 'the configuration is not plain ASCII')
+
+  // A machine with no documented needs gets the navigation setting alone,
+  // rather than another machine's host value.
+  const cpc = flashFloppyConfig({ ...bbcProfile, platformId: 'cpc464' }, requirePlatform('cpc464'))
+  assert.ok(cpc.includes('nav-mode = native'))
+  assert.ok(!cpc.includes('host ='))
+  assert.ok(!cpc.includes('index-suppression'))
+})
+
+check('only a firmware with a file this application can write is offered one', () => {
+  assert.equal(configSupport('flashfloppy').writable, true)
+  // HxC keeps a binary slot table written by its own desktop software; making
+  // something plausible up would be worse than making nothing.
+  assert.equal(configSupport('hxc').writable, false)
+  assert.equal(configSupport('gotek-standard').writable, false)
+  assert.equal(configFor({ ...bbcProfile, firmwareId: 'hxc' }, requirePlatform('bbc')), null)
+  assert.ok(configFor(bbcProfile, requirePlatform('bbc'))?.includes('nav-mode'))
 })
 
 check('every icon the bundle names exists and is one a bundler can read', () => {
