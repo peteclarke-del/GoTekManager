@@ -31,6 +31,7 @@ jobs:
 
   package:
     name: ${{ matrix.name }}
+    needs: verify
     strategy:
       fail-fast: false
       matrix:
@@ -108,3 +109,49 @@ jobs:
           name: gotek-manager-${{ matrix.name }}
           path: src-tauri/target/${{ matrix.target }}/release/bundle/
           if-no-files-found: error
+
+  # A tag build is only a release once the installers are somewhere a person can
+  # download them. Workflow artifacts expire and need a GitHub account to fetch,
+  # so a tag also produces a release with the installers attached to it.
+  #
+  # It is created as a draft on purpose: publishing is a decision for a person,
+  # made after looking at what was actually built.
+  release:
+    name: Draft release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect every platform's packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+      - name: Attach the installers to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The .app bundle is a directory and cannot be attached; its .dmg can.
+          mapfile -t -d '' installers < <(find packages -type f \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+               -o -name '*.msi' -o -name '*.exe' -o -name '*.dmg' \) -print0)
+
+          printf 'Attaching %d installers:\n' "${#installers[@]}"
+          printf '  %s\n' "${installers[@]}"
+
+          # Six targets must each have produced something. A release missing a
+          # platform is worse than a build that failed loudly.
+          if [ "${#installers[@]}" -lt 6 ]; then
+            echo "Fewer installers than there are platforms; not drafting a release." >&2
+            exit 1
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --title "GoTek Manager ${GITHUB_REF_NAME}" \
+            --notes-file .github/RELEASE_NOTES.md \
+            "${installers[@]}"
