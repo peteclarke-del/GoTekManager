@@ -199,6 +199,7 @@ Two invariants worth preserving:
 | `cache.rs` | Every cache location, all resolved through Tauri's `app_cache_dir` |
 | `archive.rs` | Safe, bounded, manifest-cached ZIP extraction |
 | `convert.rs` | `.msa` to `.st` and `.scl` to `.trd`, each tested against format bytes |
+| `firmware.rs` | Where the drive's own `FF.CFG` belongs, and writing it without clobbering one |
 | `media.rs` | `scan_folder`, `list_directory`, `list_image_directory`, `inspect_target` |
 | `devices.rs` | Mount discovery and classification, firmware evidence, destination validation, writability probing |
 | `transfer.rs` | `compare_target_files`, `plan_transfer`, `execute_transfer` |

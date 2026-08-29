@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PATH=/home/pclarke/.cargo/bin:__TRACKED_VAR__ cargo test --offline firmware)",
+      "Bash(node -e ' *)",
+      "Bash(cat)",
+      "Bash(PATH=/home/pclarke/.cargo/bin:__TRACKED_VAR__ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --offline -- -D warnings)"
+    ]
+  }
+}
