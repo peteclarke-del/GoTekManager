@@ -15,6 +15,7 @@ import type {
   ConversionSupport,
   DestinationEdit,
   FileEntry,
+  FirmwareConfigState,
   ImageOptions,
   ImageSummary,
   MountedTarget,
@@ -107,6 +108,20 @@ export function scanFolder(
 
 export function supportedConversions(): Promise<ConversionSupport[]> {
   return invokeNative<ConversionSupport[]>('supported_conversions', {})
+}
+
+/** What the drive's configuration file looks like on the destination now. */
+export function firmwareConfigState(target: string): Promise<FirmwareConfigState> {
+  return invokeNative<FirmwareConfigState>('firmware_config_state', { target })
+}
+
+/** Writes the configuration, returning where it went. */
+export function writeFirmwareConfig(
+  target: string,
+  contents: string,
+  replace = false,
+): Promise<string> {
+  return invokeNative<string>('write_firmware_config', { target, contents, replace })
 }
 
 // ---------------------------------------------------------------------------

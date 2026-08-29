@@ -254,3 +254,44 @@ button[aria-pressed="true"]{box-shadow:inset 0 -4px 0 #a46800;background:#fff1c7
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The drive's own configuration, shown before it is written. It sits inside
+   the write-confirmation panel, so it is bordered off rather than styled as
+   another section heading. */
+.drive-config {
+  grid-column: 1 / -1;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--a11y-border, #d7dfe3);
+}
+
+.drive-config > b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.drive-config > b svg {
+  width: 15px;
+  height: 15px;
+}
+
+.drive-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.drive-config-file {
+  max-height: 240px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--a11y-border, #d7dfe3);
+  border-radius: 6px;
+  background: var(--a11y-soft, #f6f8f9);
+  font: 11px/1.55 'DM Mono', monospace;
+  white-space: pre-wrap;
+}

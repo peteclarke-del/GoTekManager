@@ -34,6 +34,10 @@ profile's exact name.
 - Extensible platform catalogue covering the initial Acorn, Amstrad, Commodore,
   Sinclair, and Atari systems, listing only formats a floppy emulator can
   actually present.
+- The drive's own `FF.CFG` written alongside the images, with the settings
+  FlashFloppy documents for the machine being prepared and nothing else. It goes
+  wherever the firmware actually reads it from, and one already on the stick is
+  never replaced without being asked for.
 - FlashFloppy, HxC, and factory firmware profiles, with conservative detection
   from configuration files found on the media. Accepted formats are the overlap
   of the machine and the firmware, so the application never claims a format will

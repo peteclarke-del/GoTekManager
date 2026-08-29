@@ -73,6 +73,14 @@ export type AppSettings = {
   convertIncompatible: boolean
 }
 
+/** The drive's own configuration file, as it stands on the destination. */
+export type FirmwareConfigState = {
+  /** Where the firmware reads it from, relative to the destination root. */
+  path: string
+  exists: boolean
+  contents?: string
+}
+
 /** A conversion the application can perform, as the native side describes it. */
 export type ConversionSupport = {
   conversion: string

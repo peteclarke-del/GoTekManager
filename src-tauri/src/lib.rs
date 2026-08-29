@@ -24,6 +24,7 @@ mod hardware;
 mod image;
 mod error;
 mod fingerprint;
+mod firmware;
 mod media;
 mod online;
 mod paths;
@@ -46,6 +47,8 @@ pub fn run() {
             media::list_image_directory,
             media::scan_folder,
             convert::supported_conversions,
+            firmware::firmware_config_state,
+            firmware::write_firmware_config,
             // Planning and writing.
             transfer::compare_target_files,
             transfer::plan_transfer,
