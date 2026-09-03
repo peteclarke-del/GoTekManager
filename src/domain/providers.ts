@@ -16,6 +16,7 @@
  * hand.
  */
 
+import { platforms } from './catalog'
 import bundled from './providers.json'
 import { upsertById } from './records'
 import type { OnlineProvider, ProviderAdapter } from './types'
@@ -57,6 +58,15 @@ export function faultIn(
   if (!provider.adapter || !ADAPTERS.includes(provider.adapter)) {
     return `${where} has an unknown adapter "${provider.adapter}"`
   }
+  // Every source belongs to one machine. A source that named none used to be
+  // shown while preparing any of them, which put an Amstrad archive in front of
+  // someone writing a BBC stick and cached its titles as if they were Acorn's.
+  if (!provider.platformId?.trim()) {
+    return `${where} does not say which machine it is for`
+  }
+  if (!platforms.some((platform) => platform.id === provider.platformId)) {
+    return `${where} names an unknown machine "${provider.platformId}"`
+  }
   if (provider.adapter === 'demozoo') {
     // The query carries the Demozoo platform number; anything else would be
     // sent as a filter and quietly return another machine's productions.
@@ -92,6 +102,24 @@ export function readProviderConfig(value: unknown): ProviderLoad {
     seen.add(provider.id)
     providers.push({ ...provider, builtIn: true })
   })
+  return { providers, problems }
+}
+
+/**
+ * The user's own sources, held to the same standard as the ones that ship.
+ *
+ * A source saved before every source had to name a machine would otherwise
+ * simply stop appearing, with nothing said. Naming it means the user can open
+ * its settings, choose the machine, and have it back.
+ */
+export function readCustomProviders(entries: readonly OnlineProvider[]): ProviderLoad {
+  const problems: string[] = []
+  const providers: OnlineProvider[] = []
+  for (const entry of entries) {
+    const fault = faultIn(entry, `the source "${entry?.name || entry?.id || 'you added'}"`)
+    if (fault) problems.push(fault)
+    else providers.push(entry)
+  }
   return { providers, problems }
 }
 
@@ -139,26 +167,16 @@ export function adapterLabel(adapter: ProviderAdapter): string {
 /**
  * The providers worth showing for a platform.
  *
- * A source without a `platformId` covers everything; one with it is specific to
- * that machine. Showing a BBC Micro archive while preparing an Amstrad stick is
- * just noise, and worse, refreshing it would cache a catalogue of titles that
- * can never apply.
+ * Every source names one machine, and only that machine's sources are shown.
+ * Anything else is noise at best: showing a BBC Micro archive while preparing
+ * an Amstrad stick wastes the reader's attention, and refreshing it would cache
+ * a catalogue of titles that can never apply to what is being written.
  */
 export function providersFor(
   providers: OnlineProvider[],
   platformId: string,
 ): OnlineProvider[] {
-  return providers.filter(
-    (provider) => !provider.platformId || provider.platformId === platformId,
-  )
-}
-
-/** How a source's reach reads in the sidebar. */
-export function scopeLabel(
-  provider: OnlineProvider,
-  platformName: (id: string) => string,
-): string {
-  return provider.platformId ? `${platformName(provider.platformId)} only` : 'All platforms'
+  return providers.filter((provider) => provider.platformId === platformId)
 }
 
 /**

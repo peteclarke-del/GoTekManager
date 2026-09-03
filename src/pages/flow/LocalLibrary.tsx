@@ -1,8 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, FolderOpen, ListPlus, Pencil, RefreshCw, Search, Tag, Trash2 } from 'lucide-react'
+import {
+  Check,
+  FolderOpen,
+  FolderTree,
+  ListMinus,
+  ListPlus,
+  Pencil,
+  RefreshCw,
+  Search,
+  Tag,
+  Trash2,
+} from 'lucide-react'
+import {
+  BulkBar,
+  SelectAllCell,
+  SelectCell,
+  SelectColumns,
+} from '../../components/BulkSelection'
 import { Empty, InlineStatus } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
 import { acceptedFormats, platforms, requireFirmware, type Platform } from '../../domain/catalog'
+import { categories } from '../../domain/categories'
 import {
   belongsToPlatform,
   forProfile,
@@ -22,6 +40,7 @@ import type {
 } from '../../domain/types'
 import { compareTargetFiles } from '../../native/commands'
 import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
+import { useRowSelection } from '../../hooks/useRowSelection'
 import type { TablePreferences } from '../../state/useWorkspace'
 
 /** Which titles to show, by whether the destination already holds them. */
@@ -43,7 +62,36 @@ function isOnTarget(presence: Presence): boolean {
 }
 
 /** How a library title compares with what is already on the destination. */
-type Presence = 'Checking' | 'New' | 'Identical' | 'Different' | 'Elsewhere' | 'Unavailable'
+type Presence =
+  | 'Unchecked'
+  | 'Checking'
+  | 'New'
+  | 'Identical'
+  | 'Different'
+  | 'Elsewhere'
+  | 'Unavailable'
+
+/**
+ * How many titles are compared with the destination without being asked.
+ *
+ * Presence is decided by contents, which means reading every title: exact, and
+ * not free. For a few hundred that is a moment. For a few thousand — a library
+ * of archived titles on a network share, say — it is minutes, and doing it the
+ * instant the step opens looks like the application has hung. Beyond this many,
+ * the check is offered rather than taken.
+ */
+const AUTOMATIC_CHECK_LIMIT = 500
+
+/**
+ * How many titles the table draws at once.
+ *
+ * Every row carries a platform and a category to choose from, which is some
+ * thirty elements of markup; a library of a few thousand is a few hundred
+ * thousand of them, and building that many takes tens of seconds during which
+ * nothing on screen responds. A page of them draws in a moment, and the rest
+ * are one button away — or, more usually, one search away.
+ */
+const PAGE_SIZE = 150
 
 const PRESENCE_BY_STATUS: Record<FileStatus, Presence> = {
   new: 'New',
@@ -61,12 +109,23 @@ const PRESENCE_ORDER: Presence[] = [
   'Identical',
   'Unavailable',
   'Checking',
+  'Unchecked',
+]
+
+/** Which titles to show, by whether this profile already stages them. */
+type ProfileFilter = 'all' | 'staged' | 'unstaged'
+
+const PROFILE_FILTERS: Array<[ProfileFilter, string]> = [
+  ['all', 'All'],
+  ['staged', 'In profile'],
+  ['unstaged', 'Not in profile'],
 ]
 
 const COLUMN_LABELS: Record<string, string> = {
   presence: 'Target',
   title: 'Title',
   platform: 'Platform',
+  category: 'Category',
   format: 'Format',
   size: 'Size',
   location: 'Source',
@@ -93,8 +152,10 @@ export function LocalLibrary({
   renameLocation,
   removeLocation,
   assignPlatform,
+  assignCategory,
   setDisplayTitle,
   addToCollection,
+  removeFromCollection,
   preferences,
   setPreferences,
   status,
@@ -109,9 +170,11 @@ export function LocalLibrary({
   refreshLocation: (source: SourceLocation) => void
   renameLocation: (source: SourceLocation) => void
   removeLocation: (source: SourceLocation) => void
-  assignPlatform: (itemId: string, platformId: string) => void
+  assignPlatform: (itemIds: string[], platformId: string) => void
+  assignCategory: (itemIds: string[], categoryId: string) => void
   setDisplayTitle: (itemId: string, displayTitle: string) => void
-  addToCollection: (item: MediaItem) => void
+  addToCollection: (items: MediaItem[]) => void
+  removeFromCollection: (itemIds: string[]) => void
   preferences: TablePreferences
   setPreferences: React.Dispatch<React.SetStateAction<TablePreferences>>
   status: { kind: 'success' | 'error' | 'info'; text: string } | null
@@ -121,11 +184,16 @@ export function LocalLibrary({
   /** Source paths to narrow the table to. Empty means every source. */
   const [selectedSources, setSelectedSources] = useState<string[]>([])
   const [presenceFilter, setPresenceFilter] = useState<PresenceFilter>('all')
+  const [profileFilter, setProfileFilter] = useState<ProfileFilter>('all')
   const [editing, setEditing] = useState<SourceLocation | null>(null)
   const [renaming, setRenaming] = useState<MediaItem | null>(null)
   const [statuses, setStatuses] = useState<Record<string, TargetFileStatus>>({})
   const [checking, setChecking] = useState(false)
+  /** Set once the user asks for a comparison too large to run unprompted. */
+  const [checkAsked, setCheckAsked] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
+  /** How many of the matching titles are drawn. */
+  const [shown, setShown] = useState(PAGE_SIZE)
   const fingerprinting = useFingerprintProgress()
 
   const accepted = useMemo(
@@ -168,8 +236,22 @@ export function LocalLibrary({
     [items, platform.id],
   )
   useEffect(() => {
+    setShown(PAGE_SIZE)
+  }, [query, selectedSources, presenceFilter, profileFilter, platform.id, profile.id])
+
+  const automatic = comparable.length <= AUTOMATIC_CHECK_LIMIT
+  const checked = automatic || checkAsked
+
+  // A different destination is a different answer, so an answer already given
+  // is not carried across to one that has not been asked for.
+  useEffect(() => {
+    setCheckAsked(false)
+    setStatuses({})
+  }, [profile.id, platform.id])
+
+  useEffect(() => {
     let active = true
-    if (!comparable.length) {
+    if (!comparable.length || !checked) {
       setStatuses({})
       return
     }
@@ -191,6 +273,7 @@ export function LocalLibrary({
     }
   }, [
     comparable,
+    checked,
     profile.destination.path,
     profile.firmwareId,
     profile.organise,
@@ -215,6 +298,8 @@ export function LocalLibrary({
           return row.item.canonicalTitle.toLowerCase()
         case 'platform':
           return row.item.assignedPlatformId || ''
+        case 'category':
+          return row.item.category || ''
         case 'format':
           return row.item.extension
         case 'size':
@@ -229,16 +314,21 @@ export function LocalLibrary({
         staged: staged.has(item.id),
         presence: checking
           ? 'Checking'
-          : PRESENCE_BY_STATUS[statuses[item.path]?.status] || 'Checking',
+          : !checked
+            ? 'Unchecked'
+            : PRESENCE_BY_STATUS[statuses[item.path]?.status] || 'Checking',
         foundAt: statuses[item.path]?.foundAt,
         location: sourceName(item),
       }))
       // While the contents are still being read nothing is known yet, so the
       // filter is held back rather than emptying the table as it works.
       .filter((row) =>
-        presenceFilter === 'all' || checking
+        presenceFilter === 'all' || checking || !checked
           ? true
           : (presenceFilter === 'present') === isOnTarget(row.presence),
+      )
+      .filter((row) =>
+        profileFilter === 'all' ? true : (profileFilter === 'staged') === row.staged,
       )
       .sort((left, right) => {
         const a = value(left)
@@ -249,7 +339,46 @@ export function LocalLibrary({
             : String(a).localeCompare(String(b))
         return direction === 'asc' ? ordered : -ordered
       })
-  }, [matching, staged, statuses, checking, preferences.sort, sources, presenceFilter])
+  }, [
+    matching,
+    staged,
+    statuses,
+    checking,
+    checked,
+    preferences.sort,
+    sources,
+    presenceFilter,
+    profileFilter,
+  ])
+
+  // The selection follows the table: filtering a ticked title away unticks it,
+  // so a bulk action can only ever reach what is on screen.
+  const visible = useMemo(() => rows.slice(0, shown), [rows, shown])
+  const rowIds = useMemo(() => visible.map((row) => row.item.id), [visible])
+  const selection = useRowSelection(rowIds)
+  const picked = selection.chosen(visible, (row) => row.item.id)
+  const addable = picked.filter((row) => !row.staged)
+  const removable = picked.filter((row) => row.staged)
+
+  /**
+   * Stages titles against this profile.
+   *
+   * An ambiguous format is committed to this profile's platform at the moment
+   * it is added, so the plan is never a guess about what a .dsk holds.
+   */
+  const stage = (chosen: Row[]) => {
+    const unassigned = chosen
+      .filter((row) => !row.item.assignedPlatformId)
+      .map((row) => row.item.id)
+    if (unassigned.length) assignPlatform(unassigned, platform.id)
+    addToCollection(chosen.map((row) => forProfile(row.item, platform.id)))
+    selection.clear()
+  }
+
+  const unstage = (chosen: Row[]) => {
+    removeFromCollection(chosen.map((row) => row.item.id))
+    selection.clear()
+  }
 
   const total = items.filter((item) => belongsToPlatform(item, platform.id)).length
   const elsewhereCount = rows.filter((row) => row.presence === 'Elsewhere').length
@@ -280,7 +409,7 @@ export function LocalLibrary({
     switch (column) {
       case 'presence':
         return (
-          <td key={column}>
+          <td key={column} className={column}>
             <span
               className={`target-state ${row.presence.toLowerCase()}`}
               title={
@@ -295,7 +424,7 @@ export function LocalLibrary({
         )
       case 'title':
         return (
-          <td key={column}>
+          <td key={column} className={column}>
             <button
               className="table-title"
               title="Set the name this title is written under"
@@ -312,13 +441,30 @@ export function LocalLibrary({
         )
       case 'platform':
         return (
-          <td key={column}>
+          <td key={column} className={column}>
             <select
               aria-label={`Platform for ${item.name}`}
               value={item.assignedPlatformId || platform.id}
-              onChange={(event) => assignPlatform(item.id, event.target.value)}
+              onChange={(event) => assignPlatform([item.id], event.target.value)}
             >
               {platforms.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+          </td>
+        )
+      case 'category':
+        return (
+          <td key={column} className={column}>
+            <select
+              aria-label={`Category for ${item.name}`}
+              value={item.category || ''}
+              onChange={(event) => assignCategory([item.id], event.target.value)}
+            >
+              <option value="">Unsorted</option>
+              {categories.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.name}
                 </option>
@@ -332,7 +478,7 @@ export function LocalLibrary({
           profile.firmwareId,
         )
         return (
-          <td key={column}>
+          <td key={column} className={column}>
             <span
               className={compatible ? 'compatible' : 'incompatible'}
               title={
@@ -347,28 +493,32 @@ export function LocalLibrary({
         )
       }
       case 'size':
-        return <td key={column}>{formatBytes(item.size)}</td>
+        return (
+          <td key={column} className={column}>
+            {formatBytes(item.size)}
+          </td>
+        )
       case 'location':
         return (
-          <td key={column} className="location" title={item.path}>
+          <td key={column} className={column} title={item.path}>
             {row.location}
           </td>
         )
       default:
+        // Adding and taking back out are the same button, because a title that
+        // can be put into a profile has to be as easy to take out again.
         return (
-          <td key={column}>
+          <td key={column} className={column}>
             <button
-              className="row-action"
-              disabled={row.staged}
-              title={row.staged ? 'Already in this profile' : `Add to ${profile.name}`}
-              onClick={() => {
-                // An ambiguous format is committed to this profile's platform
-                // at the moment it is added, so the plan is never a guess.
-                if (!item.assignedPlatformId) assignPlatform(item.id, platform.id)
-                addToCollection(forProfile(item, platform.id))
-              }}
+              className={row.staged ? 'row-action staged' : 'row-action'}
+              title={
+                row.staged
+                  ? `Remove ${item.canonicalTitle} from ${profile.name}`
+                  : `Add ${item.canonicalTitle} to ${profile.name}`
+              }
+              onClick={() => (row.staged ? unstage([row]) : stage([row]))}
             >
-              {row.staged ? <Check /> : <ListPlus />}
+              {row.staged ? <ListMinus /> : <ListPlus />}
             </button>
           </td>
         )
@@ -473,7 +623,7 @@ export function LocalLibrary({
               {selectedSources.length
                 ? ` · ${selectedSources.length} source${selectedSources.length === 1 ? '' : 's'}`
                 : ''}{' '}
-              · {requireFirmware(profile.firmwareId).name}
+              · {collection.length} in {profile.name} · {requireFirmware(profile.firmwareId).name}
             </p>
           </div>
           <div className="coverage-filter" role="group" aria-label="Show titles by presence">
@@ -482,8 +632,29 @@ export function LocalLibrary({
                 key={value}
                 className={presenceFilter === value ? 'active' : ''}
                 aria-pressed={presenceFilter === value}
-                disabled={checking && value !== 'all'}
+                disabled={(checking || !checked) && value !== 'all'}
+                title={
+                  checked
+                    ? undefined
+                    : 'Check these titles against the target to filter by it'
+                }
                 onClick={() => setPresenceFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div
+            className="coverage-filter"
+            role="group"
+            aria-label="Show titles by whether this profile stages them"
+          >
+            {PROFILE_FILTERS.map(([value, label]) => (
+              <button
+                key={value}
+                className={profileFilter === value ? 'active' : ''}
+                aria-pressed={profileFilter === value}
+                onClick={() => setProfileFilter(value)}
               >
                 {label}
               </button>
@@ -514,6 +685,24 @@ export function LocalLibrary({
             </span>
           </div>
         )}
+        {!checked && comparable.length > 0 && (
+          <div className="source-status info target-check">
+            <span>
+              <b>{comparable.length} titles are not checked against {profile.name}.</b> Whether
+              a title is already there is decided by its contents, so answering means reading
+              every one — minutes, for a library this size on a network share. Adding titles
+              and writing them does not need it.
+            </span>
+            <button
+              className="button secondary compact"
+              disabled={checking}
+              onClick={() => setCheckAsked(true)}
+            >
+              <RefreshCw className={checking ? 'spinning' : ''} />
+              Check against the target
+            </button>
+          </div>
+        )}
         {fingerprinting && (
           <InlineStatus kind="info">
             Reading contents to identify titles: {fingerprinting.done} of{' '}
@@ -521,10 +710,61 @@ export function LocalLibrary({
             happens again when a file changes.
           </InlineStatus>
         )}
+        <BulkBar selection={selection} noun="titles">
+          <button
+            className="button compact"
+            disabled={!addable.length}
+            title={`Add every selected title that is not already in ${profile.name}`}
+            onClick={() => stage(addable)}
+          >
+            <ListPlus />
+            Add {addable.length} to {profile.name}
+          </button>
+          <button
+            className="button secondary compact"
+            disabled={!removable.length}
+            title={`Take every selected title back out of ${profile.name}`}
+            onClick={() => unstage(removable)}
+          >
+            <ListMinus />
+            Remove {removable.length} from {profile.name}
+          </button>
+          <label className="bulk-category">
+            <FolderTree />
+            <span>Category</span>
+            <select
+              aria-label={`Set the category of ${picked.length} selected titles`}
+              value=""
+              onChange={(event) => {
+                assignCategory(
+                  picked.map((row) => row.item.id),
+                  event.target.value === 'clear' ? '' : event.target.value,
+                )
+                selection.clear()
+              }}
+            >
+              <option value="" disabled>
+                Set for {picked.length}…
+              </option>
+              {categories.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name}
+                </option>
+              ))}
+              <option value="clear">Unsorted</option>
+            </select>
+          </label>
+        </BulkBar>
+
         <div className="table-wrap">
           <table className="library-table">
+            <SelectColumns />
             <thead>
               <tr>
+                <SelectAllCell
+                  selection={selection}
+                  label={`Select all ${visible.length} titles shown`}
+                />
                 {preferences.columnOrder.map((column) => (
                   <th
                     key={column}
@@ -532,7 +772,9 @@ export function LocalLibrary({
                     onDragStart={() => setDraggedColumn(column)}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={() => moveColumn(column)}
-                    className={preferences.sort.key === column ? 'sorted' : ''}
+                    className={
+                      preferences.sort.key === column ? `${column} sorted` : column
+                    }
                   >
                     {column === 'action' ? null : (
                       <button
@@ -553,23 +795,51 @@ export function LocalLibrary({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.item.id}>
+              {visible.map((row) => (
+                <tr key={row.item.id} className={row.staged ? 'staged' : ''}>
+                  <SelectCell
+                    selection={selection}
+                    id={row.item.id}
+                    label={`Select ${row.item.canonicalTitle}`}
+                  />
                   {preferences.columnOrder.map((column) => cell(column, row))}
                 </tr>
               ))}
             </tbody>
           </table>
+          {rows.length > visible.length && (
+            <div className="table-more">
+              <span>
+                Showing {visible.length} of {rows.length} matching titles
+              </span>
+              <button
+                className="button secondary compact"
+                onClick={() => setShown((count) => count + PAGE_SIZE)}
+              >
+                Show {Math.min(PAGE_SIZE, rows.length - visible.length)} more
+              </button>
+              <button
+                className="button compact"
+                title={`Add every matching title to ${profile.name}, drawn or not`}
+                onClick={() => stage(rows.filter((row) => !row.staged))}
+              >
+                <ListPlus />
+                Add all {rows.filter((row) => !row.staged).length} to {profile.name}
+              </button>
+            </div>
+          )}
           {!rows.length && (
             <Empty
               title={
                 !items.length
                   ? 'No titles indexed yet'
-                  : presenceFilter !== 'all'
-                    ? `No ${platform.name} titles are ${presenceFilter === 'present' ? 'on the target' : 'missing from the target'}`
-                    : selectedSources.length
-                      ? 'No titles from the selected sources'
-                      : 'No matching titles'
+                  : profileFilter !== 'all'
+                    ? `No ${platform.name} titles are ${profileFilter === 'staged' ? `in ${profile.name}` : `outside ${profile.name}`}`
+                    : presenceFilter !== 'all'
+                      ? `No ${platform.name} titles are ${presenceFilter === 'present' ? 'on the target' : 'missing from the target'}`
+                      : selectedSources.length
+                        ? 'No titles from the selected sources'
+                        : 'No matching titles'
               }
               action={items.length ? undefined : 'Add location'}
               run={items.length ? undefined : addLocation}

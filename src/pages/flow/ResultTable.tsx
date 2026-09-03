@@ -1,7 +1,15 @@
-import { Search, X } from 'lucide-react'
+import { useMemo } from 'react'
+import { ListMinus, Search, X } from 'lucide-react'
+import {
+  BulkBar,
+  SelectAllCell,
+  SelectCell,
+  SelectColumns,
+} from '../../components/BulkSelection'
 import { formatBytes, isOutsideProfile } from '../../domain/media'
 import { isOnDestination } from '../../domain/plan'
 import type { MediaItem, Profile, ResultStatus, TransferResultEntry } from '../../domain/types'
+import { useRowSelection } from '../../hooks/useRowSelection'
 
 export type ResultView = 'current' | 'changes' | 'result'
 
@@ -53,10 +61,24 @@ export function ResultTable({
   setQuery: (query: string) => void
   /** Lets a staged addition be taken back out from the review table. */
   itemsByPath: Map<string, MediaItem>
-  removeFromCollection: (itemId: string) => void
+  removeFromCollection: (itemIds: string[]) => void
   emptyMessage: string
 }) {
-  const visible = filterResult(entries, view, query)
+  const visible = useMemo(
+    () => filterResult(entries, view, query),
+    [entries, view, query],
+  )
+
+  // Only staged additions can be taken back from here: a file that is already
+  // on the destination is the removal policy's business, not the collection's.
+  const stagedIds = useMemo(
+    () =>
+      visible
+        .map((entry) => itemsByPath.get(entry.path.toLowerCase())?.id)
+        .filter((id): id is string => Boolean(id)),
+    [visible, itemsByPath],
+  )
+  const selection = useRowSelection(stagedIds)
 
   return (
     <div className="flow-stage-body">
@@ -83,10 +105,27 @@ export function ResultTable({
           />
         </label>
       </div>
+      <BulkBar selection={selection} noun="staged titles">
+        <button
+          className="button secondary compact"
+          onClick={() => {
+            removeFromCollection([...selection.selected])
+            selection.clear()
+          }}
+        >
+          <ListMinus />
+          Remove {selection.count} from {profile.name}
+        </button>
+      </BulkBar>
       <div className="table-wrap build-result-table-wrap">
         <table className="build-result-table">
+          <SelectColumns />
           <thead>
             <tr>
+              <SelectAllCell
+                selection={selection}
+                label={`Select all ${stagedIds.length} staged titles shown`}
+              />
               <th>State</th>
               <th>Destination path</th>
               <th>Size</th>
@@ -104,6 +143,13 @@ export function ResultTable({
                   key={`${entry.status}:${entry.path}`}
                   className={outside ? 'result-mismatch' : `result-${entry.status}`}
                 >
+                  <SelectCell
+                    selection={selection}
+                    id={item?.id || entry.path}
+                    label={`Select ${item?.canonicalTitle || entry.path}`}
+                    disabled={!item}
+                    reason="Already on the destination; nothing to take back out"
+                  />
                   <td>
                     <span className="change-label">
                       {outside ? 'Profile mismatch' : STATUS_LABELS[entry.status]}
@@ -118,7 +164,7 @@ export function ResultTable({
                       <button
                         className="row-action"
                         title={`Remove ${item.canonicalTitle} from this profile`}
-                        onClick={() => removeFromCollection(item.id)}
+                        onClick={() => removeFromCollection([item.id])}
                       >
                         <X />
                       </button>

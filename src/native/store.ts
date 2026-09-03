@@ -15,6 +15,7 @@ export type StoredProfile = {
   folderTemplate?: string
   naming: string
   verifyChecksums: boolean
+  display?: string
 }
 
 /** Mirrors the Rust `StoredItem`. `directory` is never persisted. */
@@ -29,6 +30,7 @@ export type StoredItem = {
   canonicalTitle: string
   displayTitle?: string
   assignedPlatformId?: string
+  category?: string
   likelyPlatformIds: string[]
   provenance?: Provenance
 }

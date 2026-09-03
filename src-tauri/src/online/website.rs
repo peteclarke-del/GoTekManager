@@ -2,7 +2,14 @@
 //!
 //! This is deliberately narrow. It starts at one page the user supplied, stays
 //! on that origin, honours `robots.txt` for every request, paces itself, and
-//! records only links whose extension the active platform actually supports.
+//! records only links whose contents the active platform actually supports.
+//!
+//! What a link *is* comes from the server, not from the URL. Plenty of archives
+//! hand out each title from a script — `dl.php?id=...` — whose address says
+//! nothing about what comes back; judging by the URL alone, every one of those
+//! looks like another page to walk, so the downloads are missed and the page
+//! budget is spent fetching them anyway. A response that turns out to be a file
+//! is therefore recorded as one, under the name the server gives it.
 //! It is not a general crawler and must not become one: any new provider needs
 //! its own adapter, terms review, and attribution.
 
@@ -16,8 +23,18 @@ use std::{
     time::Duration,
 };
 
-/// Never fetch more pages than this from one site in one refresh.
+/// Never read more pages than this from one site in one refresh.
+///
+/// Counted in pages actually walked. A link that turns out to be a file is not
+/// a page and does not spend this budget; how many of those may be recorded is
+/// what `MAX_DOWNLOADS` is for.
 const MAX_PAGES: usize = 100;
+/// Never make more requests than this in one refresh, of any kind.
+///
+/// A catalogue page can carry a hundred links to other catalogue pages and a
+/// score of downloads. Following every one of those is how a polite inspection
+/// turns into a crawl of the whole site, so the visit is bounded outright.
+const MAX_REQUESTS: usize = 700;
 /// Never record more candidate downloads than this.
 const MAX_DOWNLOADS: usize = 1000;
 /// How deep to follow same-site catalogue pages from the starting page.
@@ -34,6 +51,84 @@ const PAGE_EXTENSIONS: [&str; 5] = ["html", "htm", "php", "asp", "aspx"];
 
 fn link_extension(url: &reqwest::Url) -> String {
     crate::paths::extension_of(Path::new(url.path()))
+}
+
+/// The filename a response asks to be saved as, if it says.
+///
+/// `Content-Disposition: attachment; filename=Elite.zip` is how a download
+/// script names what it is returning, and often the only place the real name
+/// appears. Quotes are optional in the wild, and anything that looks like a
+/// path is reduced to its last segment so a header can never write outside the
+/// cache folder.
+fn attachment_name(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let value = headers
+        .get(reqwest::header::CONTENT_DISPOSITION)?
+        .to_str()
+        .ok()?;
+    let filename = value
+        .split(';')
+        .filter_map(|part| part.trim().strip_prefix("filename="))
+        .next()?
+        .trim()
+        .trim_matches('"');
+    let name = filename.rsplit(['/', '\\']).next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// What a response turned out to be: something to read, or something to record.
+///
+/// A file is recognised by its disposition or by a content type that is not a
+/// page. Anything else is treated as a page, which is the safe way round: a
+/// page misread as a file would be recorded as a title nobody can use, while a
+/// file misread as a page is simply dropped, as it always was.
+fn downloadable_name(headers: &reqwest::header::HeaderMap, url: &reqwest::Url) -> Option<String> {
+    if let Some(name) = attachment_name(headers) {
+        return Some(name);
+    }
+    let content_type = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if content_type.starts_with("text/") || content_type.contains("xml") {
+        return None;
+    }
+    url.path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+}
+
+/// Link text that says nothing about what is behind it.
+///
+/// A page of titles whose every link reads "Download" is the common case, not a
+/// strange one, and taking that as the name gives a catalogue of identical
+/// entries. The file's own name is the better answer wherever the page has not
+/// given a real one.
+const EMPTY_LABELS: [&str; 8] = [
+    "download", "download now", "get", "get it", "click here", "here", "link", "file",
+];
+
+/// What to call a title: what the page called it, or what the file is called.
+///
+/// The filename comes from the server and is usually the fuller name — the game,
+/// its publisher, sometimes the disk — so it wins whenever the page offered
+/// nothing but a button. Its extension is dropped: the format has a column of
+/// its own, and repeating it in every title reads as noise.
+fn download_title(label: &str, filename: &str) -> String {
+    let stem = filename
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(filename)
+        .trim();
+    let generic = label.trim().is_empty()
+        || EMPTY_LABELS.contains(&label.trim().trim_end_matches(['.', '!', '»', '>']).to_lowercase().as_str());
+    if generic && !stem.is_empty() {
+        return stem.to_string();
+    }
+    if label.trim().is_empty() {
+        return filename.to_string();
+    }
+    label.trim().to_string()
 }
 
 /// Anchor text, collapsed to a single line, or the filename when there is none.
@@ -142,12 +237,33 @@ pub async fn inspect(
     // Both are replaced by where the starting page actually lands.
     let mut origin = start.origin().ascii_serialization();
     let mut directory = start_directory(&start);
-    let mut pending = VecDeque::from([(start, 0usize)]);
+    // Three queues, and what the site has already shown decides which one a
+    // link joins.
+    //
+    // A catalogue page links to a score of downloads and a hundred other pages.
+    // Taken in the order they were found, the queue fills with pages while the
+    // downloads — the only reason any of this is being read — wait behind them,
+    // and the visit ends having confirmed a handful. Nothing about a URL says
+    // which it is, but a site answers that once and then keeps answering it the
+    // same way: everything under `/dl.php` is a file, everything under
+    // `/items.php` is a page. So the answer is remembered per path, and later
+    // links are ordered by it. It is only an ordering — what any one link turns
+    // out to be is still decided by the response, never by the guess.
+    let mut kinds: HashMap<String, bool> = HashMap::new();
+    let mut files: VecDeque<(reqwest::Url, usize, String)> = VecDeque::new();
+    let mut unknown = VecDeque::from([(start, 0usize, String::new())]);
+    let mut pages: VecDeque<(reqwest::Url, usize, String)> = VecDeque::new();
+    let mut pages_read = 0usize;
+    let mut requests = 0usize;
     let mut visited = HashSet::new();
     let mut downloads: HashMap<String, OnlineTitle> = HashMap::new();
 
-    while let Some((url, depth)) = pending.pop_front() {
-        if visited.len() >= MAX_PAGES || downloads.len() >= MAX_DOWNLOADS {
+    while let Some((url, depth, label)) = files
+        .pop_front()
+        .or_else(|| unknown.pop_front())
+        .or_else(|| pages.pop_front())
+    {
+        if requests >= MAX_REQUESTS || downloads.len() >= MAX_DOWNLOADS {
             break;
         }
         if !visited.insert(url.as_str().to_string())
@@ -155,15 +271,49 @@ pub async fn inspect(
         {
             continue;
         }
-        if visited.len() > 1 {
+        if requests > 0 {
             tokio::time::sleep(delay).await;
         }
-        let response = client
-            .get(url.clone())
-            .send()
-            .await
-            .with_context(|| format!("Unable to inspect {url}"))?;
-        if response.status().is_success() && visited.len() == 1 {
+        requests += 1;
+        // A link is asked about before it is read: a HEAD says whether this is
+        // a page or a file, and a site should not have to send a disk image
+        // just to be told what it is. A path already known to serve pages skips
+        // the question — asking twice for every page of a catalogue is a cost
+        // the site pays for nothing.
+        let known_page = kinds.get(url.path()) == Some(&false);
+        let asked = if known_page {
+            None
+        } else {
+            client.head(url.clone()).send().await.ok().filter(|response| {
+                response.status().is_success() || response.status().is_redirection()
+            })
+        };
+        let head_is_page = known_page
+            || asked.as_ref().is_none_or(|response| {
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_none_or(|value| value.contains("text/html"))
+            });
+        let response = match asked {
+            Some(response) if !head_is_page => response,
+            _ => {
+                // Reading a page is what the page budget is for, and it is the
+                // only thing that spends a second request.
+                if pages_read >= MAX_PAGES || depth > MAX_DEPTH {
+                    continue;
+                }
+                requests += 1;
+                tokio::time::sleep(delay).await;
+                client
+                    .get(url.clone())
+                    .send()
+                    .await
+                    .with_context(|| format!("Unable to inspect {url}"))?
+            }
+        };
+        if response.status().is_success() && pages_read == 0 {
             origin = landing_origin(response.url())?;
             directory = start_directory(response.url());
         }
@@ -178,9 +328,35 @@ pub async fn inspect(
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.contains("text/html"));
+        kinds.insert(url.path().to_string(), !is_html);
         if !is_html {
+            // Not a page, so this is where a link stopped being a guess: if the
+            // server is handing back a supported image, record it under the
+            // name the server gives it and the label the page gave it.
+            if let Some(name) = downloadable_name(response.headers(), response.url()) {
+                let extension = crate::paths::extension_of(Path::new(&name));
+                if extensions.contains(&extension) || extension == "zip" {
+                    let key = url.as_str().to_string();
+                    downloads.entry(key.clone()).or_insert_with(|| OnlineTitle {
+                        provider_id: provider.id.clone(),
+                        remote_id: key,
+                        title: download_title(&label, &name),
+                        platform_id: provider
+                            .platform_id
+                            .clone()
+                            .or_else(|| Some(platform_id.to_string())),
+                        extension: Some(extension),
+                        size: response.content_length().filter(|length| *length > 0),
+                        download_url: Some(url.to_string()),
+                        details_url: None,
+                        license: None,
+                        updated: None,
+                    });
+                }
+            }
             continue;
         }
+        pages_read += 1;
         let final_url = response.url().clone();
         let body = response.text().await.context("Unable to read the page")?;
         let document = Html::parse_document(&body);
@@ -220,7 +396,15 @@ pub async fn inspect(
                 && (extension.is_empty() || PAGE_EXTENSIONS.contains(&extension.as_str()))
                 && within_scope(&directory, link.path())
             {
-                pending.push_back((link, depth + 1));
+                // Which queue it joins is a guess from its address; what it
+                // turns out to be is decided by the answer, not by the guess.
+                let label = link_label(&anchor, &link);
+                let queue = match kinds.get(link.path()) {
+                    Some(true) => &mut files,
+                    Some(false) => &mut pages,
+                    None => &mut unknown,
+                };
+                queue.push_back((link, depth + 1, label));
             }
         }
     }
@@ -231,7 +415,107 @@ pub async fn inspect(
 
 #[cfg(test)]
 mod tests {
-    use super::{link_extension, link_label, PAGE_EXTENSIONS};
+    use super::{
+        attachment_name, downloadable_name, link_extension, link_label, PAGE_EXTENSIONS,
+    };
+
+    fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn a_title_is_named_by_the_file_when_the_page_only_says_download() {
+        use super::download_title;
+
+        // Every link on the page reads "Download"; the file knows better.
+        assert_eq!(
+            download_title("Download", "Syndicate American Revolt (Bullfrog).zip"),
+            "Syndicate American Revolt (Bullfrog)"
+        );
+        assert_eq!(download_title("Download now", "Elite.adf"), "Elite");
+        assert_eq!(download_title("  ", "Hellfire (Martech).zip"), "Hellfire (Martech)");
+        // A page that does give a real name keeps it.
+        assert_eq!(
+            download_title("Elite (1988) (Firebird)", "dl-1234.zip"),
+            "Elite (1988) (Firebird)"
+        );
+        // Nothing useful anywhere still produces something to click on.
+        assert_eq!(download_title("Download", ""), "Download");
+    }
+
+    #[test]
+    fn a_download_script_is_recognised_by_what_it_returns() {
+        // The shape that prompted this: every title behind dl.php?id=..., whose
+        // URL says nothing, and whose response says everything.
+        let url = reqwest::Url::parse("https://example.org/dl.php?id=LFHFEEGKJM").unwrap();
+        let map = headers(&[
+            ("content-type", "application/zip"),
+            (
+                "content-disposition",
+                "attachment; filename=Syndicate (Bullfrog).zip",
+            ),
+        ]);
+
+        assert_eq!(
+            downloadable_name(&map, &url).as_deref(),
+            Some("Syndicate (Bullfrog).zip")
+        );
+        // Judged by its URL alone it looks like one more page to walk.
+        assert_eq!(link_extension(&url), "php");
+    }
+
+    #[test]
+    fn a_page_is_never_mistaken_for_a_download() {
+        let url = reqwest::Url::parse("https://example.org/index.php?page=2").unwrap();
+
+        assert_eq!(
+            downloadable_name(&headers(&[("content-type", "text/html; charset=utf-8")]), &url),
+            None
+        );
+        assert_eq!(
+            downloadable_name(&headers(&[("content-type", "application/xhtml+xml")]), &url),
+            None
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_disposition_falls_back_to_its_address() {
+        let url = reqwest::Url::parse("https://example.org/files/Elite.adf").unwrap();
+
+        assert_eq!(
+            downloadable_name(&headers(&[("content-type", "application/octet-stream")]), &url)
+                .as_deref(),
+            Some("Elite.adf")
+        );
+    }
+
+    #[test]
+    fn a_disposition_can_never_name_somewhere_else() {
+        // Quotes are optional in the wild, and a header is not to be trusted
+        // with a path: only the last segment of it is ever used.
+        assert_eq!(
+            attachment_name(&headers(&[("content-disposition", "attachment; filename=\"Elite.adf\"")]))
+                .as_deref(),
+            Some("Elite.adf")
+        );
+        assert_eq!(
+            attachment_name(&headers(&[(
+                "content-disposition",
+                "attachment; filename=../../etc/passwd",
+            )]))
+            .as_deref(),
+            Some("passwd")
+        );
+        assert_eq!(attachment_name(&headers(&[("content-type", "application/zip")])), None);
+    }
+
     use scraper::{Html, Selector};
 
     #[test]

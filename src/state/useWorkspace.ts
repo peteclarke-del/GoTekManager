@@ -5,6 +5,7 @@ import {
   defaultProviders,
   mergeProviders,
   PROVIDERS_FILE,
+  readCustomProviders,
   readProviderConfig,
 } from '../domain/providers'
 import type { AppSettings, OnlineProvider } from '../domain/types'
@@ -117,8 +118,19 @@ export function useProviders() {
     }
   }, [])
 
-  const providers = useMemo(() => mergeProviders(shipped, custom), [shipped, custom])
-  return { providers, setCustom, configPath, problems }
+  // The user's own sources are checked the same way the shipped list is, so a
+  // source that no longer passes is named rather than quietly disappearing.
+  const mine = useMemo(() => readCustomProviders(custom), [custom])
+  const providers = useMemo(
+    () => mergeProviders(shipped, mine.providers),
+    [shipped, mine.providers],
+  )
+  return {
+    providers,
+    setCustom,
+    configPath,
+    problems: [...problems, ...mine.problems],
+  }
 }
 
 export type TablePreferences = {
@@ -128,11 +140,41 @@ export type TablePreferences = {
 
 export const defaultTablePreferences: TablePreferences = {
   sort: { key: 'presence', direction: 'asc' },
-  columnOrder: ['presence', 'title', 'platform', 'format', 'size', 'location', 'action'],
+  columnOrder: [
+    'presence',
+    'title',
+    'platform',
+    'category',
+    'format',
+    'size',
+    'location',
+    'action',
+  ],
+}
+
+/**
+ * The stored column order, with any column it predates.
+ *
+ * The order is the user's, so it is kept as it was found; a column added since
+ * it was saved is appended rather than dropped, which is what stops a new one
+ * from being invisible to everyone who has used the application before.
+ */
+export function reviveTablePreferences(stored: Partial<TablePreferences>): TablePreferences {
+  const merged = { ...defaultTablePreferences, ...stored }
+  const known = new Set(defaultTablePreferences.columnOrder)
+  const kept = merged.columnOrder.filter((column) => known.has(column))
+  const missing = defaultTablePreferences.columnOrder.filter(
+    (column) => !kept.includes(column),
+  )
+  // The action column is the row's own control and belongs at the end.
+  const columnOrder = [...kept, ...missing].filter((column) => column !== 'action')
+  return { ...merged, columnOrder: [...columnOrder, 'action'] }
 }
 
 export function useTablePreferences() {
-  return usePersistentState<TablePreferences>(TABLE_PREFS_KEY, defaultTablePreferences, (
-    stored,
-  ) => ({ ...defaultTablePreferences, ...stored }))
+  return usePersistentState<TablePreferences>(
+    TABLE_PREFS_KEY,
+    defaultTablePreferences,
+    reviveTablePreferences,
+  )
 }

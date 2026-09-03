@@ -72,6 +72,24 @@ export function createProfile(
   }
 }
 
+/**
+ * The profiles a set of chosen mounts would add.
+ *
+ * A mount already registered is left out entirely rather than rebuilt: it keeps
+ * the settings and the staged collection it already has. The rest come back as
+ * drafts for the user to name, because a volume label cannot say which machine
+ * the stick is for.
+ */
+export function profilesForMounts(
+  mounts: MountedTarget[],
+  defaults: ProfileDefaults,
+  existing: Profile[],
+): Profile[] {
+  return mounts
+    .map((mount) => createProfile(destinationFromMount(mount), defaults, mount.label))
+    .filter((profile) => !existing.some((entry) => entry.id === profile.id))
+}
+
 export function destinationFromMount(mount: MountedTarget): Destination {
   return {
     kind: 'volume',
@@ -126,14 +144,14 @@ export type WorkspaceAction =
   | { type: 'profileRemoved'; id: string }
   | { type: 'profileSelected'; id: string }
   | { type: 'profileDestinationChecked'; id: string; summary: TargetSummary }
-  | { type: 'mountsSelected'; mounts: MountedTarget[]; defaults: ProfileDefaults }
   | { type: 'sourceIndexed'; source: SourceLocation; items: MediaItem[] }
   | { type: 'sourceRenamed'; source: SourceLocation }
   | { type: 'sourceRemoved'; source: SourceLocation }
-  | { type: 'platformAssigned'; itemId: string; platformId: string }
+  | { type: 'platformAssigned'; itemIds: string[]; platformId: string }
+  | { type: 'categoryAssigned'; itemIds: string[]; categoryId: string }
   | { type: 'displayTitleSet'; itemId: string; displayTitle: string }
   | { type: 'collectionAdded'; profileId: string; items: MediaItem[] }
-  | { type: 'collectionItemRemoved'; profileId: string; itemId: string }
+  | { type: 'collectionRemoved'; profileId: string; itemIds: string[] }
   | { type: 'collectionCleared'; profileId: string }
   | { type: 'removalPolicySet'; profileId: string; policy: RemovalPolicy }
   | { type: 'libraryCleared' }
@@ -146,6 +164,28 @@ function acrossCollections(
   transform: (items: MediaItem[]) => MediaItem[],
 ): Workspace['collections'] {
   return mapValues(collections, transform)
+}
+
+/**
+ * Edits chosen titles wherever they appear.
+ *
+ * A title staged by three profiles is one row in the library and a reference in
+ * each collection, so every edit has to reach all four. Doing it in one place is
+ * the difference between a rule and a habit, and a whole selection is walked
+ * once rather than once per title.
+ */
+function editItems(
+  state: Workspace,
+  itemIds: string[],
+  edit: (item: MediaItem) => MediaItem,
+): Workspace {
+  const chosen = new Set(itemIds)
+  const apply = (item: MediaItem): MediaItem => (chosen.has(item.id) ? edit(item) : item)
+  return {
+    ...state,
+    items: state.items.map(apply),
+    collections: acrossCollections(state.collections, (items) => items.map(apply)),
+  }
 }
 
 export function workspaceReducer(state: Workspace, action: WorkspaceAction): Workspace {
@@ -192,19 +232,6 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       return { ...state, profiles: replaceById(state.profiles, updated) }
     }
 
-    case 'mountsSelected': {
-      const added = action.mounts
-        .map((mount) => createProfile(destinationFromMount(mount), action.defaults, mount.label))
-        // A mount already registered keeps its existing settings and collection.
-        .filter((profile) => !state.profiles.some((existing) => existing.id === profile.id))
-      if (!added.length) return state
-      return {
-        ...state,
-        profiles: upsertById(state.profiles, ...added),
-        activeProfileId: state.activeProfileId || added[0].id,
-      }
-    }
-
     case 'sourceIndexed': {
       // Re-indexing replaces this source's titles rather than accumulating
       // stale entries for files that have since been deleted.
@@ -237,31 +264,28 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
         ),
       }
 
-    case 'platformAssigned': {
-      const assign = (item: MediaItem): MediaItem =>
-        item.id === action.itemId
-          ? { ...item, assignedPlatformId: action.platformId || undefined }
-          : item
-      return {
-        ...state,
-        items: state.items.map(assign),
-        collections: acrossCollections(state.collections, (items) => items.map(assign)),
-      }
-    }
+    case 'platformAssigned':
+      return editItems(state, action.itemIds, (item) => ({
+        ...item,
+        assignedPlatformId: action.platformId || undefined,
+      }))
+
+    case 'categoryAssigned':
+      // An empty category clears it, which is a real answer: a title nobody has
+      // sorted yet is not the same as one filed under Games.
+      return editItems(state, action.itemIds, (item) => ({
+        ...item,
+        category: action.categoryId || undefined,
+      }))
 
     case 'displayTitleSet': {
       // An empty alias clears it, restoring the generated name. The library's
       // canonical title is never touched either way.
       const alias = action.displayTitle.trim()
-      const rename = (item: MediaItem): MediaItem =>
-        item.id === action.itemId
-          ? { ...item, displayTitle: alias || undefined }
-          : item
-      return {
-        ...state,
-        items: state.items.map(rename),
-        collections: acrossCollections(state.collections, (items) => items.map(rename)),
-      }
+      return editItems(state, [action.itemId], (item) => ({
+        ...item,
+        displayTitle: alias || undefined,
+      }))
     }
 
     case 'collectionAdded':
@@ -276,14 +300,14 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
         },
       }
 
-    case 'collectionItemRemoved':
+    case 'collectionRemoved':
       return {
         ...state,
         collections: {
           ...state.collections,
           [action.profileId]: removeById(
             state.collections[action.profileId] || [],
-            action.itemId,
+            ...action.itemIds,
           ),
         },
       }

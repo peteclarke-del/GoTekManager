@@ -7,6 +7,7 @@ import { isWritable } from '../../state/workspace'
 
 const LAYOUT_LABELS: Record<Profile['folderLayout'], string> = {
   platform: 'Platform folders',
+  category: 'Category folders',
   flat: 'Flat',
   custom: 'Custom folders',
 }
