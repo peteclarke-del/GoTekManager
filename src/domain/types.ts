@@ -12,7 +12,22 @@ export type Page = 'Flow' | 'Profiles' | 'Devices' | 'Help'
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
 export type NamingRule = 'original' | 'oled'
-export type FolderLayout = 'flat' | 'platform' | 'custom'
+export type FolderLayout = 'flat' | 'platform' | 'category' | 'custom'
+
+/**
+ * What the drive's own display is, in FlashFloppy's own vocabulary.
+ *
+ * `auto` is the firmware's default and writes nothing, leaving a drive that
+ * detects its panel correctly alone. The rest name a panel outright, which is
+ * what makes `-rotate` possible: the firmware only accepts it on a named OLED,
+ * and it is the setting that puts an upside-down panel the right way up.
+ */
+export type DisplayType =
+  | 'auto'
+  | 'oled-128x32'
+  | 'oled-128x32-rotate'
+  | 'oled-128x64'
+  | 'oled-128x64-rotate'
 
 /** What happens to destination files the collection does not include. */
 export type RemovalPolicy = 'keep' | 'remove'
@@ -43,6 +58,8 @@ export type Profile = {
   firmwareId: string
   organise: boolean
   folderLayout: FolderLayout
+  /** The drive's panel, written to FF.CFG. Absent means the firmware default. */
+  display?: DisplayType
   /** Used when folderLayout is 'custom'. See renderFolderTemplate. */
   folderTemplate?: string
   naming: NamingRule
@@ -127,6 +144,12 @@ export type MediaItem = FileEntry & {
    * restores the generated name.
    */
   displayTitle?: string
+  /**
+   * What the title is — a game, an application, a demo — rather than which
+   * machine it runs on. Read from the library's own folders where it says so,
+   * and set by hand otherwise. See {@link ./categories}.
+   */
+  category?: string
   provenance?: Provenance
 }
 

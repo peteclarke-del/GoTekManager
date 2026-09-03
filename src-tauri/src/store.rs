@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 /// Bumped whenever the schema changes; `migrate` moves an older file forward.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     folder_template  TEXT,
     naming           TEXT NOT NULL,
     verify_checksums INTEGER NOT NULL DEFAULT 0,
-    removal_policy   TEXT NOT NULL DEFAULT 'keep'
+    removal_policy   TEXT NOT NULL DEFAULT 'keep',
+    display          TEXT
 );
 CREATE TABLE IF NOT EXISTS sources (
     id         TEXT PRIMARY KEY,
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS items (
     canonical_title      TEXT NOT NULL,
     display_title        TEXT,
     assigned_platform_id TEXT,
+    category             TEXT,
     likely_platform_ids  TEXT NOT NULL,
     provenance           TEXT,
     sha256               TEXT,
@@ -104,6 +106,9 @@ pub struct StoredProfile {
     pub naming: String,
     #[serde(default)]
     pub verify_checksums: bool,
+    /// The drive's panel, written to FF.CFG. Added in schema 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +135,9 @@ pub struct StoredItem {
     pub display_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_platform_id: Option<String>,
+    /// What the title is — a game, an application, a demo. Added in schema 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     #[serde(default)]
     pub likely_platform_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,9 +220,31 @@ fn migrate(connection: &Connection) -> Result<()> {
         .into());
     }
     // The schema statements above all use CREATE ... IF NOT EXISTS and have
-    // already run, so moving an older database forward is a matter of stamping
-    // it. A version that needs data reshaped adds its step here.
+    // already run, so a table that is merely new arrives on its own. A column
+    // added to a table that already exists does not, so it is added here.
+    add_missing_column(connection, "items", "category", "category TEXT")?;
+    add_missing_column(connection, "profiles", "display", "display TEXT")?;
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
+/// Adds a column to an existing table, and does nothing if it is already there.
+///
+/// Keyed on the column rather than on the schema version, so a database created
+/// fresh by the current schema and one being moved forward from an older
+/// version both end up in the same state.
+fn add_missing_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let present = connection
+        .prepare(&format!("SELECT {column} FROM {table} LIMIT 0"))
+        .is_ok();
+    if !present {
+        connection.execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])?;
+    }
     Ok(())
 }
 
@@ -225,7 +255,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
     let mut profiles = connection.prepare(
         "SELECT id, name, destination, platform_id, firmware_id, organise, folder_layout, \
-         folder_template, naming, verify_checksums, removal_policy \
+         folder_template, naming, verify_checksums, removal_policy, display \
          FROM profiles ORDER BY position",
     )?;
     let mut removal_policies = std::collections::HashMap::new();
@@ -247,6 +277,7 @@ fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
                     folder_template: row.get(7)?,
                     naming: row.get(8)?,
                     verify_checksums: row.get::<_, i64>(9)? != 0,
+                    display: row.get(11)?,
                 },
                 id,
                 policy,
@@ -277,12 +308,12 @@ fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
     let items = connection
         .prepare(
             "SELECT id, source, path, name, extension, size, modified, canonical_title, \
-             display_title, assigned_platform_id, likely_platform_ids, provenance \
+             display_title, assigned_platform_id, category, likely_platform_ids, provenance \
              FROM items ORDER BY name COLLATE NOCASE, path",
         )?
         .query_map([], |row| {
-            let likely: String = row.get(10)?;
-            let provenance: Option<String> = row.get(11)?;
+            let likely: String = row.get(11)?;
+            let provenance: Option<String> = row.get(12)?;
             Ok(StoredItem {
                 id: row.get(0)?,
                 source: row.get(1)?,
@@ -294,6 +325,7 @@ fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
                 canonical_title: row.get(7)?,
                 display_title: row.get(8)?,
                 assigned_platform_id: row.get(9)?,
+                category: row.get(10)?,
                 likely_platform_ids: serde_json::from_str(&likely).unwrap_or_default(),
                 provenance: provenance.and_then(|value| serde_json::from_str(&value).ok()),
                 directory: false,
@@ -348,8 +380,8 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
             .unwrap_or_else(|| "keep".into());
         transaction.execute(
             "INSERT INTO profiles (id, position, name, destination, platform_id, firmware_id, \
-             organise, folder_layout, folder_template, naming, verify_checksums, removal_policy) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+             organise, folder_layout, folder_template, naming, verify_checksums, \
+             removal_policy, display) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 profile.id,
                 position as i64,
@@ -363,6 +395,7 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
                 profile.naming,
                 profile.verify_checksums as i64,
                 policy,
+                profile.display,
             ],
         )?;
     }
@@ -377,8 +410,8 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
     for item in &workspace.items {
         transaction.execute(
             "INSERT OR REPLACE INTO items (id, source, path, name, extension, size, modified, \
-             canonical_title, display_title, assigned_platform_id, likely_platform_ids, \
-             provenance) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+             canonical_title, display_title, assigned_platform_id, category, \
+             likely_platform_ids, provenance) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 item.id,
                 item.source,
@@ -390,6 +423,7 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
                 item.canonical_title,
                 item.display_title,
                 item.assigned_platform_id,
+                item.category,
                 serde_json::to_string(&item.likely_platform_ids)?,
                 item.provenance
                     .as_ref()
@@ -494,6 +528,7 @@ mod tests {
             folder_template: None,
             naming: "oled".into(),
             verify_checksums: true,
+            display: Some("oled-128x64-rotate".into()),
         }
     }
 
@@ -509,6 +544,7 @@ mod tests {
             canonical_title: name.into(),
             display_title: None,
             assigned_platform_id: Some("bbc".into()),
+            category: Some("games".into()),
             likely_platform_ids: vec!["bbc".into(), "electron".into()],
             provenance: None,
             directory: false,
@@ -548,6 +584,12 @@ mod tests {
         assert!(loaded.profiles[0].verify_checksums);
         assert_eq!(loaded.profiles[0].destination["path"], "/media/gotek");
         assert_eq!(loaded.items[0].likely_platform_ids, vec!["bbc", "electron"]);
+        assert_eq!(loaded.items[0].category.as_deref(), Some("games"));
+        // The drive's panel travels with its profile, upside down and all.
+        assert_eq!(
+            loaded.profiles[0].display.as_deref(),
+            Some("oled-128x64-rotate")
+        );
     }
 
     #[test]
@@ -593,6 +635,84 @@ mod tests {
         assert_eq!(loaded.items.len(), 1);
         // A removed profile must not leave its staged titles behind.
         assert!(loaded.collections.is_empty());
+    }
+
+    #[test]
+    fn a_profile_written_before_the_display_setting_gains_the_column() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE profiles (
+                    id               TEXT PRIMARY KEY,
+                    position         INTEGER NOT NULL,
+                    name             TEXT NOT NULL,
+                    destination      TEXT NOT NULL,
+                    platform_id      TEXT NOT NULL,
+                    firmware_id      TEXT NOT NULL,
+                    organise         INTEGER NOT NULL,
+                    folder_layout    TEXT NOT NULL,
+                    folder_template  TEXT,
+                    naming           TEXT NOT NULL,
+                    verify_checksums INTEGER NOT NULL DEFAULT 0,
+                    removal_policy   TEXT NOT NULL DEFAULT 'keep'
+                );
+                INSERT INTO profiles (id, position, name, destination, platform_id,
+                    firmware_id, organise, folder_layout, naming)
+                VALUES ('p1',0,'GOTEK','{}','bbc','flashfloppy',1,'platform','oled');",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 3).unwrap();
+
+        prepare(&connection).unwrap();
+
+        let loaded = read_workspace(&connection).unwrap();
+        assert_eq!(loaded.profiles.len(), 1);
+        // No panel named yet, which is the firmware's own default.
+        assert_eq!(loaded.profiles[0].display, None);
+    }
+
+    #[test]
+    fn a_library_written_before_categories_gains_the_column() {
+        // The shape schema 2 wrote: everything the current one has, without the
+        // category. A real library in this state must survive the upgrade with
+        // its titles intact rather than be refused or rebuilt.
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE items (
+                    id                   TEXT PRIMARY KEY,
+                    source               TEXT NOT NULL,
+                    path                 TEXT NOT NULL,
+                    name                 TEXT NOT NULL,
+                    extension            TEXT NOT NULL,
+                    size                 INTEGER NOT NULL,
+                    modified             INTEGER,
+                    canonical_title      TEXT NOT NULL,
+                    display_title        TEXT,
+                    assigned_platform_id TEXT,
+                    likely_platform_ids  TEXT NOT NULL,
+                    provenance           TEXT,
+                    sha256               TEXT,
+                    indexed_at           INTEGER
+                );
+                INSERT INTO items (id, source, path, name, extension, size, canonical_title,
+                    likely_platform_ids)
+                VALUES ('i1','/library','/library/Elite.ssd','Elite.ssd','ssd',204800,
+                    'Elite.ssd','[\"bbc\"]');",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 2).unwrap();
+
+        prepare(&connection).unwrap();
+
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let loaded = read_workspace(&connection).unwrap();
+        assert_eq!(loaded.items.len(), 1);
+        // The column is there and empty, which is exactly "not categorised yet".
+        assert_eq!(loaded.items[0].category, None);
     }
 
     #[test]

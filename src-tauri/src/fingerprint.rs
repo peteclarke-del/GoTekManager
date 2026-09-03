@@ -16,7 +16,7 @@
 //! actually changes. Progress is reported as it goes, because the first pass
 //! over a few thousand files is not instant and silence looks like a hang.
 
-use crate::error::{Context, Result};
+use crate::error::Result;
 use crate::paths::sha256_reader;
 use crate::store;
 use rusqlite::{params, Connection};
@@ -44,13 +44,14 @@ pub struct Fingerprint {
     pub size: u64,
 }
 
+/// The digest of whatever the path names, file or archive entry alike.
 fn digest_of(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path)
-        .with_context(|| format!("Unable to read {}", path.display()))?;
-    Ok(sha256_reader(&mut file)?
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    crate::source::read_with(path, |reader| {
+        Ok(sha256_reader(reader)?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
+    })
 }
 
 /// A file the caller has already looked at, so it need not be looked at again.

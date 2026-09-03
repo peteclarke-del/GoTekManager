@@ -560,10 +560,8 @@ fn compare_image_file(image: &Path, relative_path: &str, source: &Path) -> Resul
     let Ok(mut candidate) = filesystem.root_dir().open_file(relative_path) else {
         return Ok(None);
     };
-    let mut source_file = fs::File::open(source)?;
-    Ok(Some(
-        sha256_reader(&mut source_file)? == sha256_reader(&mut candidate)?,
-    ))
+    let source_digest = crate::source::read_with(source, sha256_reader)?;
+    Ok(Some(source_digest == sha256_reader(&mut candidate)?))
 }
 
 fn compare_folder_file(root: &Path, relative_path: &str, source: &Path) -> Result<Option<bool>> {
@@ -571,12 +569,14 @@ fn compare_folder_file(root: &Path, relative_path: &str, source: &Path) -> Resul
     if !candidate.is_file() {
         return Ok(None);
     }
-    if file_size(&candidate) != file_size(source) {
+    let expected = crate::source::stat(source, None)?.map(|stat| stat.size);
+    if file_size(&candidate) != expected {
         return Ok(Some(false));
     }
-    let mut source_file = fs::File::open(source)?;
-    let mut target_file = fs::File::open(&candidate)?;
-    Ok(Some(readers_equal(&mut source_file, &mut target_file)?))
+    crate::source::read_with(source, |reader| {
+        let mut target_file = fs::File::open(&candidate)?;
+        Ok(Some(readers_equal(reader, &mut target_file)?))
+    })
 }
 
 /// Indexes a destination by the contents of its files.
@@ -677,12 +677,14 @@ pub fn compare_files(
             .map(|operation| {
                 let source = Path::new(&operation.source);
                 // Looked at once. The size check and the digest both need this,
-                // and over a few thousand files a second look is not free.
-                let metadata = fs::metadata(source)
+                // and over a few thousand files a second look is not free. A
+                // title inside an archive answers this from the archive's
+                // directory, without decompressing anything.
+                let stat = crate::source::stat(source, Some(operation.size))
                     .ok()
-                    .filter(|metadata| metadata.is_file())
-                    .filter(|metadata| metadata.len() == operation.size);
-                let Some(metadata) = metadata else {
+                    .flatten()
+                    .filter(|stat| stat.size == operation.size);
+                let Some(stat) = stat else {
                     return Ok(TargetFileStatus {
                         source: operation.source,
                         relative_path: operation.relative_path,
@@ -698,11 +700,7 @@ pub fn compare_files(
                 let digest = if image_target {
                     None
                 } else {
-                    Some(cache.digest(
-                        connection,
-                        source,
-                        crate::fingerprint::Stat::of(&metadata),
-                    )?)
+                    Some(cache.digest(connection, source, stat)?)
                 };
                 let locations = digest
                     .as_deref()
@@ -777,12 +775,14 @@ fn copy_verified(source: &Path, destination: &Path, expected: u64, checksum: boo
             .to_string_lossy()
     ));
     let outcome = (|| -> Result<()> {
-        let mut reader = fs::File::open(source)
-            .with_context(|| format!("Unable to read {}", source.display()))?;
         let mut writer = fs::File::create(&temporary)
             .with_context(|| format!("Unable to write {}", temporary.display()))?;
-        let copied = std::io::copy(&mut reader, &mut writer)
-            .with_context(|| format!("Failed to copy {}", source.display()))?;
+        // Read through the source resolver, so a title inside an archive is
+        // decompressed straight into place rather than unpacked somewhere first.
+        let copied = crate::source::read_with(source, |reader| {
+            std::io::copy(reader, &mut writer)
+                .with_context(|| format!("Failed to copy {}", source.display()))
+        })?;
         writer
             .sync_all()
             .with_context(|| format!("Failed to flush {}", temporary.display()))?;
@@ -790,9 +790,9 @@ fn copy_verified(source: &Path, destination: &Path, expected: u64, checksum: boo
             return Err(format!("Verification failed for {}", destination.display()).into());
         }
         if checksum {
-            let mut original = fs::File::open(source)?;
+            let original = crate::source::read_with(source, sha256_reader)?;
             let mut written = fs::File::open(&temporary)?;
-            if sha256_reader(&mut original)? != sha256_reader(&mut written)? {
+            if original != sha256_reader(&mut written)? {
                 return Err(format!(
                     "{} did not read back the same as the source. The destination media may \
                      be faulty.",
@@ -932,6 +932,41 @@ mod tests {
             &["ssd".into(), "adf".into()],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_title_inside_an_archive_is_copied_straight_out_of_it() {
+        // The library lists archive entries rather than unpacking them, so the
+        // write has to be able to read one. Nothing is ever extracted to a
+        // temporary place on the way: the bytes go from the archive to the
+        // stick, and are verified there.
+        let library = fixture("archive-copy");
+        let target = fixture("archive-copy-target");
+        let archive = library.join("collection.zip");
+        {
+            let mut writer = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+            writer
+                .start_file("Games/Elite.ssd", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut writer, b"disk image").unwrap();
+            writer.finish().unwrap();
+        }
+        let source = crate::source::entry_path(&archive, "Games/Elite.ssd");
+        let destination = target.join("BBC").join("ELITE.SSD");
+
+        copy_verified(
+            Path::new(&source),
+            &destination,
+            "disk image".len() as u64,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"disk image");
+        // The verification pass re-read the entry rather than a copy of it.
+        assert!(!target.join("BBC").join("ELITE.SSD.part").exists());
+        fs::remove_dir_all(library).unwrap();
+        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]

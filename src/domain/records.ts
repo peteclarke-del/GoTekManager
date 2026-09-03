@@ -10,8 +10,10 @@ export function upsertById<T extends Identified>(list: readonly T[], ...added: T
   return [...new Map([...list, ...added].map((item) => [item.id, item])).values()]
 }
 
-export function removeById<T extends Identified>(list: readonly T[], id: string): T[] {
-  return list.filter((item) => item.id !== id)
+/** Drops one item, or a whole selection of them, keeping the rest in order. */
+export function removeById<T extends Identified>(list: readonly T[], ...ids: string[]): T[] {
+  const dropped = new Set(ids)
+  return list.filter((item) => !dropped.has(item.id))
 }
 
 export function replaceById<T extends Identified>(list: readonly T[], updated: T): T[] {

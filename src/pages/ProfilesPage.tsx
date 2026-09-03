@@ -24,6 +24,7 @@ import type {
 } from '../domain/types'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { useDirectoryBrowser } from '../hooks/useDirectoryBrowser'
+import { useProfileDrafts } from '../hooks/useProfileDrafts'
 import {
   chooseFolder,
   chooseImageFile,
@@ -74,6 +75,10 @@ export function ProfilesPage({
 }) {
   const [editing, setEditing] = useState<Profile | null>(null)
   const [summary, setSummary] = useState<TargetSummary | null>(null)
+  const drafts = useProfileDrafts((profile) => {
+    dispatch({ type: 'profileAdded', profile })
+    notify({ kind: 'success', text: `Created the profile ${profile.name}.` })
+  })
   const browser = useDirectoryBrowser(active, false)
   const imaging = useAsyncAction()
 
@@ -129,6 +134,13 @@ export function ProfilesPage({
     }
   }, [active?.id, active?.destination.path, dispatch])
 
+  /**
+   * Turns a chosen destination into a draft profile.
+   *
+   * The platform can only be guessed from the folder's name, and a wrong guess
+   * decides which titles are offered and where they are written, so the draft
+   * is shown in the editor and becomes a profile only once it is accepted.
+   */
   const addProfile = async (pick: () => Promise<string | null>, kind: 'folder' | 'image') => {
     try {
       const path = await pick()
@@ -149,8 +161,7 @@ export function ProfilesPage({
         notify({ kind: 'info', text: `${profile.name} is already a profile.` })
         return
       }
-      dispatch({ type: 'profileAdded', profile })
-      notify({ kind: 'success', text: `Created the profile ${profile.name}.` })
+      drafts.propose([profile])
     } catch (reason) {
       notify({ kind: 'error', text: errorMessage(reason) })
     }
@@ -378,6 +389,16 @@ export function ProfilesPage({
             dispatch({ type: 'profileUpdated', profile })
             setEditing(null)
           }}
+        />
+      )}
+
+      {drafts.current && (
+        <ProfileEditor
+          isNew
+          waiting={drafts.waiting}
+          profile={drafts.current}
+          close={drafts.discard}
+          save={drafts.accept}
         />
       )}
     </div>

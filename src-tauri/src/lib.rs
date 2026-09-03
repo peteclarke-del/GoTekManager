@@ -17,6 +17,7 @@
 //! stick never freezes the window.
 
 mod archive;
+mod source;
 mod cache;
 mod convert;
 mod devices;

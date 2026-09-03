@@ -269,18 +269,24 @@ fn resolve_direct_download(title: &OnlineTitle) -> Result<ResolvedDownload> {
         .clone()
         .context("This catalogue item has no download URL.")?;
     let parsed = secure_url(&url)?;
-    let name = parsed
+    let segment = parsed
         .path_segments()
         .and_then(|mut segments| segments.next_back())
         .map(str::to_string)
-        .filter(|segment| !segment.is_empty())
-        .unwrap_or_else(|| {
-            format!(
-                "{}.{}",
-                title.title,
-                title.extension.as_deref().unwrap_or("img")
-            )
-        });
+        .filter(|segment| !segment.is_empty());
+    // A download script's URL names the script, not the file: `dl.php?id=...`
+    // would be cached as a `.php` and refused. The catalogue already learned
+    // the real format when it recorded the link, so that is what names it.
+    let name = match (&title.extension, segment) {
+        (Some(extension), Some(segment))
+            if crate::paths::extension_of(std::path::Path::new(&segment)) != *extension =>
+        {
+            format!("{}.{extension}", title.title)
+        }
+        (_, Some(segment)) => segment,
+        (Some(extension), None) => format!("{}.{extension}", title.title),
+        (None, None) => format!("{}.img", title.title),
+    };
     Ok(ResolvedDownload {
         url,
         name,

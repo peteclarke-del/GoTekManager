@@ -9,8 +9,9 @@
     "The demozoo adapter puts the Demozoo platform number in `query` rather than a URL.",
     "",
     "Fields: id (unique), name, adapter (internetArchive | htmlSite | jsonFeed | demozoo),",
-    "platformId (omit for every platform), query (search adapters), catalogUrl (site and",
-    "feed adapters), note (shown in the interface), ignoreRobots, userAgent.",
+    "platformId (required: the one machine this source is for), query (search adapters),",
+    "catalogUrl (site and feed adapters), note (shown in the interface), ignoreRobots,",
+    "userAgent.",
     "",
     "Every htmlSite entry below was crawled the way the application crawls it, and kept",
     "only if that crawl came back with files. Twenty sites that looked right were dropped",
@@ -32,11 +33,28 @@
   "version": 1,
   "providers": [
     {
-      "id": "internet-archive",
-      "name": "Internet Archive",
+      "id": "ia-bbc",
+      "name": "Internet Archive: BBC Micro",
       "adapter": "internetArchive",
-      "query": "mediatype:software",
-      "note": "Searches any machine by name. The one source that applies whatever you are preparing."
+      "platformId": "bbc",
+      "query": "mediatype:software AND (subject:\"bbc micro\" OR title:\"BBC Micro\" OR title:\"Acorn BBC\" OR description:\"BBC Micro\")",
+      "note": "Acorn's own machine, named rather than collected, so the search says which one."
+    },
+    {
+      "id": "ia-electron",
+      "name": "Internet Archive: Acorn Electron",
+      "adapter": "internetArchive",
+      "platformId": "electron",
+      "query": "mediatype:software AND (subject:\"acorn electron\" OR title:\"Acorn Electron\" OR description:\"Acorn Electron\")",
+      "note": "Named rather than collected; the Electron shares its formats with the BBC."
+    },
+    {
+      "id": "ia-next",
+      "name": "Internet Archive: Spectrum Next",
+      "adapter": "internetArchive",
+      "platformId": "next",
+      "query": "mediatype:software AND (subject:\"zx spectrum next\" OR title:\"Spectrum Next\" OR description:\"ZX Spectrum Next\")",
+      "note": "A modern machine, so its material is named rather than gathered into a collection."
     },
     {
       "id": "stairway-bbc",
