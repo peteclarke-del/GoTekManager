@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
 import { firmwareProfiles, platforms } from '../domain/catalog'
+import { UNCATEGORISED } from '../domain/categories'
+import { configSupport, DISPLAY_CHOICES } from '../domain/firmwareConfig'
 import { FOLDER_TOKENS, renderFolderTemplate } from '../domain/media'
 import type { MediaItem, Profile } from '../domain/types'
 import { Modal } from './Modal'
@@ -30,13 +32,24 @@ const DESTINATION_LABELS: Record<Profile['destination']['kind'], string> = {
  *
  * Changes are held locally and applied on save, so abandoning the dialog cannot
  * leave a profile half-edited.
+ *
+ * The same dialog names a profile that does not exist yet. A destination cannot
+ * say which machine it is for, so choosing one asks rather than assuming: the
+ * platform is pre-filled from the folder or volume name and the user confirms
+ * or corrects it before anything is created.
  */
 export function ProfileEditor({
   profile,
+  isNew = false,
+  waiting = 0,
   save,
   close,
 }: {
   profile: Profile
+  /** Whether this profile is being created rather than changed. */
+  isNew?: boolean
+  /** How many further destinations are queued behind this one. */
+  waiting?: number
   save: (profile: Profile) => void
   close: () => void
 }) {
@@ -45,7 +58,19 @@ export function ProfileEditor({
     setDraft((current) => ({ ...current, [key]: value }))
 
   return (
-    <Modal title="Edit GoTek profile" onClose={close} className="profile-editor">
+    <Modal
+      title={isNew ? 'New GoTek profile' : 'Edit GoTek profile'}
+      onClose={close}
+      className="profile-editor"
+    >
+      {isNew && (
+        <p className="mode-note">
+          The platform is a guess from the destination's name. Correct it before
+          creating the profile: it decides which titles are offered and where they are
+          written.
+          {waiting > 0 && ` ${waiting} more destination${waiting === 1 ? '' : 's'} to name after this one.`}
+        </p>
+      )}
       <label>
         Name
         <input value={draft.name} onChange={(event) => update('name', event.target.value)} />
@@ -93,6 +118,26 @@ export function ProfileEditor({
             .
           </p>
         )}
+      <label>
+        Drive display
+        <select
+          value={draft.display ?? 'auto'}
+          onChange={(event) => update('display', event.target.value as Profile['display'])}
+        >
+          {DISPLAY_CHOICES.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="mode-note">
+        {configSupport(draft.firmwareId).writable
+          ? draft.display?.endsWith('-rotate')
+            ? 'Written to FF.CFG as a rotated panel, which is what puts an upside-down OLED the right way up.'
+            : 'Only written to FF.CFG when a panel is named; left on detect, the firmware decides for itself.'
+          : 'This firmware has no configuration file, so the setting is recorded but not written.'}
+      </p>
       <label className="check-label">
         <input
           type="checkbox"
@@ -111,10 +156,20 @@ export function ProfileEditor({
           }
         >
           <option value="platform">Platform folders</option>
+          <option value="category">Category folders</option>
           <option value="flat">Flat</option>
           <option value="custom">Custom folders</option>
         </select>
       </label>
+      {draft.organise && draft.folderLayout === 'category' && (
+        <p className="mode-note">
+          Titles are written under <code>Games/</code>, <code>Apps/</code>,{' '}
+          <code>Demos/</code> and the rest. A title with no category goes to{' '}
+          <code>{UNCATEGORISED}/</code>; set them in the library table, several at a
+          time. Use a custom layout to combine this with the platform, as in{' '}
+          <code>{'{platform}/{category}'}</code>.
+        </p>
+      )}
       {draft.organise && draft.folderLayout === 'custom' && (
         <>
           <label>
@@ -163,7 +218,7 @@ export function ProfileEditor({
         onClick={() => save({ ...draft, name: draft.name.trim() })}
       >
         <Check />
-        Save profile
+        {isNew ? 'Create profile' : 'Save profile'}
       </button>
     </Modal>
   )

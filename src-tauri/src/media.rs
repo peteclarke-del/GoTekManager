@@ -2,8 +2,8 @@
 //!
 //! Every command here is read-only.
 
-use crate::archive::{cached_zip_images, EXTRACT_BYTE_LIMIT};
-use crate::cache::{converted_folder, is_archive, local_archive_folder};
+use crate::archive::list_zip_images;
+use crate::cache::{converted_folder, is_archive};
 use crate::convert::Conversion;
 use crate::devices::{available_space, detected_firmware, probe_writable, total_space};
 use crate::error::{Context, Result};
@@ -181,10 +181,32 @@ fn collect_file(
         return Ok(());
     }
 
+    // An archive is listed, never unpacked: its directory says what is inside
+    // for the cost of a few small reads, and a title is read from the archive
+    // if and when it is actually written. A folder of a few thousand archives
+    // that holds nothing this application can use now says so in seconds.
     if is_archive(path) {
-        let folder = local_archive_folder(app, path)?;
-        for relative in cached_zip_images(path, &folder, extensions, EXTRACT_BYTE_LIMIT)? {
-            files.push(entry_at(&folder.join(relative))?);
+        let modified = fs::metadata(path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| value.as_secs());
+        for entry in list_zip_images(path, extensions)? {
+            files.push(FileEntry {
+                name: entry
+                    .name
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&entry.name)
+                    .to_string(),
+                path: crate::source::entry_path(path, &entry.name),
+                extension: extension_of(Path::new(&entry.name)),
+                size: entry.size,
+                // The archive's own time: an entry has none that survives the
+                // trip between the tools that made it.
+                modified,
+                directory: false,
+            });
         }
         return Ok(());
     }

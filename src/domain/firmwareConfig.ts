@@ -19,7 +19,7 @@
  */
 
 import type { Platform } from './catalog'
-import type { Profile } from './types'
+import type { DisplayType, Profile } from './types'
 
 /** The file FlashFloppy reads. */
 export const FLASHFLOPPY_CONFIG = 'FF.CFG'
@@ -55,7 +55,53 @@ export function configSupport(firmwareId: string): ConfigSupport {
 /** Machines whose images FlashFloppy reads better when told whose they are. */
 const ACORN_PLATFORMS = new Set(['bbc', 'electron'])
 
+/**
+ * How each display choice reads on screen.
+ *
+ * A GoTek fitted into a machine, or behind a remote control board, is often
+ * mounted the only way it will fit, which leaves the panel upside down. The
+ * firmware's answer is `-rotate`, and it only accepts it on a named panel:
+ * `auto` cannot be rotated, so choosing rotation means saying which OLED is
+ * fitted. The 0.91" panel most sticks ship with is 128x32; the taller 0.96"
+ * one is 128x64.
+ */
+export const DISPLAY_CHOICES: Array<[DisplayType, string]> = [
+  ['auto', 'Detect automatically (firmware default)'],
+  ['oled-128x32', 'OLED 128x32'],
+  ['oled-128x32-rotate', 'OLED 128x32, upside down'],
+  ['oled-128x64', 'OLED 128x64'],
+  ['oled-128x64-rotate', 'OLED 128x64, upside down'],
+]
+
 type Setting = { key: string; value: string; why: string[] }
+
+/**
+ * The display setting, when the profile names a panel.
+ *
+ * Nothing is written for `auto`, which is the firmware's own default: a drive
+ * that detects its panel correctly must not be told something it then has to
+ * live with.
+ */
+function displaySetting(profile: Profile): Setting[] {
+  const display = profile.display
+  if (!display || display === 'auto') return []
+  const rotated = display.endsWith('-rotate')
+  return [
+    {
+      key: 'display-type',
+      value: display,
+      why: rotated
+        ? [
+            'This drive reports its panel mounted upside down, so the view is',
+            'rotated 180 degrees. Rotation can only be asked for on a named',
+            'panel, which is why the size is spelled out rather than detected.',
+          ]
+        : [
+            'The panel fitted to this drive, named rather than detected.',
+          ],
+    },
+  ]
+}
 
 function settingsFor(platform: Platform): Setting[] {
   const settings: Setting[] = [
@@ -90,6 +136,75 @@ function settingsFor(platform: Platform): Setting[] {
   return settings
 }
 
+/** Everything this application is responsible for, for one profile. */
+function ownedSettings(profile: Profile, platform: Platform): Setting[] {
+  return [...settingsFor(platform), ...displaySetting(profile)]
+}
+
+/**
+ * Plain ASCII, and nothing a drive's parser can trip over.
+ *
+ * This is parsed by an 8-bit drive, not by a text editor: a typographic dash is
+ * three bytes there, and a profile named in another script must not be able to
+ * produce a file the firmware chokes on.
+ */
+function ascii(text: string): string {
+  return text.replace(/[^\t\x20-\x7e\n\r]/g, '?')
+}
+
+/**
+ * This application's settings applied to a configuration file that already
+ * exists, leaving everything else in it exactly as it was found.
+ *
+ * A stick that has been set up by hand is the normal case, not the exception: a
+ * real `FF.CFG` carries an interface jumper, a display order, a font, a
+ * contrast, a startup image — settings this application has no opinion about
+ * and no business discarding. So the file is edited rather than replaced. A
+ * setting this application owns has its value changed where the file already
+ * names it, keeping the line's own spacing, and is appended with its reason
+ * where it does not. Comments, blank lines, ordering, and the file's line
+ * endings all survive.
+ *
+ * Every occurrence of an owned key is updated, not just the first: the firmware
+ * reads the last assignment, so leaving a later one behind would silently undo
+ * the change.
+ */
+export function mergeFlashFloppyConfig(
+  existing: string,
+  profile: Profile,
+  platform: Platform,
+): string {
+  const newline = existing.includes('\r\n') ? '\r\n' : '\n'
+  const settings = ownedSettings(profile, platform)
+  const seen = new Set<string>()
+
+  const lines = existing.split(/\r?\n/).map((line) => {
+    const match = /^(\s*)([A-Za-z0-9-]+)(\s*=\s*)(.*)$/.exec(line)
+    if (!match) return line
+    const [, indent, key, separator] = match
+    const setting = settings.find((entry) => entry.key === key.toLowerCase())
+    if (!setting) return line
+    seen.add(setting.key)
+    // Only the value is ours; the key and its spacing are the file's own.
+    return `${indent}${key}${separator}${ascii(setting.value)}`
+  })
+
+  // A file that ends in a newline splits to a trailing empty line; adding after
+  // it would leave a blank gap, so it is trimmed and restored at the end.
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop()
+
+  const missing = settings.filter((setting) => !seen.has(setting.key))
+  if (missing.length) {
+    lines.push('', ascii(`# Added by GoTek Manager for "${profile.name}" (${platform.name}).`))
+    for (const setting of missing) {
+      lines.push('', ...setting.why.map((line) => ascii(`# ${line}`)))
+      lines.push(`${setting.key} = ${ascii(setting.value)}`)
+    }
+  }
+
+  return `${lines.join(newline)}${newline}`
+}
+
 /**
  * The contents of `FF.CFG` for a profile.
  *
@@ -106,16 +221,12 @@ export function flashFloppyConfig(profile: Profile, platform: Platform): string 
     '# jumper on the board and is already right for this machine.',
   ]
 
-  for (const setting of settingsFor(platform)) {
+  for (const setting of ownedSettings(profile, platform)) {
     lines.push('', ...setting.why.map((line) => `# ${line}`))
     lines.push(`${setting.key} = ${setting.value}`)
   }
 
-  // Kept to plain ASCII, and to the line ending the firmware's own example
-  // uses. This is parsed by an 8-bit drive, not by a text editor: a typographic
-  // dash is three bytes there, and a profile named in another script must not
-  // be able to produce a file the firmware chokes on.
-  return `${lines.join('\n').replace(/[^\t\x20-\x7e\n]/g, '?')}\n`
+  return `${ascii(lines.join('\n'))}\n`
 }
 
 /** The configuration a profile needs, or nothing when its firmware has none. */

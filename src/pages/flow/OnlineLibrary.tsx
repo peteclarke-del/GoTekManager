@@ -12,9 +12,16 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react'
+import {
+  BulkBar,
+  SelectAllCell,
+  SelectBox,
+  SelectCell,
+  SelectColumns,
+} from '../../components/BulkSelection'
 import { Empty, InlineStatus, ProgressDialog } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
-import { platforms, requirePlatform, type Platform } from '../../domain/catalog'
+import { namesAnotherPlatform, platforms, type Platform } from '../../domain/catalog'
 import { belongsToPlatform, formatBytes, softwareTitleKey } from '../../domain/media'
 import {
   adapterLabel,
@@ -22,7 +29,6 @@ import {
   isBrowsable,
   isDownloadable,
   providersFor,
-  scopeLabel,
 } from '../../domain/providers'
 import type {
   CachedDownload,
@@ -33,6 +39,7 @@ import type {
   ProviderCatalog,
 } from '../../domain/types'
 import { useBusyItem } from '../../hooks/useAsyncAction'
+import { useRowSelection } from '../../hooks/useRowSelection'
 import {
   browseOnlineTitle,
   downloadOnlineTitle,
@@ -42,6 +49,9 @@ import {
 } from '../../native/commands'
 
 type CoverageFilter = 'all' | 'missing' | 'present'
+
+/** What a downloadable entry is keyed by, whether a title or a file inside one. */
+const titleKey = (title: OnlineTitle) => title.downloadUrl || title.remoteId
 
 export function OnlineLibrary({
   platform,
@@ -69,7 +79,10 @@ export function OnlineLibrary({
   const [adding, setAdding] = useState(false)
   const [editingId, setEditingId] = useState('')
   const [addedNotice, setAddedNotice] = useState('')
+  /** How far a run of downloads has got, while one is under way. */
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null)
   const { busyId, error, setError, run } = useBusyItem()
+  const working = Boolean(busyId) || Boolean(bulk)
 
   // Only the sources that apply to the platform being prepared.
   const visible = useMemo(() => providersFor(providers, platform.id), [providers, platform.id])
@@ -121,7 +134,11 @@ export function OnlineLibrary({
       new Set(
         Object.values(catalogs)
           .flatMap((entry) => entry.items)
-          .filter((item) => !item.platformId || item.platformId === platform.id)
+          .filter(
+            (item) =>
+              (!item.platformId || item.platformId === platform.id) &&
+              !namesAnotherPlatform(item.title, platform.id),
+          )
           .map((item) => softwareTitleKey(item.title))
           .filter(Boolean),
       ),
@@ -130,14 +147,59 @@ export function OnlineLibrary({
 
   const presentCount = [...knownKeys].filter((key) => localKeys.has(key)).length
 
-  const rows = (catalog?.items || []).filter((item) => {
-    const present = localKeys.has(softwareTitleKey(item.title))
-    return (
-      (!item.platformId || item.platformId === platform.id) &&
-      item.title.toLowerCase().includes(query.trim().toLowerCase()) &&
-      (coverage === 'all' || (coverage === 'present') === present)
-    )
-  })
+  /**
+   * The catalogue entries that are this machine's.
+   *
+   * A source is tied to one machine, but a keyword search is not: a hunt for
+   * BBC Micro discs turns up the occasional Amstrad compilation, and adding one
+   * to a BBC stick would write software the machine cannot run. Those are held
+   * back and counted rather than quietly dropped.
+   */
+  const forThisMachine = useMemo(
+    () =>
+      (catalog?.items || []).filter(
+        (item) =>
+          (!item.platformId || item.platformId === platform.id) &&
+          !namesAnotherPlatform(item.title, platform.id),
+      ),
+    [catalog, platform.id],
+  )
+  const setAside = (catalog?.items || []).length - forThisMachine.length
+
+  const rows = useMemo(
+    () =>
+      forThisMachine.filter((item) => {
+        const present = localKeys.has(softwareTitleKey(item.title))
+        return (
+          item.title.toLowerCase().includes(query.trim().toLowerCase()) &&
+          (coverage === 'all' || (coverage === 'present') === present)
+        )
+      }),
+    [forThisMachine, localKeys, query, coverage],
+  )
+
+  // Only what can actually be fetched takes part: a reference-only list has
+  // nothing to download, so ticking its rows would promise something untrue.
+  const fetchable = useMemo(
+    () => rows.filter((title) => isDownloadable(provider, title)),
+    [rows, provider],
+  )
+  const selection = useRowSelection(
+    useMemo(() => fetchable.map((title) => title.remoteId), [fetchable]),
+  )
+
+  // A file inside an archive item is identified by its own download link,
+  // falling back to the item's id for the rare entry that has none.
+  const fetchableFiles = useMemo(
+    () =>
+      (expandedId ? archiveFiles[expandedId] || [] : []).filter((file) =>
+        isDownloadable(provider, file),
+      ),
+    [archiveFiles, expandedId, provider],
+  )
+  const fileSelection = useRowSelection(
+    useMemo(() => fetchableFiles.map(titleKey), [fetchableFiles]),
+  )
 
   const refresh = () =>
     provider &&
@@ -165,12 +227,43 @@ export function OnlineLibrary({
     })
   }
 
-  const download = (title: OnlineTitle) =>
-    provider &&
-    run(title.downloadUrl || title.remoteId, async () => {
-      const result = await downloadOnlineTitle(provider, title)
-      imported(result, { ...title, platformId: title.platformId || platform.id }, provider)
-    })
+  const fetchOne = async (title: OnlineTitle) => {
+    if (!provider) return
+    const result = await downloadOnlineTitle(provider, title)
+    imported(result, { ...title, platformId: title.platformId || platform.id }, provider)
+  }
+
+  const download = (title: OnlineTitle) => provider && run(titleKey(title), () => fetchOne(title))
+
+  /**
+   * Fetches a whole selection, one after another.
+   *
+   * They are downloaded in turn rather than at once, both to stay polite to the
+   * host and to keep the count honest. One failure does not abandon the rest —
+   * a single missing file should not cost the other forty — so the failures are
+   * counted and reported at the end.
+   */
+  const downloadAll = async (titles: OnlineTitle[], done: () => void) => {
+    if (!provider || !titles.length) return
+    setError('')
+    setBulk({ done: 0, total: titles.length })
+    const failed: string[] = []
+    for (const [index, title] of titles.entries()) {
+      try {
+        await fetchOne(title)
+      } catch (reason) {
+        failed.push(`${title.title}: ${errorMessage(reason)}`)
+      }
+      setBulk({ done: index + 1, total: titles.length })
+    }
+    setBulk(null)
+    done()
+    if (failed.length) {
+      setError(
+        `${failed.length} of ${titles.length} downloads failed. First: ${failed[0]}`,
+      )
+    }
+  }
 
   return (
     <div className="library-layout">
@@ -187,8 +280,9 @@ export function OnlineLibrary({
               <span>
                 <b>{entry.name}</b>
                 <small>
-                  {adapterLabel(entry.adapter)} ·{' '}
-                  {scopeLabel(entry, (id) => requirePlatform(id).name)}
+                  {/* The machine is not repeated on every row: a source only
+                      ever appears for the one being prepared. */}
+                  {adapterLabel(entry.adapter)}
                   {entry.ignoreRobots ? ' · ignores robots.txt' : ''}
                   {entry.overridden ? ' · changed' : ''}
                 </small>
@@ -227,8 +321,8 @@ export function OnlineLibrary({
         ))}
         {!visible.length && (
           <p className="mode-note">
-            No online sources apply to {platform.name} yet. Add one below, either for this
-            machine alone or for every platform.
+            No online sources are listed for {platform.name} yet. Add one below; every
+            source names the machine it is for.
           </p>
         )}
         <button className="button secondary add-site" onClick={() => setAdding(true)}>
@@ -239,10 +333,12 @@ export function OnlineLibrary({
         <div className="provider-note">
           <b>Policy-aware inspection</b>
           <p>
-            Website scans stay on the selected host, inspect at most 100 pages, pace
-            their requests, and record only supported image links. They obey robots.txt
-            unless you have overridden it for a source. Open a source's settings to
-            change that; nothing ships with it set.
+            Website scans stay on the selected host, read at most 100 pages, make at
+            most 700 requests, and pace every one of them. A link is asked what it is
+            before it is read, so a download is never fetched merely to identify it,
+            and only supported images are recorded. They obey robots.txt unless you
+            have overridden it for a source. Open a source's settings to change that;
+            nothing ships with it set.
           </p>
         </div>
       </section>
@@ -261,7 +357,7 @@ export function OnlineLibrary({
           </div>
           <button
             className="button secondary"
-            disabled={!provider || Boolean(busyId)}
+            disabled={!provider || working}
             onClick={() => void refresh()}
           >
             <RefreshCw className={busyId === 'refresh' ? 'spinning' : ''} />
@@ -289,6 +385,12 @@ export function OnlineLibrary({
               <b>{Math.max(0, knownKeys.size - presentCount)}</b> missing
             </span>
           </div>
+          {setAside > 0 && (
+            <span className="mode-note">
+              {setAside} listed title{setAside === 1 ? '' : 's'} name another machine and{' '}
+              {setAside === 1 ? 'is' : 'are'} not shown
+            </span>
+          )}
           <div className="coverage-filter" role="group" aria-label="Collection coverage">
             {(['all', 'missing', 'present'] as const).map((value) => (
               <button
@@ -304,10 +406,36 @@ export function OnlineLibrary({
 
         {error && <p className="inline-error">{error}</p>}
 
+        <BulkBar selection={selection} noun="titles">
+          <button
+            className="button compact"
+            disabled={working}
+            title={
+              isBrowsable(provider)
+                ? 'Downloads the first supported image from each selected item. Open one to choose among its files instead.'
+                : 'Downloads every selected title and adds it to this profile'
+            }
+            onClick={() =>
+              void downloadAll(
+                selection.chosen(fetchable, (title) => title.remoteId),
+                selection.clear,
+              )
+            }
+          >
+            <Download />
+            Download &amp; add {selection.count}
+          </button>
+        </BulkBar>
+
         <div className="table-wrap">
           <table className="online-table">
+            <SelectColumns />
             <thead>
               <tr>
+                <SelectAllCell
+                  selection={selection}
+                  label={`Select all ${fetchable.length} downloadable titles shown`}
+                />
                 <th>Title</th>
                 <th>Status</th>
                 <th>Format</th>
@@ -325,10 +453,17 @@ export function OnlineLibrary({
                 return (
                   <Fragment key={title.remoteId}>
                     <tr>
+                      <SelectCell
+                        selection={selection}
+                        id={title.remoteId}
+                        label={`Select ${title.title}`}
+                        disabled={!downloadable}
+                        reason="This reference list does not provide a download"
+                      />
                       <td>
                         <button
                           className="archive-title"
-                          disabled={!expandable || Boolean(busyId)}
+                          disabled={!expandable || working}
                           onClick={() => browse(title)}
                         >
                           {expandable &&
@@ -363,7 +498,7 @@ export function OnlineLibrary({
                                 ? 'Download and add to this profile'
                                 : 'This reference list does not provide a download'
                           }
-                          disabled={Boolean(busyId) || !downloadable}
+                          disabled={working || !downloadable}
                           onClick={() => (expandable ? browse(title) : void download(title))}
                         >
                           {expandable ? <ChevronRight /> : <Download />}
@@ -372,10 +507,31 @@ export function OnlineLibrary({
                     </tr>
                     {expandedId === title.remoteId && (
                       <tr className="archive-contents">
-                        <td colSpan={6}>
+                        <td colSpan={7}>
+                          <BulkBar selection={fileSelection} noun="files">
+                            <button
+                              className="button compact"
+                              disabled={working}
+                              onClick={() =>
+                                void downloadAll(
+                                  fileSelection.chosen(fetchableFiles, titleKey),
+                                  fileSelection.clear,
+                                )
+                              }
+                            >
+                              <Download />
+                              Download &amp; add {fileSelection.count}
+                            </button>
+                          </BulkBar>
                           <div className="archive-files">
                             {files.map((file) => (
-                              <div key={file.downloadUrl}>
+                              <div key={titleKey(file)}>
+                                <SelectBox
+                                  selection={fileSelection}
+                                  id={titleKey(file)}
+                                  label={`Select ${file.title}`}
+                                  disabled={!isDownloadable(provider, file)}
+                                />
                                 <Archive />
                                 <span>
                                   <b>{file.title}</b>
@@ -386,7 +542,7 @@ export function OnlineLibrary({
                                 </span>
                                 <button
                                   className="button secondary"
-                                  disabled={Boolean(busyId)}
+                                  disabled={working}
                                   onClick={() => void download(file)}
                                 >
                                   <Download />
@@ -451,7 +607,15 @@ export function OnlineLibrary({
         />
       )}
 
-      {busyId && (
+      {bulk && (
+        <ProgressDialog
+          title={`Downloading ${bulk.total} titles`}
+          detail={`Fetching them one at a time and adding each to your library. ${bulk.done} of ${bulk.total} done.`}
+          progress={Math.round((bulk.done / bulk.total) * 100)}
+        />
+      )}
+
+      {busyId && !bulk && (
         <ProgressDialog
           title={
             busyId === 'refresh'
@@ -506,9 +670,9 @@ function draftOf(existing: OnlineProvider | undefined, platform: Platform): Site
     adapter: existing?.adapter || 'htmlSite',
     url: existing?.catalogUrl || '',
     query: existing?.query || '',
-    // A new source is usually machine-specific, so the platform being prepared
-    // is a better default than "everything".
-    scope: existing ? existing.platformId || '' : platform.id,
+    // Every source is for one machine; an older one that named none is offered
+    // the machine being prepared, so saving it puts that right.
+    scope: existing?.platformId || platform.id,
     ignoreRobots: existing?.ignoreRobots || false,
     userAgent: existing?.userAgent || '',
   }
@@ -528,7 +692,7 @@ function providerOf(draft: SiteDraft, existing?: OnlineProvider): OnlineProvider
     adapter: draft.adapter,
     catalogUrl: draft.url.trim() || undefined,
     query: draft.query.trim() || undefined,
-    platformId: draft.scope || undefined,
+    platformId: draft.scope,
     ignoreRobots: draft.ignoreRobots || undefined,
     userAgent: draft.userAgent.trim() || undefined,
   }
@@ -622,9 +786,8 @@ function SiteDialog({
         </label>
       )}
       <label>
-        Applies to
+        For which machine
         <select value={draft.scope} onChange={(event) => set('scope', event.target.value)}>
-          <option value="">All platforms</option>
           {platforms.map((entry) => (
             <option key={entry.id} value={entry.id}>
               {entry.name}
@@ -633,7 +796,8 @@ function SiteDialog({
         </select>
       </label>
       <p className="mode-note">
-        A source for one machine only appears when that machine is being prepared.
+        A source only appears when that machine is being prepared, and its titles are
+        only ever offered for that machine.
       </p>
       {draft.adapter === 'htmlSite' && (
         <>

@@ -66,32 +66,11 @@ pub fn download_folder(app: &tauri::AppHandle, provider_id: &str, remote_id: &st
     Ok(folder)
 }
 
-/// Where the supported contents of a local ZIP archive are unpacked.
-///
-/// The archive itself is never modified. The folder name includes the archive's
-/// size and modification time, so editing or replacing an archive produces a
-/// new cache folder rather than silently reusing stale images.
-pub fn local_archive_folder(app: &tauri::AppHandle, archive: &Path) -> Result<PathBuf> {
-    let metadata = fs::metadata(archive)
-        .with_context(|| format!("Unable to read {}", archive.display()))?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-        .map(|value| value.as_secs())
-        .unwrap_or_default();
-    let name = archive.file_stem().unwrap_or_default().to_string_lossy();
-    let identity = safe_cache_part(&format!("{name}-{}-{modified}", metadata.len()));
-    let folder = cache_root(app)?.join("local-archives").join(identity);
-    fs::create_dir_all(&folder)?;
-    Ok(folder)
-}
-
 /// Where a converted copy of a file is kept.
 ///
 /// The original is never touched. The folder is named after the file's identity
 /// so that editing or replacing it produces a new folder rather than serving a
-/// stale conversion, exactly as extracted archives work.
+/// stale conversion.
 pub fn converted_folder(app: &tauri::AppHandle, source: &Path) -> Result<PathBuf> {
     let metadata = fs::metadata(source)
         .with_context(|| format!("Unable to read {}", source.display()))?;
