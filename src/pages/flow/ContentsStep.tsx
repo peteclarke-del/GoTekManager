@@ -1,11 +1,13 @@
 import { ChevronLeft, ChevronRight, Pencil, RefreshCw, Trash2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Check } from 'lucide-react'
+import { BulkBar } from '../../components/BulkSelection'
 import { FileBrowserTable } from '../../components/FileBrowserTable'
 import { Modal } from '../../components/Modal'
-import { relativeTo, toPosix } from '../../domain/paths'
+import { joinRelative, relativeTo, toPosix } from '../../domain/paths'
 import type { DestinationEdit, FileEntry, Profile } from '../../domain/types'
 import type { DirectoryBrowser } from '../../hooks/useDirectoryBrowser'
+import { useRowSelection } from '../../hooks/useRowSelection'
 import { isWritable } from '../../state/workspace'
 
 /**
@@ -30,19 +32,24 @@ export function ContentsStep({
   back: () => void
   next: () => void
 }) {
-  const [selected, setSelected] = useState<FileEntry | null>(null)
-  const [moveTo, setMoveTo] = useState<string | null>(null)
+  const [moving, setMoving] = useState<FileEntry[] | null>(null)
   const editable = isWritable(profile)
+
+  const paths = useMemo(() => browser.entries.map((entry) => entry.path), [browser.entries])
+  const selection = useRowSelection(paths)
+  const chosen = selection.chosen(browser.entries, (entry) => entry.path)
 
   const relativePath = (entry: FileEntry) =>
     browser.isImage ? toPosix(entry.path) : relativeTo(profile.destination.path, entry.path)
 
-  const stage = (edit: DestinationEdit) => {
+  /** Replaces any edit already staged for the same file, then clears the ticks. */
+  const stage = (staged: DestinationEdit[]) => {
+    const replaced = new Set(staged.map((edit) => edit.path.toLowerCase()))
     setEdits((current) => [
-      ...current.filter((existing) => existing.path.toLowerCase() !== edit.path.toLowerCase()),
-      edit,
+      ...current.filter((existing) => !replaced.has(existing.path.toLowerCase())),
+      ...staged,
     ])
-    setSelected(null)
+    selection.clear()
   }
 
   return (
@@ -83,29 +90,45 @@ export function ContentsStep({
         </div>
       )}
 
-      {editable && selected && (
-        <div className="destination-edit-bar">
-          <span>Selected: {selected.name}</span>
+      {editable && (
+        <BulkBar selection={selection} noun="entries">
           <button
-            className="button secondary"
-            onClick={() => setMoveTo(relativePath(selected))}
+            className="button secondary compact"
+            title={
+              chosen.length === 1
+                ? 'Move or rename this entry'
+                : `Move all ${chosen.length} into one folder`
+            }
+            onClick={() => setMoving(chosen)}
           >
             <Pencil />
-            Move / rename
+            {chosen.length === 1 ? 'Move / rename' : `Move ${chosen.length} into a folder`}
           </button>
           <button
-            className="button secondary danger"
-            onClick={() => stage({ kind: 'delete', path: relativePath(selected) })}
+            className="button secondary compact danger"
+            onClick={() =>
+              stage(
+                chosen.map((entry) => ({ kind: 'delete', path: relativePath(entry) })),
+              )
+            }
           >
             <Trash2 />
-            Delete
+            Delete {chosen.length}
           </button>
-        </div>
+        </BulkBar>
       )}
 
       {edits.length > 0 && (
         <div className="staged-edits">
-          <b>Staged destination edits</b>
+          <div className="staged-edits-head">
+            <b>Staged destination edits</b>
+            {edits.length > 1 && (
+              <button className="button secondary compact" onClick={() => setEdits([])}>
+                <X />
+                Undo all {edits.length}
+              </button>
+            )}
+          </div>
           {edits.map((edit) => (
             <span key={`${edit.kind}:${edit.path}`}>
               <span>
@@ -133,8 +156,8 @@ export function ContentsStep({
         <FileBrowserTable
           entries={browser.entries}
           isImage={browser.isImage}
-          selectedPath={selected?.path}
-          onSelect={(entry) => editable && setSelected(entry)}
+          selection={editable ? selection : undefined}
+          onSelect={(entry) => editable && selection.toggle(entry.path)}
           onOpen={(entry) => void browser.open(entry.path)}
         />
       </div>
@@ -150,53 +173,88 @@ export function ContentsStep({
         </button>
       </div>
 
-      {moveTo !== null && selected && (
+      {moving?.length ? (
         <MoveDialog
-          from={relativePath(selected)}
-          value={moveTo}
-          setValue={setMoveTo}
-          close={() => setMoveTo(null)}
-          confirm={(destination) => {
-            stage({ kind: 'move', path: relativePath(selected), destination })
-            setMoveTo(null)
+          entries={moving}
+          pathOf={relativePath}
+          close={() => setMoving(null)}
+          confirm={(staged) => {
+            stage(staged)
+            setMoving(null)
           }}
         />
-      )}
+      ) : null}
     </div>
   )
 }
 
+/**
+ * Where the selected entries should end up.
+ *
+ * One entry is moved to a path of its own, which is also how it is renamed.
+ * Several keep their names and are moved into a folder together, because
+ * renaming a dozen files to one name is never what was meant.
+ */
 function MoveDialog({
-  from,
-  value,
-  setValue,
+  entries,
+  pathOf,
   close,
   confirm,
 }: {
-  from: string
-  value: string
-  setValue: (value: string) => void
+  entries: FileEntry[]
+  pathOf: (entry: FileEntry) => string
   close: () => void
-  confirm: (destination: string) => void
+  confirm: (edits: DestinationEdit[]) => void
 }) {
+  const single = entries.length === 1 ? entries[0] : undefined
+  const [value, setValue] = useState(single ? pathOf(single) : '')
+
   // The planner requires `/` separators and rejects anything that would leave
   // the destination, so the input is normalised before it is staged.
   const normalised = toPosix(value).replace(/^\/+/, '').trim()
-  const invalid = !normalised || normalised === from || normalised.includes('..')
+  const escapes = normalised.includes('..')
+  const staged = single
+    ? [{ kind: 'move' as const, path: pathOf(single), destination: normalised }]
+    : entries.map((entry) => ({
+        kind: 'move' as const,
+        path: pathOf(entry),
+        destination: joinRelative(normalised, entry.name),
+      }))
+  // Moving something to where it already is is not a move, so it is refused
+  // here rather than staged and then rejected by the planner.
+  const unchanged = staged.every((edit) => edit.destination === edit.path)
+  const invalid = escapes || unchanged || (single ? !normalised : false)
 
   return (
-    <Modal title="Move or rename" onClose={close}>
-      <p>Enter the new path relative to the destination root.</p>
+    <Modal
+      title={single ? 'Move or rename' : `Move ${entries.length} entries`}
+      onClose={close}
+    >
+      <p>
+        {single
+          ? 'Enter the new path relative to the destination root.'
+          : 'Enter the folder, relative to the destination root, to move them into. Each keeps its own name.'}
+      </p>
       <label>
-        Destination path
-        <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} />
+        {single ? 'Destination path' : 'Destination folder'}
+        <input
+          autoFocus
+          value={value}
+          placeholder={single ? undefined : 'BBC/Games'}
+          onChange={(event) => setValue(event.target.value)}
+        />
       </label>
-      {normalised.includes('..') && (
+      {escapes && (
         <p className="inline-error">A destination path cannot leave the profile's folder.</p>
       )}
-      <button className="button" disabled={invalid} onClick={() => confirm(normalised)}>
+      {!single && (
+        <p className="feed-format">
+          First of {entries.length}: <code>{staged[0].destination}</code>
+        </p>
+      )}
+      <button className="button" disabled={invalid} onClick={() => confirm(staged)}>
         <Check />
-        Stage move
+        {single ? 'Stage move' : `Stage ${entries.length} moves`}
       </button>
     </Modal>
   )

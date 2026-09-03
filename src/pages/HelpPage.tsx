@@ -60,10 +60,38 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     question: 'What do the layout and naming options do?',
     answer: (
       <>
-        The platform layout writes into short per-platform folders. OLED naming removes
+        The platform layout writes into short per-platform folders, and the category
+        layout into <code>Games</code>, <code>Apps</code>, <code>Demos</code> and the
+        rest, with <code>Unsorted</code> for titles nobody has filed. A custom layout
+        combines them, as in <code>{'{platform}/{category}'}</code>. OLED naming removes
         common release labels and trims the filename to the firmware's display width.
         The library always keeps the canonical name, and source files are never renamed
         or moved.
+      </>
+    ),
+  },
+  {
+    question: 'Where do categories come from?',
+    answer: (
+      <>
+        From the folders a collection already uses: a title under{' '}
+        <code>Applications</code> or <code>Games [ADF]</code> is read as one, deepest
+        folder first, and anything unrecognised is left unset rather than guessed at.
+        Set the rest in the library table, several at a time with the tick boxes.
+      </>
+    ),
+  },
+  {
+    question: 'My drive\u2019s display is upside down. Can that be fixed?',
+    answer: (
+      <>
+        Yes, if it runs FlashFloppy. A profile names the panel fitted to its drive, and
+        the rotated choices write <code>display-type=oled-128x64-rotate</code> (or
+        128x32) into <code>FF.CFG</code>, which turns the view 180 degrees. Rotation can
+        only be asked for on a named panel, which is why the size is chosen rather than
+        detected. A configuration already on the drive is updated rather than replaced:
+        only the settings this application is responsible for change, and everything
+        else in the file is kept.
       </>
     ),
   },
@@ -105,10 +133,12 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     answer: (
       <>
         FAT <code>.img</code> and <code>.ima</code> images can be browsed read-only
-        without mounting them. Online sources can search the Internet Archive, inspect
-        permitted sites, or read structured catalogue feeds. Downloads are cached with
-        their source and licence, and a ZIP bundle contributes each supported image
-        separately.
+        without mounting them. A ZIP in a library is listed rather than unpacked: each
+        supported image inside it becomes a title, read out of the archive only when it
+        is written, so a folder of thousands of archives is indexed in seconds. Online
+        sources can search the Internet Archive, inspect permitted sites, or read
+        structured catalogue feeds; downloads are cached with their source and licence,
+        and a downloaded ZIP contributes each supported image separately.
       </>
     ),
   },

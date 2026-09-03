@@ -10,10 +10,12 @@ import {
 } from 'lucide-react'
 import { Empty, NoticeBar } from './components/Feedback'
 import { MountPicker } from './components/MountPicker'
+import { ProfileEditor } from './components/ProfileEditor'
 import { SettingsDialog } from './components/SettingsDialog'
 import { useCaptureHarness } from './dev/captureHarness'
 import type { MountedTarget, Notice, Page } from './domain/types'
 import { useAsyncAction } from './hooks/useAsyncAction'
+import { useProfileDrafts } from './hooks/useProfileDrafts'
 import { discoverMounts } from './native/commands'
 import { FlowPage } from './pages/flow/FlowPage'
 import { HelpPage } from './pages/HelpPage'
@@ -25,6 +27,7 @@ import {
   useTablePreferences,
   useWorkspace,
 } from './state/useWorkspace'
+import { profilesForMounts } from './state/workspace'
 
 const NAVIGATION: Array<[Page, typeof HardDrive]> = [
   ['Flow', LayoutDashboard],
@@ -95,15 +98,30 @@ export function App() {
     await refreshMounts(showSystemMounts)
   }
 
+  /**
+   * Turns the chosen mounts into drafts rather than profiles.
+   *
+   * A volume label says what the stick is called, never which machine it is
+   * for, so each one is named in the editor before it exists.
+   */
+  const drafts = useProfileDrafts((profile) => {
+    dispatch({ type: 'profileAdded', profile })
+    setNotice({ kind: 'success', text: `Created the profile ${profile.name}.` })
+  })
+
   const applyMountSelection = () => {
     const chosen = mounts.filter((mount) => selectedMounts.includes(mount.path))
-    dispatch({ type: 'mountsSelected', mounts: chosen, defaults: settings.defaults })
+    const drafted = profilesForMounts(chosen, settings.defaults, workspace.profiles)
     setPickerOpen(false)
     setSelectedMounts([])
-    setNotice({
-      kind: 'success',
-      text: `Added ${chosen.length} profile${chosen.length === 1 ? '' : 's'} from discovered storage.`,
-    })
+    if (!drafted.length) {
+      setNotice({
+        kind: 'info',
+        text: `${chosen.length === 1 ? 'That destination is' : 'Those destinations are'} already registered.`,
+      })
+      return
+    }
+    drafts.propose(drafted)
   }
 
   return (
@@ -234,6 +252,16 @@ export function App() {
           apply={applyMountSelection}
           busy={discovery.busy}
           error={discovery.error}
+        />
+      )}
+
+      {drafts.current && (
+        <ProfileEditor
+          isNew
+          waiting={drafts.waiting}
+          profile={drafts.current}
+          close={drafts.discard}
+          save={drafts.accept}
         />
       )}
     </main>

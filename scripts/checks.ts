@@ -24,6 +24,8 @@ import {
   acceptedFormats,
   firmwareProfiles,
   inferPlatformId,
+  mentionsPlatform,
+  namesAnotherPlatform,
   platforms,
   requireFirmware,
   requirePlatform,
@@ -45,6 +47,12 @@ import {
   transferOperations,
 } from '../src/domain/media'
 import {
+  categories,
+  categoryFolder,
+  inferCategoryId,
+  UNCATEGORISED,
+} from '../src/domain/categories'
+import {
   basename,
   dottedExtensionOf,
   hasParent,
@@ -57,7 +65,9 @@ import {
 import {
   configFor,
   configSupport,
+  DISPLAY_CHOICES,
   flashFloppyConfig,
+  mergeFlashFloppyConfig,
 } from '../src/domain/firmwareConfig'
 import { isOnDestination, summarisePlan } from '../src/domain/plan'
 import {
@@ -65,10 +75,17 @@ import {
   faultIn,
   mergeProviders,
   providersFor,
+  readCustomProviders,
   readProviderConfig,
-  scopeLabel,
 } from '../src/domain/providers'
-import { countBy, omitKey, upsertById } from '../src/domain/records'
+import { countBy, omitKey, removeById, upsertById } from '../src/domain/records'
+import {
+  coverageOf,
+  rangeOf,
+  retained,
+  toggled,
+  withAll,
+} from '../src/domain/selection'
 import type {
   FileEntry,
   MediaItem,
@@ -76,6 +93,7 @@ import type {
   TransferPlan,
   TransferResultEntry,
 } from '../src/domain/types'
+import { reviveTablePreferences } from '../src/state/useWorkspace'
 import {
   loadSettings,
   loadWorkspace,
@@ -88,6 +106,7 @@ import {
   emptyWorkspace,
   isWritable,
   profileIdFor,
+  profilesForMounts,
   workspaceReducer,
   type Workspace,
 } from '../src/state/workspace'
@@ -277,6 +296,31 @@ check('an unassigned title lands in a named bucket, not a broken path', () => {
   const orphan = classifyMedia(entry('Mystery.dsk'), '/library')
 
   assert.equal(renderFolderTemplate('{platform}', orphan), 'Unsorted')
+})
+
+check('a category layout splits the stick by what the titles are', () => {
+  const game: MediaItem = { ...classifyMedia(entry('Elite.ssd'), '/library'), category: 'games' }
+  const mag: MediaItem = { ...classifyMedia(entry('Beebug 1.ssd'), '/library'), category: 'magazines' }
+  const loose = classifyMedia(entry('Unknown.ssd'), '/library')
+  const profile: Profile = { ...bbcProfile, folderLayout: 'category' }
+
+  assert.equal(outputFolder(game, profile), 'Games')
+  assert.equal(outputFolder(mag, profile), 'Mags')
+  // Everything nobody has sorted shares one folder rather than the root, so a
+  // later sort is a matter of moving one folder's contents.
+  assert.equal(outputFolder(loose, profile), UNCATEGORISED)
+  // Turning organising off still means one flat stick, whatever the layout says.
+  assert.equal(outputFolder(game, { ...profile, organise: false }), '')
+
+  // The two can be combined, which is what a multi-machine stick needs. The
+  // platform has to be committed for that, exactly as staging a title does it.
+  assert.equal(
+    outputFolder(
+      { ...game, assignedPlatformId: 'bbc' },
+      { ...profile, folderLayout: 'custom', folderTemplate: '{platform}/{category}' },
+    ),
+    'BBC/Games',
+  )
 })
 
 check('a custom layout drives the actual destination path', () => {
@@ -532,6 +576,35 @@ check('destination files this drive cannot load are flagged, not counted as ours
 // Online sources
 // ---------------------------------------------------------------------------
 
+check('a listing entry that names another machine is not offered', () => {
+  // The complaint this exists for: an Amstrad compilation turning up in a BBC
+  // search and being offered for a BBC stick.
+  assert.equal(namesAnotherPlatform('Amstrad CPC Games Collection', 'bbc'), true)
+  assert.equal(namesAnotherPlatform('Elite (BBC Micro)', 'bbc'), false)
+  // A title naming both is kept: a compilation may hold discs for each.
+  assert.equal(namesAnotherPlatform('Elite: BBC Micro and Amstrad CPC', 'bbc'), false)
+  // Most titles name no machine at all, and guessing would lose them.
+  assert.equal(namesAnotherPlatform('Chuckie Egg', 'bbc'), false)
+
+  // The family alone can never separate two machines that share it.
+  assert.equal(namesAnotherPlatform('Commodore 64 demos', 'amiga'), true)
+  assert.equal(namesAnotherPlatform('Amiga demos', 'amiga'), false)
+  assert.equal(mentionsPlatform('ZX Spectrum Next games', 'next'), true)
+  assert.equal(mentionsPlatform('Acorn Electron tape archive', 'bbc'), false)
+})
+
+check('every machine can be searched on the Archive under its own name', () => {
+  for (const platform of platforms) {
+    const archive = providersFor(defaultProviders, platform.id).filter(
+      (provider) => provider.adapter === 'internetArchive',
+    )
+    assert.ok(
+      archive.length > 0,
+      `${platform.name} has no Internet Archive source of its own`,
+    )
+  }
+})
+
 check('every platform has somewhere to look beyond the Internet Archive', () => {
   for (const platform of platforms) {
     const available = providersFor(defaultProviders, platform.id)
@@ -554,22 +627,39 @@ check('a hand-written source list is validated rather than half-obeyed', () => {
   const load = readProviderConfig({
     version: 1,
     providers: [
-      { id: 'good', name: 'Good', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
-      { id: 'good', name: 'Duplicate', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
-      { id: '', name: 'Nameless', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
-      { id: 'insecure', name: 'Insecure', adapter: 'htmlSite', catalogUrl: 'http://example.org/' },
+      { id: 'good', name: 'Good', adapter: 'htmlSite', platformId: 'bbc', catalogUrl: 'https://example.org/' },
+      { id: 'good', name: 'Duplicate', adapter: 'htmlSite', platformId: 'bbc', catalogUrl: 'https://example.org/' },
+      { id: '', name: 'Nameless', adapter: 'htmlSite', platformId: 'bbc', catalogUrl: 'https://example.org/' },
+      { id: 'insecure', name: 'Insecure', adapter: 'htmlSite', platformId: 'bbc', catalogUrl: 'http://example.org/' },
       { id: 'unknown', name: 'Unknown', adapter: 'telepathy' },
-      { id: 'noquery', name: 'No query', adapter: 'internetArchive' },
+      { id: 'noquery', name: 'No query', adapter: 'internetArchive', platformId: 'bbc' },
+      { id: 'nomachine', name: 'No machine', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+      { id: 'whatmachine', name: 'Odd machine', adapter: 'htmlSite', platformId: 'zx81', catalogUrl: 'https://example.org/' },
       'not an object',
     ],
   })
 
   assert.deepEqual(load.providers.map((provider) => provider.id), ['good'])
-  assert.equal(load.problems.length, 6)
+  assert.equal(load.problems.length, 8)
   // Every rejection names what was wrong, so a typo is findable.
   assert.ok(load.problems.some((problem) => problem.includes('repeats the id')))
   assert.ok(load.problems.some((problem) => problem.includes('https://')))
   assert.ok(load.problems.some((problem) => problem.includes('unknown adapter')))
+  assert.ok(load.problems.some((problem) => problem.includes('which machine')))
+  assert.ok(load.problems.some((problem) => problem.includes('unknown machine')))
+})
+
+check('a source of the user\'s own is held to the same standard as one that ships', () => {
+  const load = readCustomProviders([
+    { id: 'mine', name: 'Mine', adapter: 'htmlSite', platformId: 'bbc', catalogUrl: 'https://example.org/' },
+    // Saved before every source had to name a machine.
+    { id: 'legacy', name: 'Everything', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+  ])
+
+  assert.deepEqual(load.providers.map((provider) => provider.id), ['mine'])
+  // Named, so it can be put right, rather than vanishing from every machine.
+  assert.equal(load.problems.length, 1)
+  assert.ok(load.problems[0].includes('Everything'))
 })
 
 check('a file with no providers array is refused outright', () => {
@@ -593,12 +683,19 @@ check('a source for one machine never appears while preparing another', () => {
   assert.ok(!forCpc.includes('stairway-bbc'))
   assert.ok(!forCpc.includes('ia-c64'))
   assert.ok(forCpc.includes('ia-cpc464'))
-  // The unscoped source applies everywhere.
-  assert.ok(forCpc.includes('internet-archive'))
 
   const forBbc = providersFor(defaultProviders, 'bbc').map((provider) => provider.id)
   assert.ok(forBbc.includes('stairway-bbc'))
   assert.ok(!forBbc.includes('stairway-electron'))
+  // Every source names one machine, so nothing is shown for all of them.
+  assert.ok(defaultProviders.every((provider) => provider.platformId))
+  for (const platform of platforms) {
+    const listed = providersFor(defaultProviders, platform.id)
+    assert.ok(
+      listed.every((provider) => provider.platformId === platform.id),
+      `${platform.name} is offered a source for another machine`,
+    )
+  }
 })
 
 check('every shipped source is complete and points somewhere real', () => {
@@ -641,13 +738,81 @@ check('nothing that ships ignores a site or disguises itself', () => {
   }
 })
 
-check('the sidebar says what each source covers', () => {
-  const name = (id: string) => requirePlatform(id).name
-  const scoped = defaultProviders.find((provider) => provider.id === 'ia-cpc464')!
-  const general = defaultProviders.find((provider) => provider.id === 'internet-archive')!
+// ---------------------------------------------------------------------------
+// Categories
+// ---------------------------------------------------------------------------
 
-  assert.equal(scopeLabel(scoped, name), 'Amstrad CPC464 only')
-  assert.equal(scopeLabel(general, name), 'All platforms')
+check('a title inside an archive reads as a title like any other', () => {
+  // The library lists archive entries rather than unpacking them, so a title's
+  // path can name the archive it lives in. Everything the interface does with
+  // it — its name, its format, where it came from — has to keep working.
+  const item = classifyMedia(
+    {
+      name: 'Elite (1988).adf',
+      path: '/library/Amiga/Games/Elite (1988).zip!/Elite (1988).adf',
+      extension: 'adf',
+      size: 901120,
+      directory: false,
+    },
+    '/library/Amiga',
+  )
+
+  assert.equal(item.canonicalTitle, 'Elite (1988).adf')
+  assert.equal(item.extension, 'adf')
+  assert.ok(item.likelyPlatformIds.includes('amiga'))
+  // The path is the identity, so two entries in one archive stay distinct.
+  assert.equal(item.id, '/library/Amiga/Games/Elite (1988).zip!/Elite (1988).adf')
+  // The folders above the archive still say what kind of title it is.
+  assert.equal(item.category, 'games')
+  // It is written under its own name, not the archive's.
+  assert.equal(
+    outputFileName({ ...item, assignedPlatformId: 'amiga' }, { ...bbcProfile, naming: 'original' }),
+    'Elite (1988).adf',
+  )
+  // And it reads as coming from the archive, which is where the user put it.
+  assert.equal(
+    relativeTo('/library/Amiga', item.path),
+    'Games/Elite (1988).zip!/Elite (1988).adf',
+  )
+})
+
+check('a category is read from the folders a collection files its titles under', () => {
+  const source = '/library/TOSEC/Commodore/Amiga'
+  assert.equal(
+    inferCategoryId(`${source}/Applications/[ADF]/Deluxe Paint.adf`, source),
+    'applications',
+  )
+  // TOSEC qualifies a folder with the format it holds; the name still reads.
+  assert.equal(inferCategoryId(`${source}/Games [ADF]/Elite.adf`, source), 'games')
+  assert.equal(inferCategoryId(`${source}/Magazines/Amiga Format 1.adf`, source), 'magazines')
+  assert.equal(inferCategoryId(`${source}/Demos/Desert Dream.adf`, source), 'demos')
+
+  // The deepest folder is the one that says what these files actually are.
+  assert.equal(inferCategoryId(`${source}/Games/Utilities/Trainer.adf`, source), 'utilities')
+
+  // Nothing recognisable is left unset rather than guessed at.
+  assert.equal(inferCategoryId(`${source}/Misc/Something.adf`, source), undefined)
+  assert.equal(inferCategoryId(`${source}/Elite.adf`, source), undefined)
+})
+
+check('a folder above the source never decides a title s category', () => {
+  // The library lives under a folder called Games; that says nothing about the
+  // magazines inside it, or every title would come back a game.
+  const source = '/library/Games'
+  assert.equal(inferCategoryId(`${source}/Magazines/Zzap 1.adf`, source), 'magazines')
+  assert.equal(inferCategoryId(`${source}/Elite.adf`, source), undefined)
+})
+
+check('every category has a folder name a two-line display can show', () => {
+  for (const category of categories) {
+    assert.ok(category.folderName.length <= 8, `${category.name} is too long for a display`)
+    assert.ok(category.hints.length > 0, `${category.name} can never be inferred`)
+  }
+  const ids = categories.map((category) => category.id)
+  assert.equal(new Set(ids).size, ids.length, 'category ids repeat')
+  // An uncategorised title still needs somewhere to go.
+  assert.equal(categoryFolder(undefined), UNCATEGORISED)
+  assert.equal(categoryFolder('games'), 'Games')
 })
 
 // ---------------------------------------------------------------------------
@@ -662,6 +827,61 @@ check('records helpers keep order and identity', () => {
   assert.equal(merged[0].n, 9)
   assert.deepEqual(omitKey({ a: 1, b: 2 }, 'a'), { b: 2 })
   assert.deepEqual(countBy(['x', 'y', 'x'], (value) => value), { x: 2, y: 1 })
+
+  // One id or a whole selection of them, so a bulk removal is a single pass.
+  assert.deepEqual(removeById(list, 'a').map((item) => item.id), ['b'])
+  assert.deepEqual(removeById(list, 'a', 'b'), [])
+  assert.deepEqual(removeById(list), list)
+})
+
+// ---------------------------------------------------------------------------
+// Multi-selection
+// ---------------------------------------------------------------------------
+
+const ticks = (selected: ReadonlySet<string>) => [...selected].sort()
+
+check('a tick box adds a row and takes it away again', () => {
+  const one = toggled(new Set<string>(), 'b')
+  assert.deepEqual(ticks(one), ['b'])
+  assert.deepEqual(ticks(toggled(one, 'b')), [])
+  assert.deepEqual(ticks(toggled(one, 'c')), ['b', 'c'])
+})
+
+check('a whole group is ticked or cleared in one gesture', () => {
+  const rows = ['a', 'b', 'c']
+  assert.deepEqual(ticks(withAll(new Set(['z']), rows, true)), ['a', 'b', 'c', 'z'])
+  assert.deepEqual(ticks(withAll(new Set(rows), rows, false)), [])
+})
+
+check('a shift-click covers the run between two rows, whichever way round', () => {
+  const rows = ['a', 'b', 'c', 'd']
+  assert.deepEqual(rangeOf(rows, 'b', 'd'), ['b', 'c', 'd'])
+  assert.deepEqual(rangeOf(rows, 'd', 'b'), ['b', 'c', 'd'])
+  assert.deepEqual(rangeOf(rows, 'a', 'a'), ['a'])
+  // A row that has been filtered away leaves no run to extend across, which is
+  // better than guessing at one from a stale position.
+  assert.deepEqual(rangeOf(rows, 'gone', 'c'), [])
+})
+
+check('ticks on rows a filter has hidden are dropped, not acted on invisibly', () => {
+  const selected = new Set(['a', 'b', 'c'])
+
+  assert.deepEqual(ticks(retained(selected, ['a', 'c'])), ['a', 'c'])
+  // Nothing dropped means the very same set, so a component can compare by
+  // identity rather than re-rendering on every keystroke.
+  assert.equal(retained(selected, ['a', 'b', 'c', 'd']), selected)
+  assert.equal(retained(new Set(), []).size, 0)
+})
+
+check('the header tick box reports none, some, or all of what is shown', () => {
+  const rows = ['a', 'b']
+  assert.equal(coverageOf(new Set(), rows), 'none')
+  assert.equal(coverageOf(new Set(['a']), rows), 'some')
+  assert.equal(coverageOf(new Set(['a', 'b']), rows), 'all')
+  // Rows that are ticked but no longer listed must not read as full coverage.
+  assert.equal(coverageOf(new Set(['a', 'b', 'z']), rows), 'all')
+  assert.equal(coverageOf(new Set(['z']), rows), 'none')
+  assert.equal(coverageOf(new Set(['a']), []), 'none')
 })
 
 // ---------------------------------------------------------------------------
@@ -699,6 +919,44 @@ check('setting and clearing an alias reaches the library and every collection', 
   assert.equal(cleared.items[0].displayTitle, undefined)
 })
 
+check('a selection of titles leaves a collection in one pass', () => {
+  const elite = classifyMedia(entry('Elite.ssd'), '/library')
+  const repton = classifyMedia(entry('Repton.ssd'), '/library')
+  const chuckie = classifyMedia(entry('Chuckie.ssd'), '/library')
+  const before = workspaceWith(bbcProfile, [elite, repton, chuckie])
+
+  const after = workspaceReducer(before, {
+    type: 'collectionRemoved',
+    profileId: bbcProfile.id,
+    itemIds: [elite.id, chuckie.id],
+  })
+
+  // Taken out of the profile, but still in the library to be added again.
+  assert.deepEqual(after.collections[bbcProfile.id].map((item) => item.name), ['Repton.ssd'])
+  assert.equal(after.items.length, 3)
+})
+
+check('a platform is assigned to a whole selection at once', () => {
+  const first = classifyMedia(entry('Sorcery.dsk'), '/library')
+  const second = classifyMedia(entry('Roland.dsk'), '/library')
+  const before = workspaceWith(bbcProfile, [first, second])
+
+  const after = workspaceReducer(before, {
+    type: 'platformAssigned',
+    itemIds: [first.id, second.id],
+    platformId: 'cpc464',
+  })
+
+  assert.deepEqual(
+    after.items.map((item) => item.assignedPlatformId),
+    ['cpc464', 'cpc464'],
+  )
+  assert.deepEqual(
+    after.collections[bbcProfile.id].map((item) => item.assignedPlatformId),
+    ['cpc464', 'cpc464'],
+  )
+})
+
 check('a profile id follows its destination so collections survive a restart', () => {
   assert.equal(profileIdFor({ kind: 'folder', path: '/media/gotek' }), 'profile:/media/gotek')
   // The same path discovered as a volume is the same profile, not a second one.
@@ -731,12 +989,37 @@ check('assigning a platform updates the library and every collection', () => {
 
   const after = workspaceReducer(before, {
     type: 'platformAssigned',
-    itemId: item.id,
+    itemIds: [item.id],
     platformId: 'cpc464',
   })
 
   assert.equal(after.items[0].assignedPlatformId, 'cpc464')
   assert.equal(after.collections[bbcProfile.id][0].assignedPlatformId, 'cpc464')
+})
+
+check('a category is set for a whole selection and can be cleared again', () => {
+  const first = classifyMedia(entry('Elite.ssd'), '/library')
+  const second = classifyMedia(entry('Repton.ssd'), '/library')
+  const before = workspaceWith(bbcProfile, [first, second])
+
+  const sorted = workspaceReducer(before, {
+    type: 'categoryAssigned',
+    itemIds: [first.id, second.id],
+    categoryId: 'games',
+  })
+  assert.deepEqual(sorted.items.map((item) => item.category), ['games', 'games'])
+  // The staged copies are the same titles and must not disagree with the library.
+  assert.deepEqual(
+    sorted.collections[bbcProfile.id].map((item) => item.category),
+    ['games', 'games'],
+  )
+
+  const cleared = workspaceReducer(sorted, {
+    type: 'categoryAssigned',
+    itemIds: [first.id],
+    categoryId: '',
+  })
+  assert.deepEqual(cleared.items.map((item) => item.category), [undefined, 'games'])
 })
 
 check('removing a source purges its titles from the library and collections', () => {
@@ -783,43 +1066,33 @@ check('removing a profile discards its collection and reselects another', () => 
   assert.equal(Object.hasOwn(after.collections, bbcProfile.id), false)
 })
 
-check('selecting mounts adds new profiles without disturbing existing ones', () => {
-  const before = workspaceWith(bbcProfile, [])
+check('choosing mounts drafts only the destinations not already registered', () => {
   const defaults = {
     firmwareId: 'flashfloppy',
     organise: true,
     folderLayout: 'flat' as const,
     naming: 'oled' as const,
   }
-
-  const after = workspaceReducer(before, {
-    type: 'mountsSelected',
-    defaults,
-    mounts: [
-      {
-        path: '/media/gotek',
-        device: '/dev/sdb1',
-        label: 'GOTEK',
-        filesystem: 'vfat',
-        kind: 'removable',
-        removable: true,
-      },
-      {
-        path: '/media/NEW',
-        device: '/dev/sdc1',
-        label: 'NEW',
-        filesystem: 'vfat',
-        kind: 'removable',
-        removable: true,
-      },
-    ],
+  const mount = (path: string, label: string) => ({
+    path,
+    device: '/dev/sdb1',
+    label,
+    filesystem: 'vfat',
+    kind: 'removable' as const,
+    removable: true,
   })
 
-  // The already-registered destination keeps its own settings, not the defaults.
-  assert.equal(after.profiles.length, 2)
-  assert.equal(after.profiles[0].id, bbcProfile.id)
-  assert.equal(after.profiles[0].folderLayout, 'platform')
-  assert.equal(after.profiles[1].id, 'profile:/media/NEW')
+  const drafted = profilesForMounts(
+    [mount('/media/gotek', 'GOTEK'), mount('/media/NEW', 'NEW')],
+    defaults,
+    [bbcProfile],
+  )
+
+  // The registered destination is left alone: it keeps its own settings and
+  // whatever it has staged, rather than being offered back as a new profile.
+  assert.deepEqual(drafted.map((profile) => profile.id), ['profile:/media/NEW'])
+  assert.equal(drafted[0].name, 'NEW')
+  assert.equal(drafted[0].folderLayout, 'flat')
 })
 
 check('an empty collection keeps a stable identity so planning cannot loop', () => {
@@ -973,16 +1246,33 @@ check('the edit dialog and the source file reject the same things', () => {
   // One check, so a source typed into the dialog and one written into the file
   // cannot disagree about what is valid.
   assert.equal(
-    faultIn({ id: 'x', name: 'X', adapter: 'htmlSite' }, 'This site'),
+    faultIn({ id: 'x', name: 'X', adapter: 'htmlSite', platformId: 'bbc' }, 'This site'),
     'This site needs an https:// URL',
   )
   assert.equal(
-    faultIn({ id: 'x', name: 'X', adapter: 'demozoo', query: 'bbc' }, 'This site'),
+    faultIn({ id: 'x', name: 'X', adapter: 'demozoo', query: '66', platformId: 'bbc' }, 'This site'),
+    null,
+  )
+  assert.equal(
+    faultIn({ id: 'x', name: 'X', adapter: 'demozoo', query: 'bbc', platformId: 'bbc' }, 'This site'),
     'This site needs a Demozoo platform number in its query',
   )
   assert.equal(
     faultIn(
       { id: 'x', name: 'X', adapter: 'htmlSite', catalogUrl: 'https://example.org/' },
+      'This site',
+    ),
+    'This site does not say which machine it is for',
+  )
+  assert.equal(
+    faultIn(
+      {
+        id: 'x',
+        name: 'X',
+        adapter: 'htmlSite',
+        platformId: 'bbc',
+        catalogUrl: 'https://example.org/',
+      },
       'This site',
     ),
     null,
@@ -1018,6 +1308,111 @@ check('the drive configuration says what the firmware needs and nothing more', (
   assert.ok(cpc.includes('nav-mode = native'))
   assert.ok(!cpc.includes('host ='))
   assert.ok(!cpc.includes('index-suppression'))
+})
+
+check('a drive whose panel is upside down is told to rotate its view', () => {
+  const bbc = requirePlatform('bbc')
+
+  // Left to detect, nothing is written: the firmware's own default is right for
+  // a drive that reads its panel correctly, and a file cannot be un-written.
+  assert.ok(!/^display-type/m.test(flashFloppyConfig(bbcProfile, bbc)))
+  assert.ok(!/^display-type/m.test(flashFloppyConfig({ ...bbcProfile, display: 'auto' }, bbc)))
+
+  // The syntax FlashFloppy documents: rotation is only accepted on a named
+  // panel, which is why the size is spelled out alongside it.
+  const rotated = flashFloppyConfig({ ...bbcProfile, display: 'oled-128x64-rotate' }, bbc)
+  assert.ok(rotated.includes('display-type = oled-128x64-rotate'))
+  assert.ok(rotated.includes('upside down'), 'the reason is not explained in the file')
+
+  const plain = flashFloppyConfig({ ...bbcProfile, display: 'oled-128x32' }, bbc)
+  assert.ok(plain.includes('display-type = oled-128x32'))
+  assert.ok(!plain.includes('-rotate'))
+
+  // Every choice offered writes a value the firmware documents.
+  for (const [value] of DISPLAY_CHOICES) {
+    if (value === 'auto') continue
+    assert.ok(
+      /^oled-128x(32|64)(-rotate)?$/.test(value),
+      `${value} is not a display type FlashFloppy accepts`,
+    )
+    assert.ok(flashFloppyConfig({ ...bbcProfile, display: value }, bbc).includes(value))
+  }
+})
+
+check('a hand-tuned configuration is edited, never rewritten', () => {
+  const bbc = requirePlatform('bbc')
+  // The shape of a real stick's file: CRLF, settings this application has no
+  // opinion about, a commented-out example, and a key assigned twice.
+  const existing = [
+    '# FlashFloppy configuration',
+    'interface = jc',
+    'image-on-startup = last',
+    '',
+    '## DISPLAY',
+    '# display-type=oled-128x32-narrow',
+    'display-type=oled-128x64',
+    'oled-font = 8x16',
+    'oled-contrast = 143',
+    'display-order = default',
+    'display-order = 3,0d,1',
+    '',
+  ].join('\r\n')
+
+  const profile: Profile = { ...bbcProfile, display: 'oled-128x64-rotate' }
+  const merged = mergeFlashFloppyConfig(existing, profile, bbc)
+
+  // Everything the user tuned survives, to the byte.
+  for (const line of [
+    'interface = jc',
+    'image-on-startup = last',
+    'oled-font = 8x16',
+    'oled-contrast = 143',
+    'display-order = 3,0d,1',
+    '## DISPLAY',
+    '# display-type=oled-128x32-narrow',
+  ]) {
+    assert.ok(merged.includes(line), `${line} was lost`)
+  }
+
+  // The one setting that is this application's is changed where it already is,
+  // keeping the line's own spacing rather than imposing a house style.
+  assert.ok(merged.includes('display-type=oled-128x64-rotate'))
+  assert.ok(!merged.includes('display-type=oled-128x64\r'))
+  // A setting the file does not mention is appended with its reason.
+  assert.ok(merged.includes('nav-mode = native'))
+  assert.ok(merged.includes('host = acorn'))
+  // The file's own line endings are kept: a drive reads this, not an editor.
+  assert.ok(merged.includes('\r\n'))
+  assert.ok(!/[^\r]\n/.test(merged), 'a bare newline was introduced into a CRLF file')
+  assert.ok(merged.endsWith('\r\n'))
+
+  // Applying it twice changes nothing further, so re-running it is safe.
+  assert.equal(mergeFlashFloppyConfig(merged, profile, bbc), merged)
+})
+
+check('a file that already carries these settings is left exactly alone', () => {
+  const bbc = requirePlatform('bbc')
+  const written = flashFloppyConfig(bbcProfile, bbc)
+
+  // Merging this application's own output with itself is a no-op, which is what
+  // lets the panel say there is nothing to do.
+  assert.equal(mergeFlashFloppyConfig(written, bbcProfile, bbc), written)
+})
+
+check('every occurrence of a setting is updated, not just the first', () => {
+  const bbc = requirePlatform('bbc')
+  // The firmware reads the last assignment, so a stale later line would quietly
+  // undo the change.
+  const existing = 'display-type = oled-128x32\nfoo = bar\ndisplay-type = oled-128x32\n'
+  const merged = mergeFlashFloppyConfig(
+    existing,
+    { ...bbcProfile, display: 'oled-128x64-rotate' },
+    bbc,
+  )
+
+  assert.equal(merged.match(/display-type = oled-128x64-rotate/g)?.length, 2)
+  assert.ok(!merged.includes('oled-128x32'))
+  assert.ok(merged.includes('foo = bar'))
 })
 
 check('only a firmware with a file this application can write is offered one', () => {
@@ -1163,6 +1558,30 @@ check('changing the selection leaves the library slice untouched', () => {
   assert.notEqual(indexed.items, before.items)
 })
 
+check('a stored column order gains a column it predates', () => {
+  // The order is the user's, so it is kept; a column added to the application
+  // since they last dragged one is appended rather than left invisible.
+  const stored = {
+    sort: { key: 'title', direction: 'desc' as const },
+    columnOrder: ['title', 'presence', 'platform', 'format', 'size', 'location', 'action'],
+  }
+
+  const revived = reviveTablePreferences(stored)
+
+  assert.ok(revived.columnOrder.includes('category'))
+  assert.deepEqual(revived.columnOrder.slice(0, 2), ['title', 'presence'])
+  // The row's own control stays at the end, wherever the new column landed.
+  assert.equal(revived.columnOrder.at(-1), 'action')
+  assert.deepEqual(revived.sort, stored.sort)
+  // A column this application no longer has is dropped rather than drawn empty.
+  assert.ok(
+    !reviveTablePreferences({
+      ...stored,
+      columnOrder: [...stored.columnOrder, 'gone'],
+    }).columnOrder.includes('gone'),
+  )
+})
+
 // ---------------------------------------------------------------------------
 // Help screenshots
 // ---------------------------------------------------------------------------
@@ -1224,7 +1643,14 @@ check('a workspace survives the trip to the native store and back', () => {
   }
   const before: Workspace = {
     ...emptyWorkspace,
-    profiles: [{ ...bbcProfile, verifyChecksums: true, folderTemplate: '{platform}/{initial}' }],
+    profiles: [
+      {
+        ...bbcProfile,
+        verifyChecksums: true,
+        folderTemplate: '{platform}/{initial}',
+        display: 'oled-128x64-rotate',
+      },
+    ],
     activeProfileId: bbcProfile.id,
     collections: { [bbcProfile.id]: [item] },
     removalPolicies: { [bbcProfile.id]: 'remove' },
@@ -1235,6 +1661,8 @@ check('a workspace survives the trip to the native store and back', () => {
   const after = forTesting.fromNative(forTesting.toNative(before))
 
   assert.deepEqual(after.profiles, before.profiles)
+  // The drive's panel is part of the profile and has to survive the trip.
+  assert.equal(after.profiles[0].display, 'oled-128x64-rotate')
   assert.equal(after.activeProfileId, before.activeProfileId)
   assert.deepEqual(after.sources, before.sources)
   assert.equal(after.items.length, 1)

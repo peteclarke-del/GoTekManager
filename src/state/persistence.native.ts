@@ -35,6 +35,7 @@ function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
     folderTemplate: stored.folderTemplate,
     naming: stored.naming as Profile['naming'],
     verifyChecksums: stored.verifyChecksums,
+    display: stored.display as Profile['display'],
   }
 }
 
@@ -83,6 +84,7 @@ function toNative(workspace: Workspace): StoredWorkspace {
       folderTemplate: profile.folderTemplate,
       naming: profile.naming,
       verifyChecksums: profile.verifyChecksums ?? false,
+      display: profile.display,
     })),
     activeProfileId: workspace.activeProfileId,
     // Collections are stored as references, so a title staged for three
@@ -106,6 +108,7 @@ function toNative(workspace: Workspace): StoredWorkspace {
       canonicalTitle: item.canonicalTitle,
       displayTitle: item.displayTitle,
       assignedPlatformId: item.assignedPlatformId,
+      category: item.category,
       likelyPlatformIds: item.likelyPlatformIds,
       provenance: item.provenance,
     })),

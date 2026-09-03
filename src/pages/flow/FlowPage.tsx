@@ -473,8 +473,8 @@ export function FlowPage({
               query={filter}
               setQuery={setFilter}
               itemsByPath={itemsByPath}
-              removeFromCollection={(itemId) =>
-                dispatch({ type: 'collectionItemRemoved', profileId: profile.id, itemId })
+              removeFromCollection={(itemIds) =>
+                dispatch({ type: 'collectionRemoved', profileId: profile.id, itemIds })
               }
               emptyMessage={
                 planning
@@ -619,14 +619,20 @@ export function FlowPage({
               refreshLocation={(source) => void refreshLocation(source)}
               renameLocation={(source) => dispatch({ type: 'sourceRenamed', source })}
               removeLocation={(source) => dispatch({ type: 'sourceRemoved', source })}
-              assignPlatform={(itemId, platformId) =>
-                dispatch({ type: 'platformAssigned', itemId, platformId })
+              assignPlatform={(itemIds, platformId) =>
+                dispatch({ type: 'platformAssigned', itemIds, platformId })
+              }
+              assignCategory={(itemIds, categoryId) =>
+                dispatch({ type: 'categoryAssigned', itemIds, categoryId })
               }
               setDisplayTitle={(itemId, displayTitle) =>
                 dispatch({ type: 'displayTitleSet', itemId, displayTitle })
               }
-              addToCollection={(item) =>
-                dispatch({ type: 'collectionAdded', profileId: profile.id, items: [item] })
+              addToCollection={(items) =>
+                dispatch({ type: 'collectionAdded', profileId: profile.id, items })
+              }
+              removeFromCollection={(itemIds) =>
+                dispatch({ type: 'collectionRemoved', profileId: profile.id, itemIds })
               }
               preferences={preferences}
               setPreferences={setPreferences}

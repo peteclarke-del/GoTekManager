@@ -6,11 +6,12 @@
  */
 
 import { acceptedFormats, platforms, requireFirmware } from './catalog'
+import { categoryFolder, inferCategoryId } from './categories'
 import { dottedExtensionOf, joinRelative, safeFileName } from './paths'
 import type { FileEntry, MediaItem, Profile, TransferOperation } from './types'
 
 /** Tokens a custom folder template may use. */
-export const FOLDER_TOKENS = ['platform', 'family', 'initial', 'format'] as const
+export const FOLDER_TOKENS = ['platform', 'category', 'family', 'initial', 'format'] as const
 
 /**
  * The alphabetical bucket a title belongs in.
@@ -42,6 +43,7 @@ export function renderFolderTemplate(template: string, item: MediaItem): string 
   const title = item.canonicalTitle || item.name
   const values: Record<string, string> = {
     platform: platform?.folderName || 'Unsorted',
+    category: categoryFolder(item.category),
     family: platform?.family || 'Unsorted',
     initial: initialBucket(title),
     format: item.extension.toUpperCase(),
@@ -75,6 +77,8 @@ export function classifyMedia(entry: FileEntry, source: string): MediaItem {
     likelyPlatformIds,
     assignedPlatformId: likelyPlatformIds.length === 1 ? likelyPlatformIds[0] : undefined,
     canonicalTitle: entry.name,
+    // A collection that files its own titles by kind has already answered this.
+    category: inferCategoryId(entry.path, source),
   }
 }
 
@@ -194,6 +198,7 @@ export function outputFileName(item: MediaItem, profile: Profile): string {
 export function outputFolder(item: MediaItem, profile: Profile): string {
   if (!profile.organise) return ''
   if (profile.folderLayout === 'platform') return mediaPlatform(item)?.folderName || ''
+  if (profile.folderLayout === 'category') return categoryFolder(item.category)
   if (profile.folderLayout === 'custom') {
     return renderFolderTemplate(profile.folderTemplate || '{platform}', item)
   }

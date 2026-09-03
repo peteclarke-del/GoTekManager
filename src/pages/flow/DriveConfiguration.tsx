@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { FileCog } from 'lucide-react'
 import type { Platform } from '../../domain/catalog'
-import { configFor, configSupport } from '../../domain/firmwareConfig'
+import { configFor, configSupport, mergeFlashFloppyConfig } from '../../domain/firmwareConfig'
 import type { FirmwareConfigState, Profile } from '../../domain/types'
 import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { firmwareConfigState, writeFirmwareConfig } from '../../native/commands'
@@ -17,7 +17,10 @@ import { firmwareConfigState, writeFirmwareConfig } from '../../native/commands'
  * by reading it afterwards.
  *
  * One already on the drive is never replaced without being asked for. It may
- * have been tuned by hand for a machine this application knows nothing about.
+ * have been tuned by hand for a machine this application knows nothing about,
+ * so the offer is to *update* it: the settings this application is responsible
+ * for are changed in place and everything else in the file is left as it was.
+ * Overwriting it outright stays available, and says so.
  */
 export function DriveConfiguration({
   profile,
@@ -56,10 +59,17 @@ export function DriveConfiguration({
     )
   }
 
-  const matches = state?.exists && state.contents === wanted
-  const write = (replace: boolean) =>
+  // What the file would become with this application's settings applied and
+  // everything else in it kept. A file that already carries them merges to
+  // itself, which is exactly "nothing to do".
+  const merged =
+    state?.exists && state.contents && wanted
+      ? mergeFlashFloppyConfig(state.contents, profile, platform)
+      : wanted
+  const matches = Boolean(state?.exists && merged === state.contents)
+  const write = (contents: string, replace: boolean) =>
     void action.run(async () => {
-      await writeFirmwareConfig(target, wanted ?? '', replace)
+      await writeFirmwareConfig(target, contents, replace)
       refresh()
     })
 
@@ -75,7 +85,7 @@ export function DriveConfiguration({
           : matches
             ? `${state.path} on this drive already holds the settings ${platform.name} needs.`
             : state.exists
-              ? `${state.path} is already on this drive and will be left alone. It may have been set up by hand.`
+              ? `${state.path} is already on this drive and will be left alone. Updating it changes only the settings this application is responsible for and keeps everything else in the file.`
               : `${state.path} will be written when you apply, so the drive reads this stick the way ${platform.name} needs.`}
       </p>
       {action.error && <p className="inline-error">{action.error}</p>}
@@ -87,22 +97,33 @@ export function DriveConfiguration({
           <button
             className="button secondary compact"
             disabled={action.busy}
-            onClick={() => write(false)}
+            onClick={() => write(wanted ?? '', false)}
           >
             Write it now
           </button>
         )}
         {state?.exists && !matches && (
-          <button
-            className="button secondary compact"
-            disabled={action.busy}
-            onClick={() => write(true)}
-          >
-            Replace it
-          </button>
+          <>
+            <button
+              className="button secondary compact"
+              disabled={action.busy}
+              title="Change only this application's settings and keep the rest of the file"
+              onClick={() => write(merged ?? '', true)}
+            >
+              Update it
+            </button>
+            <button
+              className="button secondary compact danger"
+              disabled={action.busy}
+              title="Discard the file on the drive and write this application's settings alone"
+              onClick={() => write(wanted ?? '', true)}
+            >
+              Replace it entirely
+            </button>
+          </>
         )}
       </div>
-      {showing && <pre className="drive-config-file">{wanted}</pre>}
+      {showing && <pre className="drive-config-file">{merged ?? wanted}</pre>}
     </div>
   )
 }

@@ -27,6 +27,17 @@ profile's exact name.
 - Persistent named source locations that can be re-indexed, renamed, or removed.
 - Read-only browsing of folders, mounted volumes, Linux GVFS desktop mounts such
   as SMB shares, and FAT `.img`/`.ima` images.
+- Categories — games, applications, demos, magazines, utilities, music,
+  education, system — read from the folders an organised collection already uses
+  and set by hand for the rest, with a Category folder layout that splits a stick
+  by what the titles are. `{category}` is a folder-template token too, so a
+  multi-machine stick can be `{platform}/{category}`.
+- A chosen destination becomes a profile only once its platform and firmware have
+  been confirmed, rather than being guessed from the folder name and applied
+  silently.
+- Tick boxes on every list of disk images, with shift-click for a run, so titles
+  can be added to a profile or taken back out in bulk, destination files moved or
+  deleted together, and whole selections downloaded in one go.
 - Merged destination previews showing additions, removals, conflicts, moves, and
   unchanged files before anything happens.
 - Transfer plans with collision, source-change, and free-space checks.
@@ -35,7 +46,12 @@ profile's exact name.
   Sinclair, and Atari systems, listing only formats a floppy emulator can
   actually present.
 - The drive's own `FF.CFG` written alongside the images, with the settings
-  FlashFloppy documents for the machine being prepared and nothing else. It goes
+  FlashFloppy documents for the machine being prepared and nothing else. A
+  profile can name the panel fitted to its drive, including the rotated variants
+  that put an upside-down OLED the right way up. A configuration already on the
+  drive is updated rather than overwritten: the settings this application is
+  responsible for change in place, and everything else in the file — interface,
+  display order, font, contrast, comments, line endings — is kept. It goes
   wherever the firmware actually reads it from, and one already on the stick is
   never replaced without being asked for.
 - FlashFloppy, HxC, and factory firmware profiles, with conservative detection
@@ -45,10 +61,26 @@ profile's exact name.
 - Online catalogues with per-platform caching: Internet Archive search and item
   browsing, the Demozoo production API, structured JSON feeds, and bounded
   robots-aware site inspection. The list of sites is a JSON file that can be
-  replaced without touching the code.
+  replaced without touching the code. Every source names the one machine it is
+  for, and a listing entry that names another machine is held back, so an Amstrad
+  compilation cannot be offered for a BBC stick.
 - Known-title coverage comparison that marks local holdings and likely gaps.
 - Streamed HTTPS downloads with provenance, cache reuse, size limits, and safe
   multi-image ZIP extraction.
+- Archives in a library are listed, not unpacked: a scan reads each ZIP's
+  directory and records what it holds, and a title is read out of its archive
+  only when it is written. A folder of a few thousand archives is indexed in
+  seconds rather than decompressed in full, and nothing is cached that was never
+  asked for.
+- Bounded, policy-aware site inspection that asks what a link is before reading
+  it: a HEAD says page or file, so a download is never fetched merely to be
+  identified, and a title behind a script such as `dl.php?id=...` is recognised
+  and named from the file the server sends. What each path turns out to be is
+  remembered, so the downloads are found rather than the crawl exhausting itself
+  on navigation.
+- A library too large to compare in a moment says so instead of stalling: past a
+  few hundred titles the content comparison is offered rather than run, and the
+  table draws a page at a time.
 - Physical device inventory with vendor, model, serial, size, and the full
   partition graph, and refusal of any device carrying the running system.
 - Guarded device provisioning: the media is built as an image first, then written
