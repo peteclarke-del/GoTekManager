@@ -9,6 +9,7 @@ import {
   managedFormats,
   transferOperations,
 } from '../../domain/media'
+import { inferCategory } from '../../domain/categories'
 import { downloadSourceOf } from '../../domain/downloads'
 import { basename } from '../../domain/paths'
 import { upsertById } from '../../domain/records'
@@ -277,6 +278,9 @@ export function FlowPage({
         canonicalTitle:
           download.entries.length > 1 ? `${title.title} (Disk ${index + 1})` : title.title,
         assignedPlatformId: title.platformId || classified.assignedPlatformId,
+        // What the site said it is beats what its filename suggests: a
+        // catalogue that sorts its own titles has already answered this.
+        category: title.category || inferCategory(entry.path, site, title.title),
         provenance: {
           providerId: provider.id,
           remoteId: title.remoteId,

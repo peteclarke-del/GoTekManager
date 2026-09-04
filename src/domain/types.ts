@@ -299,6 +299,8 @@ export type OnlineTitle = {
   detailsUrl?: string
   license?: string
   updated?: string
+  /** What the site called this, where it sorts its own titles. */
+  category?: string
 }
 
 export type ProviderCatalog = {

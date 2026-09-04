@@ -151,6 +151,7 @@ pub async fn search(
             download_url: None,
             license: None,
             updated: document.publicdate,
+            category: None,
         })
         .collect())
 }
@@ -179,6 +180,7 @@ pub fn item_files(
                 details_url: title.details_url.clone(),
                 license: license.clone(),
                 updated: title.updated.clone(),
+                category: None,
             })
         })
         .collect::<Vec<_>>();

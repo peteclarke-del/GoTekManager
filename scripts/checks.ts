@@ -50,6 +50,8 @@ import {
 import {
   categories,
   categoryFolder,
+  inferCategory,
+  inferCategoryFromName,
   inferCategoryId,
   UNCATEGORISED,
 } from '../src/domain/categories'
@@ -909,6 +911,29 @@ check('a folder above the source never decides a title s category', () => {
   const source = '/library/Games'
   assert.equal(inferCategoryId(`${source}/Magazines/Zzap 1.adf`, source), 'magazines')
   assert.equal(inferCategoryId(`${source}/Elite.adf`, source), undefined)
+})
+
+check('a title with no telling folders is read by its own name', () => {
+  // A download has no folders to read: it lands in a cache named after the site
+  // and the download. Its name is the only evidence there is.
+  assert.equal(inferCategoryFromName('Zool 1 (Gremlin) demo.adf'), 'demos')
+  assert.equal(inferCategoryFromName('Amiga Format 42 coverdisk.adf'), 'magazines')
+  assert.equal(inferCategoryFromName('SysInfo v4.4 utility.adf'), 'utilities')
+
+  // Whole words only. "Demolition" is not a demo, and a game show is not a
+  // game — a wrong category is silent and puts a title in the wrong folder.
+  assert.equal(inferCategoryFromName('Demolition Man.adf'), undefined)
+  assert.equal(inferCategoryFromName('Gameshow Quiz.adf'), undefined)
+  assert.equal(inferCategoryFromName('Another World A.adf'), undefined)
+
+  // Folders first, name second: the folders a collection files a title under
+  // are the better evidence, and only the name is left when there are none.
+  const source = '/library/TOSEC/Amiga'
+  assert.equal(inferCategory(`${source}/Games/Elite demo.adf`, source), 'games')
+  assert.equal(
+    inferCategory('/cache/downloads/site-1/dl_AAA/images/Elite demo.adf', '/cache', 'Elite demo.adf'),
+    'demos',
+  )
 })
 
 check('every category has a folder name a two-line display can show', () => {

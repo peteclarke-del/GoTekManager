@@ -98,6 +98,42 @@ fn downloadable_name(headers: &reqwest::header::HeaderMap, url: &reqwest::Url) -
         .map(str::to_string)
 }
 
+/// What a site calls its own sections, and what this application calls them.
+///
+/// A catalogue that sorts its own titles has already done the work: a download
+/// found under `items.php?category=demos`, or on a page whose link read
+/// "Games", is one. Only the words a site actually uses are read, and only as
+/// whole words, so a page about "Gameshow" does not make everything on it a
+/// game.
+const SECTIONS: [(&str, &str); 12] = [
+    ("games", "games"),
+    ("game", "games"),
+    ("apps", "applications"),
+    ("applications", "applications"),
+    ("tools", "utilities"),
+    ("utilities", "utilities"),
+    ("utility", "utilities"),
+    ("demos", "demos"),
+    ("demoscene", "demos"),
+    ("magazines", "magazines"),
+    ("diskmags", "magazines"),
+    ("music", "music"),
+];
+
+/// The section a page belongs to, read from its address and the link that led
+/// to it.
+fn section_of(url: &reqwest::Url, label: &str) -> Option<String> {
+    let text = format!("{} {}", url.query().unwrap_or_default(), label).to_lowercase();
+    let words = text
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    SECTIONS
+        .iter()
+        .find(|(word, _)| words.contains(word))
+        .map(|(_, category)| (*category).to_string())
+}
+
 /// Link text that says nothing about what is behind it.
 ///
 /// A page of titles whose every link reads "Download" is the common case, not a
@@ -250,15 +286,17 @@ pub async fn inspect(
     // links are ordered by it. It is only an ordering — what any one link turns
     // out to be is still decided by the response, never by the guess.
     let mut kinds: HashMap<String, bool> = HashMap::new();
-    let mut files: VecDeque<(reqwest::Url, usize, String)> = VecDeque::new();
-    let mut unknown = VecDeque::from([(start, 0usize, String::new())]);
-    let mut pages: VecDeque<(reqwest::Url, usize, String)> = VecDeque::new();
+    // Each entry carries the label that led to it and the section it was found
+    // in, so a download can be filed the way the site files it.
+    let mut files: VecDeque<(reqwest::Url, usize, String, Option<String>)> = VecDeque::new();
+    let mut unknown = VecDeque::from([(start, 0usize, String::new(), None)]);
+    let mut pages: VecDeque<(reqwest::Url, usize, String, Option<String>)> = VecDeque::new();
     let mut pages_read = 0usize;
     let mut requests = 0usize;
     let mut visited = HashSet::new();
     let mut downloads: HashMap<String, OnlineTitle> = HashMap::new();
 
-    while let Some((url, depth, label)) = files
+    while let Some((url, depth, label, section)) = files
         .pop_front()
         .or_else(|| unknown.pop_front())
         .or_else(|| pages.pop_front())
@@ -351,6 +389,7 @@ pub async fn inspect(
                         details_url: None,
                         license: None,
                         updated: None,
+                        category: section.clone(),
                     });
                 }
             }
@@ -391,6 +430,10 @@ pub async fn inspect(
                     details_url: Some(final_url.to_string()),
                     license: None,
                     updated: None,
+                    // A link that names a file outright is still found
+                    // somewhere, and where it was found says what it is.
+                    category: section_of(&link, &link_label(&anchor, &link))
+                        .or_else(|| section.clone()),
                 });
             } else if depth < MAX_DEPTH
                 && (extension.is_empty() || PAGE_EXTENSIONS.contains(&extension.as_str()))
@@ -399,12 +442,15 @@ pub async fn inspect(
                 // Which queue it joins is a guess from its address; what it
                 // turns out to be is decided by the answer, not by the guess.
                 let label = link_label(&anchor, &link);
+                // A link inherits the section of the page it was found on
+                // unless it names one of its own.
+                let found_in = section_of(&link, &label).or_else(|| section.clone());
                 let queue = match kinds.get(link.path()) {
                     Some(true) => &mut files,
                     Some(false) => &mut pages,
                     None => &mut unknown,
                 };
-                queue.push_back((link, depth + 1, label));
+                queue.push_back((link, depth + 1, label, found_in));
             }
         }
     }
@@ -428,6 +474,33 @@ mod tests {
             );
         }
         map
+    }
+
+    #[test]
+    fn a_site_that_sorts_its_own_titles_says_what_they_are() {
+        use super::section_of;
+        let url = |value: &str| reqwest::Url::parse(value).unwrap();
+
+        // The shape this was built for: a catalogue whose sections are its
+        // query string.
+        assert_eq!(
+            section_of(&url("https://example.org/items.php?category=demos"), ""),
+            Some("demos".into())
+        );
+        assert_eq!(
+            section_of(&url("https://example.org/items.php?category=tools"), ""),
+            Some("utilities".into())
+        );
+        // Or whose link said it, where the address does not.
+        assert_eq!(
+            section_of(&url("https://example.org/list.php?p=2"), "Games"),
+            Some("games".into())
+        );
+        // Whole words only, so a page about a game show is not a section of
+        // games, and a search for a publisher is not a section at all.
+        assert_eq!(section_of(&url("https://example.org/items.php?search=Gameshow"), ""), None);
+        assert_eq!(section_of(&url("https://example.org/items.php?search=Bullfrog"), ""), None);
+        assert_eq!(section_of(&url("https://example.org/index.php"), "Home"), None);
     }
 
     #[test]
