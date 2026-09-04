@@ -427,7 +427,10 @@ export function LocalLibrary({
           <td key={column} className={column}>
             <button
               className="table-title"
-              title="Set the name this title is written under"
+              // The name first: a column can always be too narrow for a long
+              // one, and a tooltip that explains the button instead of naming
+              // the file leaves nowhere at all to read it.
+              title={`${item.canonicalTitle}\n\nClick to set the name this title is written under`}
               onClick={() => setRenaming(item)}
             >
               <b>{item.canonicalTitle}</b>
