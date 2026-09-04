@@ -153,6 +153,16 @@ export type MediaItem = FileEntry & {
   provenance?: Provenance
 }
 
+/** A release published for this application, as the update check reads it. */
+export type PublishedRelease = {
+  tag: string
+  name: string
+  notes: string
+  url: string
+  draft: boolean
+  prerelease: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Native command results
 // ---------------------------------------------------------------------------
