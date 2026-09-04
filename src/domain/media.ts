@@ -177,6 +177,26 @@ function markerOf(value: string): string {
   return /^[0-9]+$/.test(value) ? `D${Number(value)}` : value.toUpperCase()
 }
 
+/**
+ * A title with its middle taken out, for somewhere too narrow to show it all.
+ *
+ * What a retro title carries in the middle is almost always the publisher, and
+ * what identifies it is at the two ends: the game at the front, which disk it
+ * is at the back. Cutting the end therefore loses the useful half and leaves a
+ * column of rows that read alike; cutting the middle keeps both.
+ *
+ * For display only. A name written to a drive keeps to plain characters and
+ * drops the middle outright rather than marking it — see {@link oledName}.
+ */
+export function elideMiddle(text: string, max = 44): string {
+  if (text.length <= max) return text
+  // The tail is short and precious — "(Publisher) B.adf" — while the head is
+  // what the eye reads first, so the head keeps most of the room.
+  const tail = Math.min(14, Math.floor((max - 1) / 3))
+  const head = Math.max(1, max - 1 - tail)
+  return `${text.slice(0, head).trimEnd()}…${text.slice(text.length - tail).trimStart()}`
+}
+
 export function oledName(name: string, length = 24): string {
   const dot = name.lastIndexOf('.')
   const extension = dot > 0 ? name.slice(dot) : ''
@@ -191,7 +211,19 @@ export function oledName(name: string, length = 24): string {
     .replace(/\s+/g, ' ')
     .trim()
   const room = Math.max(1, length - extension.length - marker.length)
-  return `${title.slice(0, room).trimEnd()}${marker}${extension}`
+  if (title.length <= room) return `${title}${marker}${extension}`
+
+  // Still too long, so the middle goes before the ends do. What sits in
+  // brackets is the publisher, the region, the dump — none of it says which
+  // file this is, while the name at the front and the disk at the back both do.
+  // Dropped outright rather than marked, because this becomes a filename on a
+  // FAT volume read by an 8-bit drive, and an ellipsis is three bytes there.
+  const withoutLabels = title.replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  if (withoutLabels && withoutLabels.length <= room) {
+    return `${withoutLabels}${marker}${extension}`
+  }
+  const kept = withoutLabels || title
+  return `${kept.slice(0, room).trimEnd()}${marker}${extension}`
 }
 
 /**

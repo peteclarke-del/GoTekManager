@@ -23,6 +23,7 @@ import { acceptedFormats, platforms, requireFirmware, type Platform } from '../.
 import { categories } from '../../domain/categories'
 import {
   belongsToPlatform,
+  elideMiddle,
   forProfile,
   formatBytes,
   isFirmwareCompatible,
@@ -41,6 +42,7 @@ import type {
 import { compareTargetFiles } from '../../native/commands'
 import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { useTitleRoom } from '../../hooks/useTitleRoom'
 import type { TablePreferences } from '../../state/useWorkspace'
 
 /** Which titles to show, by whether the destination already holds them. */
@@ -195,6 +197,8 @@ export function LocalLibrary({
   /** How many of the matching titles are drawn. */
   const [shown, setShown] = useState(PAGE_SIZE)
   const fingerprinting = useFingerprintProgress()
+  // How much of a name the title column can hold, which changes with the window.
+  const titleRoom = useTitleRoom()
 
   const accepted = useMemo(
     () => acceptedFormats(platform.id, profile.firmwareId),
@@ -433,7 +437,7 @@ export function LocalLibrary({
               title={`${item.canonicalTitle}\n\nClick to set the name this title is written under`}
               onClick={() => setRenaming(item)}
             >
-              <b>{item.canonicalTitle}</b>
+              <b>{elideMiddle(item.canonicalTitle, titleRoom)}</b>
               {item.displayTitle && (
                 <small>
                   <Tag /> {item.displayTitle}

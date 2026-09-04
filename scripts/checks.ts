@@ -34,6 +34,7 @@ import {
 import {
   belongsToPlatform,
   classifyMedia,
+  elideMiddle,
   forProfile,
   formatBytes,
   isFirmwareCompatible,
@@ -223,10 +224,27 @@ check('which disk of a set a file is survives being trimmed for the display', ()
   assert.equal(new Set(set).size, 3, `two disks share a name: ${set.join(', ')}`)
   assert.ok(set.every((name) => name.length <= 24))
   assert.deepEqual(set, [
-    'Another World (Del A.adf',
-    'Another World (Del B.adf',
-    'Another World (Del C.adf',
+    'Another World A.adf',
+    'Another World B.adf',
+    'Another World C.adf',
   ])
+
+  // The publisher goes before the name does. What sits in brackets says which
+  // release this is, never which file, so it is the first thing to lose when
+  // the display cannot hold everything — leaving the game and the disk.
+  assert.equal(
+    oledName('Another World (Delphine + U.S. Gold) A.adf', 24),
+    'Another World A.adf',
+  )
+  assert.equal(oledName('Apocalypse (Miracle + Virgin) C.adf', 24), 'Apocalypse C.adf')
+  // A name that already fits keeps its brackets: nothing is dropped for the
+  // sake of it.
+  assert.equal(oledName('Zool 1 (Gremlin).adf', 24), 'Zool 1 (Gremlin).adf')
+  // Nothing bracketed to drop, so the front gives way and the disk still stands.
+  assert.equal(
+    oledName('An Extremely Long Amiga Game Title Without Brackets B.adf', 24),
+    'An Extremely Long B.adf',
+  )
 
   // However the set writes it. A number is written D2, which on a two-line
   // display cannot be read as a year or a sequel.
@@ -406,7 +424,9 @@ check('naming and layout decide where a title is written, never what it is', () 
   const [a] = transferOperations([item], oledPlatform)
   const [b] = transferOperations([item], originalInitial)
 
-  assert.equal(a.relativePath, 'CPC464/Zynaps (1987)(Hewson.dsk')
+  // The year and the publisher go, because neither says which file this is and
+  // the drive's display cannot hold them.
+  assert.equal(a.relativePath, 'CPC464/Zynaps.dsk')
   assert.equal(b.relativePath, 'Z/Zynaps (1987)(Hewson Consultants).dsk')
   // Different destinations, same source file. Identity lives in the contents,
   // which the native side compares; neither path is the file's identity.
@@ -1701,6 +1721,26 @@ check('changing the selection leaves the library slice untouched', () => {
     items: [],
   })
   assert.notEqual(indexed.items, before.items)
+})
+
+check('a title too long to show has its middle taken out, never its ends', () => {
+  // The publisher sits in the middle; the game is at the front and which disk
+  // it is at the back. Cutting the end leaves a column of rows reading alike.
+  const long = 'Another World (Delphine + U.S. Gold) A.adf'
+  const shown = elideMiddle(long, 30)
+
+  assert.ok(shown.length <= 30, shown)
+  assert.ok(shown.startsWith('Another World'), shown)
+  assert.ok(shown.endsWith('A.adf'), shown)
+  assert.ok(shown.includes('…'), shown)
+
+  // Two disks of a set stay distinguishable, which is the whole point.
+  assert.notEqual(
+    elideMiddle('Another World (Delphine + U.S. Gold) A.adf', 30),
+    elideMiddle('Another World (Delphine + U.S. Gold) B.adf', 30),
+  )
+  // Anything that fits is left exactly as it is.
+  assert.equal(elideMiddle('Zool 1 (Gremlin).adf', 44), 'Zool 1 (Gremlin).adf')
 })
 
 check('a stored column order gains a column it predates', () => {
