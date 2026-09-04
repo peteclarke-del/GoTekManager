@@ -3,6 +3,17 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.3.0
+
+**Help says which version this is**, taken from the application itself rather
+than from a constant that can drift, and offers a **Check for updates** button
+that asks GitHub what has been published. It is a button rather than something
+that happens on startup: a tool that writes to removable media should not be
+reaching out to the internet unless someone has asked it a question. A check
+that cannot be answered — no network, or an API that has moved — says so, and is
+never read as "you are up to date". Installing is left to you and, on Linux, to
+your package manager; the check only says there is something to go and get.
+
 ## What is new in 0.2.0
 
 **Working a library of thousands.** Tick boxes on every list of disk images,

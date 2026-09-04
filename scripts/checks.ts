@@ -79,6 +79,7 @@ import {
   readProviderConfig,
 } from '../src/domain/providers'
 import { countBy, omitKey, removeById, upsertById } from '../src/domain/records'
+import { isNewer, newerRelease, parseVersion } from '../src/domain/version'
 import {
   coverageOf,
   rangeOf,
@@ -90,6 +91,7 @@ import type {
   FileEntry,
   MediaItem,
   Profile,
+  PublishedRelease,
   TransferPlan,
   TransferResultEntry,
 } from '../src/domain/types'
@@ -813,6 +815,64 @@ check('every category has a folder name a two-line display can show', () => {
   // An uncategorised title still needs somewhere to go.
   assert.equal(categoryFolder(undefined), UNCATEGORISED)
   assert.equal(categoryFolder('games'), 'Games')
+})
+
+// ---------------------------------------------------------------------------
+// Versions
+// ---------------------------------------------------------------------------
+
+check('a version is read as its numbers, whatever the tag is dressed in', () => {
+  assert.deepEqual(parseVersion('v0.2.0'), [0, 2, 0])
+  assert.deepEqual(parseVersion('0.2.0'), [0, 2, 0])
+  assert.deepEqual(parseVersion('0.2.0-rc1'), [0, 2, 0, 1])
+  // A tag with no numbers in it is not a version, which is what stops a stray
+  // tag such as "latest" being offered as a release.
+  assert.deepEqual(parseVersion('latest'), [])
+  assert.deepEqual(parseVersion(''), [])
+})
+
+check('one version is newer than another by number, never by spelling', () => {
+  assert.equal(isNewer('v0.3.0', '0.2.0'), true)
+  assert.equal(isNewer('0.2.0', '0.2.0'), false)
+  assert.equal(isNewer('0.1.9', '0.2.0'), false)
+  // The one that catches everybody: as text, "0.10.0" sorts before "0.9.0".
+  assert.equal(isNewer('0.10.0', '0.9.0'), true)
+  assert.equal(isNewer('0.9.0', '0.10.0'), false)
+  assert.equal(isNewer('1.0.0', '0.99.99'), true)
+  // Written with different numbers of parts, and still equal.
+  assert.equal(isNewer('0.2', '0.2.0'), false)
+  assert.equal(isNewer('0.2.0', '0.2'), false)
+  assert.equal(isNewer('0.2.1', '0.2'), true)
+  // A tag that is not a version can never be newer than what is installed.
+  assert.equal(isNewer('nightly', '0.2.0'), false)
+})
+
+check('only a published release later than this one is offered', () => {
+  const release = (tag: string, extra: Partial<PublishedRelease> = {}): PublishedRelease => ({
+    tag,
+    name: `GoTek Manager ${tag}`,
+    notes: '',
+    url: `https://example.org/${tag}`,
+    draft: false,
+    prerelease: false,
+    ...extra,
+  })
+
+  assert.equal(newerRelease([release('v0.3.0')], '0.2.0')?.tag, 'v0.3.0')
+  // Nothing newer, so nothing to offer.
+  assert.equal(newerRelease([release('v0.2.0'), release('v0.1.0')], '0.2.0'), undefined)
+  // A draft is not published, and a prerelease is something to go looking for
+  // rather than be sent to.
+  assert.equal(newerRelease([release('v0.4.0', { draft: true })], '0.2.0'), undefined)
+  assert.equal(newerRelease([release('v0.4.0', { prerelease: true })], '0.2.0'), undefined)
+  // The newest by version, not by the order the API happened to return them.
+  assert.equal(
+    newerRelease([release('v0.3.0'), release('v0.10.0'), release('v0.4.0')], '0.2.0')?.tag,
+    'v0.10.0',
+  )
+  // Nothing came back at all: the question was not answered, and an empty list
+  // must never read as "you are up to date".
+  assert.equal(newerRelease([], '0.2.0'), undefined)
 })
 
 // ---------------------------------------------------------------------------
