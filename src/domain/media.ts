@@ -6,7 +6,7 @@
  */
 
 import { acceptedFormats, platforms, requireFirmware } from './catalog'
-import { categoryFolder, inferCategoryId } from './categories'
+import { categoryFolder, inferCategory } from './categories'
 import { dottedExtensionOf, joinRelative, safeFileName } from './paths'
 import type { FileEntry, MediaItem, Profile, TransferOperation } from './types'
 
@@ -77,8 +77,9 @@ export function classifyMedia(entry: FileEntry, source: string): MediaItem {
     likelyPlatformIds,
     assignedPlatformId: likelyPlatformIds.length === 1 ? likelyPlatformIds[0] : undefined,
     canonicalTitle: entry.name,
-    // A collection that files its own titles by kind has already answered this.
-    category: inferCategoryId(entry.path, source),
+    // A collection that files its own titles by kind has already answered
+    // this; a download has no such folders, so its name is asked instead.
+    category: inferCategory(entry.path, source, entry.name),
   }
 }
 
