@@ -96,7 +96,27 @@ pub struct TransferPlan {
     pub total_bytes: u64,
     pub available_bytes: Option<u64>,
     pub warnings: Vec<String>,
+    /// The same problems, named rather than described.
+    ///
+    /// A warning is a sentence for the user to read; a blocker says which
+    /// staged title caused it, so the interface can offer to do something about
+    /// it rather than leaving someone at a step that will not go forward and
+    /// will not say what to change.
+    pub blockers: Vec<Blocker>,
     pub ready: bool,
+}
+
+/// Why a plan cannot be written, tied to the title responsible.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Blocker {
+    /// `collision`, `unavailable`, `changed`, or `other`.
+    pub kind: String,
+    /// The staged title's source path, where one is responsible for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The same sentence the warning carries.
+    pub message: String,
 }
 
 /// How a source file compares with the destination, used to annotate the
@@ -196,6 +216,7 @@ struct PlanBuilder<'a> {
     current: Inventory,
     result: Vec<TransferResultEntry>,
     warnings: Vec<String>,
+    blockers: Vec<Blocker>,
     removals: Vec<String>,
     /// Destination keys produced by a staged move. A copy may not land on one.
     moved_into: HashSet<String>,
@@ -217,6 +238,7 @@ impl<'a> PlanBuilder<'a> {
             warnings: Vec::new(),
             removals: Vec::new(),
             moved_into: HashSet::new(),
+            blockers: Vec::new(),
             edited_sources: Vec::new(),
             claimed: HashMap::new(),
             operations: Vec::new(),
@@ -225,7 +247,24 @@ impl<'a> PlanBuilder<'a> {
     }
 
     fn warn(&mut self, message: impl Into<String>) {
-        self.warnings.push(message.into());
+        let message = message.into();
+        self.blockers.push(Blocker {
+            kind: "other".into(),
+            source: None,
+            message: message.clone(),
+        });
+        self.warnings.push(message);
+    }
+
+    /// A warning that names the title responsible, so it can be acted on.
+    fn blame(&mut self, kind: &str, source: &str, message: impl Into<String>) {
+        let message = message.into();
+        self.blockers.push(Blocker {
+            kind: kind.into(),
+            source: Some(source.to_string()),
+            message: message.clone(),
+        });
+        self.warnings.push(message);
     }
 
     fn record(
@@ -375,10 +414,13 @@ impl<'a> PlanBuilder<'a> {
             let key = relative_key(&operation.relative_path);
 
             if let Some(previous) = self.claimed.insert(key.clone(), operation.source.clone()) {
-                self.warn(format!(
-                    "Destination collision: {previous} and {}",
-                    operation.source
-                ));
+                // The later of the two is the one to drop: the first claim on a
+                // path is the one the plan already accounts for.
+                let message = format!(
+                    "Two titles would be written to {}: {previous} and {}",
+                    operation.relative_path, operation.source
+                );
+                self.blame("collision", &operation.source, message);
             }
 
             if let Some(existing) = self.current.remove(&key) {
@@ -406,14 +448,16 @@ impl<'a> PlanBuilder<'a> {
     /// silently: the plan reports it and becomes unexecutable.
     fn check_source(&mut self, source: &Path, operation: &TransferOperation) -> bool {
         if !source.is_file() {
-            self.warn(format!("Source is unavailable: {}", operation.source));
+            let message = format!("Source is unavailable: {}", operation.source);
+            self.blame("unavailable", &operation.source, message);
             return false;
         }
         if !matches_indexed_size(source, operation.size) {
-            self.warn(format!(
+            let message = format!(
                 "Source changed since it was indexed: {}",
                 operation.source
-            ));
+            );
+            self.blame("changed", &operation.source, message);
             return false;
         }
         true
@@ -505,6 +549,7 @@ impl<'a> PlanBuilder<'a> {
             available_bytes,
             ready: self.warnings.is_empty(),
             warnings: self.warnings,
+            blockers: self.blockers,
         }
     }
 }
@@ -1062,7 +1107,23 @@ mod tests {
         );
 
         assert!(!result.ready);
-        assert!(result.warnings.iter().any(|w| w.contains("Destination collision")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("would be written to")));
+        // Named as well as described: the interface offers to take the second
+        // one out, and needs to know which of the two that is. The first claim
+        // on a name is the one the rest of the plan is built around.
+        let collisions = result
+            .blockers
+            .iter()
+            .filter(|blocker| blocker.kind == "collision")
+            .collect::<Vec<_>>();
+        assert_eq!(collisions.len(), 1);
+        assert_eq!(
+            collisions[0].source.as_deref(),
+            Some(second.to_string_lossy().as_ref())
+        );
         fs::remove_dir_all(library).unwrap();
         fs::remove_dir_all(target).unwrap();
     }

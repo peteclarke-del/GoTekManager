@@ -296,6 +296,12 @@ button[aria-pressed="true"]{box-shadow:inset 0 -4px 0 #a46800;background:#fff1c7
 .bulk-actions{display:flex;flex-wrap:wrap;gap:8px;margin-right:auto}
 .archive-contents .bulk-bar{margin:8px 8px 0}
 
+/* The titles standing in the way of a write, and the way out of it. */
+.blocked-titles{display:grid;gap:8px;margin-top:12px;padding:12px 14px;border:1px solid var(--a11y-border);border-left:4px solid #a8322d;border-radius:6px;background:var(--a11y-soft);font-size:12px}
+.blocked-titles>span{display:grid;gap:4px;color:var(--a11y-muted)}
+.blocked-titles .plan-files{max-height:132px;margin:0}
+.blocked-titles .button{justify-self:start;margin:0;height:32px;padding:0 12px;border-radius:6px;font:700 11px inherit}
+
 /* Which version this is, and the offer to ask whether a newer one exists. */
 .version-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 18px;align-items:center}
 .version-panel h2{margin:0}

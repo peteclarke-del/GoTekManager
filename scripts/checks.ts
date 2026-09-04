@@ -69,7 +69,7 @@ import {
   flashFloppyConfig,
   mergeFlashFloppyConfig,
 } from '../src/domain/firmwareConfig'
-import { isOnDestination, summarisePlan } from '../src/domain/plan'
+import { blockedTitles, isOnDestination, summarisePlan } from '../src/domain/plan'
 import {
   defaultProviders,
   faultIn,
@@ -203,10 +203,46 @@ check('an unassigned title still matches its likely platform', () => {
 })
 
 check('OLED naming trims release labels but keeps the extension', () => {
-  assert.equal(oledName('Elite_(Disk 1)_1984.ssd', 24), 'Elite 1984.ssd')
   assert.equal(oledName('A Very Long Retro Game Title Indeed.ssd', 24), 'A Very Long Retro Ga.ssd')
+  // A label that says nothing about which file this is still goes.
+  assert.equal(oledName('Turrican II (1991 demo).adf', 24), 'Turrican II.adf')
   // Factory firmware has a much smaller display.
   assert.equal(oledName('Elite.ssd', 8).length <= 8, true)
+})
+
+check('which disk of a set a file is survives being trimmed for the display', () => {
+  // The whole point: two disks must never arrive at one name. They did, and
+  // the write refused — a four-disk game became one file's worth of collisions,
+  // because the letter that tells them apart sits exactly where trimming cuts.
+  const set = [
+    'Another World (Delphine + U.S. Gold) A.adf',
+    'Another World (Delphine + U.S. Gold) B.adf',
+    'Another World (Delphine + U.S. Gold) C.adf',
+  ].map((name) => oledName(name, 24))
+
+  assert.equal(new Set(set).size, 3, `two disks share a name: ${set.join(', ')}`)
+  assert.ok(set.every((name) => name.length <= 24))
+  assert.deepEqual(set, [
+    'Another World (Del A.adf',
+    'Another World (Del B.adf',
+    'Another World (Del C.adf',
+  ])
+
+  // However the set writes it. A number is written D2, which on a two-line
+  // display cannot be read as a year or a sequel.
+  assert.equal(oledName('Elite_(Disk 1)_1984.ssd', 24), 'Elite 1984 D1.ssd')
+  assert.equal(oledName('Elite (Disk 2 of 3).adf', 24), 'Elite D2.adf')
+  assert.equal(oledName('Monkey Island Disk 4.adf', 24), 'Monkey Island D4.adf')
+  assert.equal(oledName('Lemmings (Side B).adf', 24), 'Lemmings B.adf')
+
+  // And a name that merely ends in something is left alone.
+  assert.equal(oledName('Zool 1 (Gremlin).adf', 24), 'Zool 1 (Gremlin).adf')
+  assert.equal(oledName('Rick Dangerous II.adf', 24), 'Rick Dangerous II.adf')
+
+  // Even with no room at all, the disk is what survives.
+  const tight = oledName('An Extremely Long Amiga Game Title (Publisher) B.adf', 20)
+  assert.ok(tight.length <= 20)
+  assert.ok(tight.endsWith(' B.adf'), tight)
 })
 
 check('title keys normalise enough to compare, and no further', () => {
@@ -258,17 +294,19 @@ check('transfer operations apply the profile layout and naming', () => {
     assignedPlatformId: 'bbc',
   }
 
+  // The disk number survives the shortening: it is the only thing telling this
+  // file apart from the rest of its set, and dropping it made them collide.
   const [organised] = transferOperations([item], bbcProfile)
-  assert.equal(organised.relativePath, 'BBC/Elite.ssd')
+  assert.equal(organised.relativePath, 'BBC/Elite D1.ssd')
 
   const [flat] = transferOperations([item], { ...bbcProfile, folderLayout: 'flat' })
-  assert.equal(flat.relativePath, 'Elite.ssd')
+  assert.equal(flat.relativePath, 'Elite D1.ssd')
 
   const [original] = transferOperations([item], { ...bbcProfile, naming: 'original' })
   assert.equal(original.relativePath, 'BBC/Elite (Disk 1).ssd')
 
   const [unorganised] = transferOperations([item], { ...bbcProfile, organise: false })
-  assert.equal(unorganised.relativePath, 'Elite.ssd')
+  assert.equal(unorganised.relativePath, 'Elite D1.ssd')
 })
 
 check('a custom folder template expands its tokens', () => {
@@ -506,6 +544,7 @@ function planWith(result: TransferResultEntry[]): TransferPlan {
     result,
     totalBytes: 0,
     warnings: [],
+    blockers: [],
     ready: true,
   }
 }
@@ -545,6 +584,52 @@ check('the summary counts what is there now, what changes, and what results', ()
   assert.equal(summary.counts.add, 2)
   assert.equal(summary.counts.remove, 0)
   assert.equal(summary.hasChanges, true)
+})
+
+check('the titles in the way of a write are named, so they can be taken out', () => {
+  const gone = classifyMedia(entry('Gone.ssd'), '/library')
+  const first = classifyMedia(entry('Another World A.ssd'), '/library')
+  const second = classifyMedia(entry('Another World B.ssd'), '/library')
+  const bySource = new Map([gone, first, second].map((item) => [item.path, item]))
+
+  const blocked = blockedTitles(
+    {
+      ...planWith([]),
+      ready: false,
+      warnings: ['Source is unavailable: /library/Gone.ssd'],
+      blockers: [
+        {
+          kind: 'unavailable',
+          source: '/library/Gone.ssd',
+          message: 'Source is unavailable: /library/Gone.ssd',
+        },
+        {
+          kind: 'collision',
+          source: '/library/Another World B.ssd',
+          message: 'Two titles would be written to AW.ssd',
+        },
+        // The same title twice says nothing new, and a blocker about something
+        // that is not staged cannot be acted on here.
+        {
+          kind: 'collision',
+          source: '/library/Another World B.ssd',
+          message: 'Two titles would be written to AW.ssd',
+        },
+        { kind: 'other', message: 'Not enough room on the destination.' },
+      ],
+    },
+    bySource,
+  )
+
+  assert.deepEqual(
+    blocked.map((title) => [title.kind, title.item.name]),
+    [
+      ['unavailable', 'Gone.ssd'],
+      ['collision', 'Another World B.ssd'],
+    ],
+  )
+  // The first of a colliding pair keeps its place; only the later one is named.
+  assert.ok(!blocked.some((title) => title.item.name === 'Another World A.ssd'))
 })
 
 check('a plan with nothing to do reports no changes', () => {

@@ -140,15 +140,58 @@ export function formatBytes(bytes: number): string {
  * display width. The extension is always preserved, and the library keeps the
  * canonical title so nothing is lost.
  */
+/**
+ * Which disk of a set this is, and the title without it.
+ *
+ * A multi-disk game says so at the end of its name — `Elite (Disk 2)`,
+ * `Another World ... A` — which is exactly where a trimmed name loses it. Two
+ * disks that arrive at the same name are not a cosmetic problem: the write
+ * refuses, because one would overwrite the other, and a set of four disks
+ * becomes one file. So the marker is taken off before the title is cut and put
+ * back afterwards, and it is the title that gives up room, never the disk.
+ *
+ * A number is written `D2` rather than `2`, which on a two-line display cannot
+ * be mistaken for a year or a sequel.
+ */
+export function splitDiskMarker(stem: string): { title: string; marker: string } {
+  const bracketed = stem.match(/[([]\s*(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\b[^)\]]*[)\]]/i)
+  if (bracketed) {
+    return {
+      title: stem.replace(bracketed[0], ' '),
+      marker: ` ${markerOf(bracketed[1])}`,
+    }
+  }
+  const bare = stem.match(/\s(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\s*$/i)
+  if (bare) {
+    return { title: stem.slice(0, bare.index), marker: ` ${markerOf(bare[1])}` }
+  }
+  // A lone letter at the end is how most Amiga sets number their disks.
+  const letter = stem.match(/\s([a-z])\s*$/i)
+  if (letter) {
+    return { title: stem.slice(0, letter.index), marker: ` ${letter[1].toUpperCase()}` }
+  }
+  return { title: stem, marker: '' }
+}
+
+function markerOf(value: string): string {
+  return /^[0-9]+$/.test(value) ? `D${Number(value)}` : value.toUpperCase()
+}
+
 export function oledName(name: string, length = 24): string {
   const dot = name.lastIndexOf('.')
   const extension = dot > 0 ? name.slice(dot) : ''
-  const title = (dot > 0 ? name.slice(0, dot) : name)
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s*\([^)]*(demo|disk|side|rev|version)[^)]*\)\s*/gi, ' ')
+  const { title: stem, marker } = splitDiskMarker(
+    (dot > 0 ? name.slice(0, dot) : name).replace(/[_-]+/g, ' '),
+  )
+  const title = stem
+    // Release labels that say nothing about which file this is. `disk` is not
+    // among them any more: which disk it is has already been taken out, and
+    // anything left saying "disk" is part of the name.
+    .replace(/\s*\([^)]*(demo|rev|version)[^)]*\)\s*/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  return `${title.slice(0, Math.max(1, length - extension.length))}${extension}`
+  const room = Math.max(1, length - extension.length - marker.length)
+  return `${title.slice(0, room).trimEnd()}${marker}${extension}`
 }
 
 /**
