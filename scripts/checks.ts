@@ -79,6 +79,7 @@ import {
   readCustomProviders,
   readProviderConfig,
 } from '../src/domain/providers'
+import { downloadSourceOf, groupDownloads } from '../src/domain/downloads'
 import { countBy, omitKey, removeById, upsertById } from '../src/domain/records'
 import { isNewer, newerRelease, parseVersion } from '../src/domain/version'
 import {
@@ -920,6 +921,89 @@ check('every category has a folder name a two-line display can show', () => {
   // An uncategorised title still needs somewhere to go.
   assert.equal(categoryFolder(undefined), UNCATEGORISED)
   assert.equal(categoryFolder('games'), 'Games')
+})
+
+// ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
+
+const CACHE = '/home/x/.cache/uk.co.gotekmanager.desktop/online-library/downloads'
+
+check('a cached download belongs to the site it came from', () => {
+  assert.equal(
+    downloadSourceOf(`${CACHE}/site-1788/https___example.com_dl.php_id_AAA/images/Elite.adf`),
+    `${CACHE}/site-1788`,
+  )
+  // The site folder itself is already where it belongs.
+  assert.equal(downloadSourceOf(`${CACHE}/site-1788`), `${CACHE}/site-1788`)
+  // A folder the user chose is not a download and is never moved.
+  assert.equal(downloadSourceOf('/library/Amiga/Games'), undefined)
+})
+
+check('downloads are gathered under one source per site, not one per title', () => {
+  // What a library built up before this looks like: a source per download,
+  // each holding a single title, filling the list meant for chosen folders.
+  const sources = [
+    { id: 'source:/library/Amiga', name: 'Amiga', path: '/library/Amiga' },
+    ...['AAA', 'BBB', 'CCC'].map((id) => ({
+      id: `source:${CACHE}/site-1788/dl_${id}`,
+      name: 'Amiga 500 Archive cache',
+      path: `${CACHE}/site-1788/dl_${id}`,
+    })),
+    {
+      id: `source:${CACHE}/site-9999/dl_ZZZ`,
+      name: 'Another Site cache',
+      path: `${CACHE}/site-9999/dl_ZZZ`,
+    },
+  ]
+  const items = [
+    { ...classifyMedia(entry('Local.adf'), '/library/Amiga'), source: '/library/Amiga' },
+    ...['AAA', 'BBB', 'CCC'].map((id) => ({
+      ...classifyMedia(entry(`${id}.adf`), `${CACHE}/site-1788/dl_${id}`),
+      source: `${CACHE}/site-1788/dl_${id}`,
+    })),
+  ]
+
+  const grouped = groupDownloads(sources, items)
+
+  assert.deepEqual(
+    grouped.sources.map((source) => source.path),
+    ['/library/Amiga', `${CACHE}/site-1788`, `${CACHE}/site-9999`],
+  )
+  // Named for the site, without the wording that suited a single download.
+  assert.equal(grouped.sources[1].name, 'Amiga 500 Archive')
+  // Every title moved to its site, and none was lost on the way.
+  assert.equal(grouped.items.length, items.length)
+  assert.equal(
+    grouped.items.filter((item) => item.source === `${CACHE}/site-1788`).length,
+    3,
+  )
+  // A chosen folder is left exactly as it was.
+  assert.equal(grouped.items[0].source, '/library/Amiga')
+  // Nothing to gather means nothing is rebuilt: the very same arrays come
+  // back, so reading a library of chosen folders costs nothing.
+  const chosen = [sources[0]]
+  const held = [items[0]]
+  const untouched = groupDownloads(chosen, held)
+  assert.equal(untouched.sources, chosen)
+  assert.equal(untouched.items, held)
+})
+
+check('a download adds to its site rather than replacing what it holds', () => {
+  const site = `${CACHE}/site-1788`
+  const source = { id: `source:${site}`, name: 'Amiga 500 Archive', path: site }
+  const first = { ...classifyMedia(entry('First.adf'), site), source: site }
+  const second = { ...classifyMedia(entry('Second.adf'), site), source: site }
+
+  const after = workspaceReducer(
+    workspaceReducer(emptyWorkspace, { type: 'itemsImported', source, items: [first] }),
+    { type: 'itemsImported', source, items: [second] },
+  )
+
+  // Indexing a folder stands for everything in it; a download does not, and
+  // replacing would empty the site every time a title arrived.
+  assert.deepEqual(after.items.map((item) => item.name), ['First.adf', 'Second.adf'])
+  assert.equal(after.sources.length, 1)
 })
 
 // ---------------------------------------------------------------------------
