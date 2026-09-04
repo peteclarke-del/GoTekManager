@@ -10,7 +10,14 @@ import { isSupportedExtension } from './catalog'
 import { isOutsideProfile } from './media'
 import { dottedExtensionOf } from './paths'
 import { countBy } from './records'
-import type { Profile, ResultStatus, TransferPlan, TransferResultEntry } from './types'
+import type {
+  MediaItem,
+  PlanBlocker,
+  Profile,
+  ResultStatus,
+  TransferPlan,
+  TransferResultEntry,
+} from './types'
 
 /**
  * True when this path already exists on the destination.
@@ -53,6 +60,32 @@ export const emptyPlanSummary: PlanSummary = {
   mismatches: [],
   mismatchFormats: [],
   hasChanges: false,
+}
+
+/**
+ * The staged titles standing in the way of a write, grouped by what is wrong.
+ *
+ * A plan that cannot be written is not a dead end, it is a short list of things
+ * to take back out: a title whose file has gone, one that changed underneath
+ * the library, or the second of two that would be written to the same name.
+ * Naming them is what lets the step offer to do it rather than leaving someone
+ * at a button that will not light up.
+ *
+ * A collision names the *later* of the pair, because the first claim on a path
+ * is the one the rest of the plan is built around.
+ */
+export function blockedTitles(
+  plan: TransferPlan | null,
+  itemsBySource: Map<string, MediaItem>,
+): { kind: PlanBlocker['kind']; item: MediaItem; message: string }[] {
+  const seen = new Set<string>()
+  return (plan?.blockers ?? []).flatMap((blocker) => {
+    if (!blocker.source || seen.has(blocker.source)) return []
+    const item = itemsBySource.get(blocker.source)
+    if (!item) return []
+    seen.add(blocker.source)
+    return [{ kind: blocker.kind, item, message: blocker.message }]
+  })
 }
 
 export function summarisePlan(

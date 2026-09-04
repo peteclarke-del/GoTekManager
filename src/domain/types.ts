@@ -247,7 +247,17 @@ export type TransferPlan = {
   totalBytes: number
   availableBytes?: number
   warnings: string[]
+  /** The same problems, each naming the staged title responsible. */
+  blockers: PlanBlocker[]
   ready: boolean
+}
+
+/** Why a plan cannot be written, tied to the title that caused it. */
+export type PlanBlocker = {
+  kind: 'collision' | 'unavailable' | 'changed' | 'other'
+  /** The staged title's source path, where one is responsible. */
+  source?: string
+  message: string
 }
 
 // ---------------------------------------------------------------------------
