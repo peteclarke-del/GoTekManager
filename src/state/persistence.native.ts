@@ -21,6 +21,7 @@ import {
 } from '../native/store'
 import { LIBRARY_KEY, loadWorkspace, splitWorkspace, WORKSPACE_KEY } from './migrations'
 import { writeStored } from './persistence'
+import { groupDownloads } from '../domain/downloads'
 import { emptyWorkspace, type Workspace } from './workspace'
 
 function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
@@ -40,11 +41,16 @@ function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
 }
 
 function fromNative(stored: StoredWorkspace): Workspace {
-  const items: MediaItem[] = stored.items.map((item) => ({
+  const stored_items: MediaItem[] = stored.items.map((item) => ({
     ...item,
     directory: false,
     likelyPlatformIds: item.likelyPlatformIds ?? [],
   }))
+  // A library built up before downloads were grouped carries one source per
+  // cached title. They are gathered here rather than left for the user to
+  // remove by hand, and the staged collections follow because they are built
+  // from these titles below.
+  const { sources, items } = groupDownloads(stored.sources ?? [], stored_items)
   const byId = new Map(items.map((item) => [item.id, item]))
 
   const collections: Record<string, MediaItem[]> = {}
@@ -66,7 +72,7 @@ function fromNative(stored: StoredWorkspace): Workspace {
     activeProfileId: stored.activeProfileId ?? '',
     collections,
     removalPolicies,
-    sources: stored.sources ?? [],
+    sources,
     items,
   }
 }

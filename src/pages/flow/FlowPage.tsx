@@ -9,6 +9,7 @@ import {
   managedFormats,
   transferOperations,
 } from '../../domain/media'
+import { downloadSourceOf } from '../../domain/downloads'
 import { basename } from '../../domain/paths'
 import { upsertById } from '../../domain/records'
 import { configFor } from '../../domain/firmwareConfig'
@@ -265,8 +266,12 @@ export function FlowPage({
     provider: OnlineProvider,
   ) => {
     if (!profile) return
+    // Everything cached from one site belongs to that site, not to a source of
+    // its own: a folder per download turned the source list into a list of
+    // downloads reading "1 title" apiece.
+    const site = downloadSourceOf(download.cachePath) ?? download.cachePath
     const items = download.entries.map((entry, index): MediaItem => {
-      const classified = classifyMedia(entry, download.cachePath)
+      const classified = classifyMedia(entry, site)
       return {
         ...classified,
         canonicalTitle:
@@ -281,12 +286,8 @@ export function FlowPage({
       }
     })
     dispatch({
-      type: 'sourceIndexed',
-      source: {
-        id: `source:${download.cachePath}`,
-        name: `${provider.name} cache`,
-        path: download.cachePath,
-      },
+      type: 'itemsImported',
+      source: { id: `source:${site}`, name: provider.name, path: site },
       items,
     })
     dispatch({ type: 'collectionAdded', profileId: profile.id, items })
