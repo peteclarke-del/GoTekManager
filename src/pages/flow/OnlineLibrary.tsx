@@ -463,6 +463,14 @@ export function OnlineLibrary({
                       <td>
                         <button
                           className="archive-title"
+                          // The name, in full, wherever the column cannot show
+                          // it all — which for a catalogue of long titles is
+                          // most of them.
+                          title={
+                            expandable
+                              ? `${title.title}\n\nClick to see the files inside this item`
+                              : title.title
+                          }
                           disabled={!expandable || working}
                           onClick={() => browse(title)}
                         >

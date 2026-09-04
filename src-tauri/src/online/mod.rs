@@ -76,6 +76,9 @@ pub struct OnlineTitle {
     pub details_url: Option<String>,
     pub license: Option<String>,
     pub updated: Option<String>,
+    /// What the site said this is — its own section, where it has them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -479,6 +482,7 @@ mod tests {
             details_url: None,
             license: None,
             updated: None,
+            category: None,
         }
     }
 

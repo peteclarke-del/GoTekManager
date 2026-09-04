@@ -92,6 +92,40 @@ export function categoryFolder(categoryId: string | undefined): string {
 }
 
 /**
+ * Reads a category out of a title's own name.
+ *
+ * The folders a file sits in are the better evidence and are asked first, but a
+ * downloaded title has none: it lands in a cache folder named after the site
+ * and the download, which says nothing about what it holds. Its name often
+ * does — "Zool 1 (Gremlin) demo", "Amiga Format coverdisk", "SysInfo v4.4".
+ *
+ * Only whole words count, so "Demolition" is not a demo and "Gameshow" is not
+ * filed under games by accident.
+ */
+export function inferCategoryFromName(name: string): string | undefined {
+  const words = new Set(
+    name
+      .toLowerCase()
+      .replace(/\.[a-z0-9]+$/, '')
+      .split(/[^a-z0-9+]+/)
+      .filter(Boolean),
+  )
+  return categories.find((category) => category.hints.some((hint) => words.has(hint)))?.id
+}
+
+/**
+ * What a title is, from whatever evidence there is: the folders it sits in
+ * first, then its own name.
+ *
+ * Nothing recognisable still means no category. An uncategorised title is
+ * visible, filterable and easy to set in bulk; a wrongly categorised one is
+ * silent, and ends up in the wrong folder on the drive.
+ */
+export function inferCategory(path: string, source: string, name?: string): string | undefined {
+  return inferCategoryId(path, source) ?? inferCategoryFromName(name ?? path)
+}
+
+/**
  * Reads a category out of the folders a file sits in.
  *
  * Only whole path segments are matched, and only the ones between the source

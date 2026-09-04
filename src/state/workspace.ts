@@ -145,6 +145,8 @@ export type WorkspaceAction =
   | { type: 'profileSelected'; id: string }
   | { type: 'profileDestinationChecked'; id: string; summary: TargetSummary }
   | { type: 'sourceIndexed'; source: SourceLocation; items: MediaItem[] }
+  /** Titles arriving one at a time, such as downloads, which add rather than replace. */
+  | { type: 'itemsImported'; source: SourceLocation; items: MediaItem[] }
   | { type: 'sourceRenamed'; source: SourceLocation }
   | { type: 'sourceRemoved'; source: SourceLocation }
   | { type: 'platformAssigned'; itemIds: string[]; platformId: string }
@@ -250,6 +252,16 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
         ),
       }
     }
+
+    case 'itemsImported':
+      // Unlike indexing, this does not stand for everything the source holds:
+      // a download arrives on its own, and the ones cached before it are still
+      // there. Replacing would empty the site's source on every new title.
+      return {
+        ...state,
+        sources: upsertById(state.sources, action.source),
+        items: upsertById(state.items, ...action.items),
+      }
 
     case 'sourceRenamed':
       return { ...state, sources: replaceById(state.sources, action.source) }
