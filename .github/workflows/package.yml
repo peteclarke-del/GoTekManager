@@ -3,7 +3,12 @@ name: Package desktop application
 on:
   workflow_dispatch:
   pull_request:
-    paths: ["src-tauri/**", "src/**", "package.json", ".github/workflows/package.yml"]
+    paths:
+      - "src-tauri/**"
+      - "src/**"
+      - "package.json"
+      - ".cargo/audit.toml"
+      - ".github/workflows/package.yml"
   push:
     tags: ["v*"]
 
@@ -29,9 +34,30 @@ jobs:
       - name: Lint the native code
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
+  # Known advisories against what the application actually ships.
+  #
+  # Dependabot already reports these on the repository; this is the same
+  # question asked where it can block a merge, and where a decision about an
+  # advisory is written down next to the code rather than in a web interface.
+  # `.cargo/audit.toml` holds those decisions and says why each was made.
+  #
+  # Unsound and yanked advisories are treated as failures, not notes: the one
+  # advisory this project carries is an unsoundness, and a default run would
+  # have passed straight over it. Unmaintained crates stay a warning, because
+  # nobody can act on those on the day they appear.
+  audit:
+    name: Audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Audit the dependency tree
+        run: cargo audit --deny unsound --deny yanked --file src-tauri/Cargo.lock
+
   package:
     name: ${{ matrix.name }}
-    needs: verify
+    needs: [verify, audit]
     strategy:
       fail-fast: false
       matrix:
