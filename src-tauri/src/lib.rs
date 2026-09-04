@@ -18,6 +18,7 @@
 
 mod archive;
 mod source;
+mod update;
 mod cache;
 mod convert;
 mod devices;
@@ -71,6 +72,9 @@ pub fn run() {
             store::save_workspace,
             store::read_document,
             store::read_config_file,
+            // Which version this is, and whether a newer one is published.
+            update::app_version,
+            update::published_releases,
             fingerprint::fingerprint_paths,
             fingerprint::prune_digests,
             store::write_document,

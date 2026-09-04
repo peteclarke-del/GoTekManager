@@ -8,6 +8,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { supportedExtensionList } from '../domain/catalog'
 import type {
   CachedDownload,
@@ -23,6 +24,7 @@ import type {
   OnlineTitle,
   PhysicalDevice,
   ProviderCatalog,
+  PublishedRelease,
   ProvisionPlan,
   ProvisionReport,
   TargetFileStatus,
@@ -35,6 +37,17 @@ import type {
 export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
+
+/**
+ * What the browser preview was built from; see vite.config.ts.
+ *
+ * Read through `typeof` rather than directly, so anything else that bundles
+ * this file — the checks, for one — does not have to know about the constant
+ * to compile. Only the preview ever reports it: the desktop application asks
+ * itself.
+ */
+const BUILD_VERSION: string =
+  typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0'
 
 const BROWSER_MESSAGE =
   'This needs the desktop application. The browser preview cannot read drives, ' +
@@ -113,6 +126,45 @@ export function supportedConversions(): Promise<ConversionSupport[]> {
 /** What the drive's configuration file looks like on the destination now. */
 export function firmwareConfigState(target: string): Promise<FirmwareConfigState> {
   return invokeNative<FirmwareConfigState>('firmware_config_state', { target })
+}
+
+/**
+ * Opens a link in the user's own browser.
+ *
+ * Only ever https, and only ever outward: the one link this application offers
+ * is a release page, and a webview that can be told to open anything is a
+ * webview that can be told to open something local.
+ */
+export async function openExternal(url: string): Promise<void> {
+  if (!/^https:\/\//i.test(url)) throw new Error('Only https links can be opened.')
+  if (!isDesktop()) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return
+  }
+  await openUrl(url)
+}
+
+/**
+ * The version of the application that is running.
+ *
+ * The browser preview has no application to ask, so it answers with what it was
+ * built from; on the desktop the answer comes from the crate the installers are
+ * named for, which is what stops Help and the installed build disagreeing.
+ */
+export function appVersion(): Promise<string> {
+  if (!isDesktop()) return Promise.resolve(BUILD_VERSION)
+  return invokeNative<string>('app_version')
+}
+
+/**
+ * Every release published for this application, newest first.
+ *
+ * An empty list means the question could not be answered — no network, no
+ * releases, an API that has moved — rather than that this is the latest.
+ */
+export function publishedReleases(): Promise<PublishedRelease[]> {
+  if (!isDesktop()) return Promise.resolve([])
+  return invokeNative<PublishedRelease[]>('published_releases')
 }
 
 /** Writes the configuration, returning where it went. */
