@@ -6,7 +6,7 @@
  */
 
 import { acceptedFormats, platforms, requireFirmware } from './catalog'
-import { categoryFolder, inferCategoryId } from './categories'
+import { categoryFolder, inferCategory } from './categories'
 import { dottedExtensionOf, joinRelative, safeFileName } from './paths'
 import type { FileEntry, MediaItem, Profile, TransferOperation } from './types'
 
@@ -77,8 +77,9 @@ export function classifyMedia(entry: FileEntry, source: string): MediaItem {
     likelyPlatformIds,
     assignedPlatformId: likelyPlatformIds.length === 1 ? likelyPlatformIds[0] : undefined,
     canonicalTitle: entry.name,
-    // A collection that files its own titles by kind has already answered this.
-    category: inferCategoryId(entry.path, source),
+    // A collection that files its own titles by kind has already answered
+    // this; a download has no such folders, so its name is asked instead.
+    category: inferCategory(entry.path, source, entry.name),
   }
 }
 
@@ -140,15 +141,90 @@ export function formatBytes(bytes: number): string {
  * display width. The extension is always preserved, and the library keeps the
  * canonical title so nothing is lost.
  */
+/**
+ * Which disk of a set this is, and the title without it.
+ *
+ * A multi-disk game says so at the end of its name — `Elite (Disk 2)`,
+ * `Another World ... A` — which is exactly where a trimmed name loses it. Two
+ * disks that arrive at the same name are not a cosmetic problem: the write
+ * refuses, because one would overwrite the other, and a set of four disks
+ * becomes one file. So the marker is taken off before the title is cut and put
+ * back afterwards, and it is the title that gives up room, never the disk.
+ *
+ * A number is written `D2` rather than `2`, which on a two-line display cannot
+ * be mistaken for a year or a sequel.
+ */
+export function splitDiskMarker(stem: string): { title: string; marker: string } {
+  const bracketed = stem.match(/[([]\s*(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\b[^)\]]*[)\]]/i)
+  if (bracketed) {
+    return {
+      title: stem.replace(bracketed[0], ' '),
+      marker: ` ${markerOf(bracketed[1])}`,
+    }
+  }
+  const bare = stem.match(/\s(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\s*$/i)
+  if (bare) {
+    return { title: stem.slice(0, bare.index), marker: ` ${markerOf(bare[1])}` }
+  }
+  // A lone letter at the end is how most Amiga sets number their disks.
+  const letter = stem.match(/\s([a-z])\s*$/i)
+  if (letter) {
+    return { title: stem.slice(0, letter.index), marker: ` ${letter[1].toUpperCase()}` }
+  }
+  return { title: stem, marker: '' }
+}
+
+function markerOf(value: string): string {
+  return /^[0-9]+$/.test(value) ? `D${Number(value)}` : value.toUpperCase()
+}
+
+/**
+ * A title with its middle taken out, for somewhere too narrow to show it all.
+ *
+ * What a retro title carries in the middle is almost always the publisher, and
+ * what identifies it is at the two ends: the game at the front, which disk it
+ * is at the back. Cutting the end therefore loses the useful half and leaves a
+ * column of rows that read alike; cutting the middle keeps both.
+ *
+ * For display only. A name written to a drive keeps to plain characters and
+ * drops the middle outright rather than marking it — see {@link oledName}.
+ */
+export function elideMiddle(text: string, max = 44): string {
+  if (text.length <= max) return text
+  // The tail is short and precious — "(Publisher) B.adf" — while the head is
+  // what the eye reads first, so the head keeps most of the room.
+  const tail = Math.min(14, Math.floor((max - 1) / 3))
+  const head = Math.max(1, max - 1 - tail)
+  return `${text.slice(0, head).trimEnd()}…${text.slice(text.length - tail).trimStart()}`
+}
+
 export function oledName(name: string, length = 24): string {
   const dot = name.lastIndexOf('.')
   const extension = dot > 0 ? name.slice(dot) : ''
-  const title = (dot > 0 ? name.slice(0, dot) : name)
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s*\([^)]*(demo|disk|side|rev|version)[^)]*\)\s*/gi, ' ')
+  const { title: stem, marker } = splitDiskMarker(
+    (dot > 0 ? name.slice(0, dot) : name).replace(/[_-]+/g, ' '),
+  )
+  const title = stem
+    // Release labels that say nothing about which file this is. `disk` is not
+    // among them any more: which disk it is has already been taken out, and
+    // anything left saying "disk" is part of the name.
+    .replace(/\s*\([^)]*(demo|rev|version)[^)]*\)\s*/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  return `${title.slice(0, Math.max(1, length - extension.length))}${extension}`
+  const room = Math.max(1, length - extension.length - marker.length)
+  if (title.length <= room) return `${title}${marker}${extension}`
+
+  // Still too long, so the middle goes before the ends do. What sits in
+  // brackets is the publisher, the region, the dump — none of it says which
+  // file this is, while the name at the front and the disk at the back both do.
+  // Dropped outright rather than marked, because this becomes a filename on a
+  // FAT volume read by an 8-bit drive, and an ellipsis is three bytes there.
+  const withoutLabels = title.replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  if (withoutLabels && withoutLabels.length <= room) {
+    return `${withoutLabels}${marker}${extension}`
+  }
+  const kept = withoutLabels || title
+  return `${kept.slice(0, room).trimEnd()}${marker}${extension}`
 }
 
 /**

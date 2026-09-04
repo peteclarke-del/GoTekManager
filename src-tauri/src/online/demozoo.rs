@@ -153,6 +153,7 @@ pub async fn search(
                 details_url: production.demozoo_url.clone(),
                 license: None,
                 updated: production.release_date.clone(),
+                category: None,
             });
         }
 
@@ -216,6 +217,7 @@ pub fn item_files(
                 details_url: title.details_url.clone(),
                 license: None,
                 updated: title.updated.clone(),
+                category: None,
             }
         })
         .collect::<Vec<_>>();
@@ -295,6 +297,7 @@ mod tests {
             details_url: Some("https://demozoo.org/productions/12345/".into()),
             license: None,
             updated: None,
+            category: None,
         }
     }
 

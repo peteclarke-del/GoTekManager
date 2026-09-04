@@ -9,10 +9,12 @@ import {
   managedFormats,
   transferOperations,
 } from '../../domain/media'
+import { inferCategory } from '../../domain/categories'
+import { downloadSourceOf } from '../../domain/downloads'
 import { basename } from '../../domain/paths'
 import { upsertById } from '../../domain/records'
 import { configFor } from '../../domain/firmwareConfig'
-import { summarisePlan } from '../../domain/plan'
+import { blockedTitles, summarisePlan } from '../../domain/plan'
 import type {
   CachedDownload,
   DestinationEdit,
@@ -42,6 +44,31 @@ import { LocalLibrary } from './LocalLibrary'
 import { OnlineLibrary } from './OnlineLibrary'
 import { ProfileStep } from './ProfileStep'
 import { ResultTable, type ResultView } from './ResultTable'
+
+/** What each kind of blocker means, in the words the user needs. */
+const BLOCKER_EXPLANATIONS: Array<{
+  kind: 'collision' | 'unavailable' | 'changed'
+  label: string
+  detail: string
+}> = [
+  {
+    kind: 'collision',
+    label: 'would overwrite another title:',
+    detail:
+      'two staged titles ending up with the same name on the drive. The first keeps the name, so taking the second out settles it.',
+  },
+  {
+    kind: 'unavailable',
+    label: 'cannot be found:',
+    detail:
+      'the file is no longer where the library indexed it — a download cleared from the cache, or a share no longer mounted.',
+  },
+  {
+    kind: 'changed',
+    label: 'changed since indexing:',
+    detail: 'the file is not the size it was, so re-index that source before writing it.',
+  },
+]
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6
 const STEP_LABELS = ['Profile', 'Contents', 'Sources', 'Verify', 'Confirm', 'Summary']
@@ -162,6 +189,17 @@ export function FlowPage({
   const summary = useMemo(() => summarisePlan(plan, profile), [plan, profile])
   const { counts, currentCount, resultCount, mismatches, mismatchFormats } = summary
 
+  // Staged titles by where their bytes are, which is how the plan names the
+  // ones standing in the way of a write.
+  const itemsBySource = useMemo(
+    () => new Map(collection.map((item) => [item.path, item])),
+    [collection],
+  )
+  const blocked = useMemo(
+    () => blockedTitles(plan, itemsBySource),
+    [plan, itemsBySource],
+  )
+
   const itemsByPath = useMemo(
     () =>
       new Map(
@@ -229,13 +267,20 @@ export function FlowPage({
     provider: OnlineProvider,
   ) => {
     if (!profile) return
+    // Everything cached from one site belongs to that site, not to a source of
+    // its own: a folder per download turned the source list into a list of
+    // downloads reading "1 title" apiece.
+    const site = downloadSourceOf(download.cachePath) ?? download.cachePath
     const items = download.entries.map((entry, index): MediaItem => {
-      const classified = classifyMedia(entry, download.cachePath)
+      const classified = classifyMedia(entry, site)
       return {
         ...classified,
         canonicalTitle:
           download.entries.length > 1 ? `${title.title} (Disk ${index + 1})` : title.title,
         assignedPlatformId: title.platformId || classified.assignedPlatformId,
+        // What the site said it is beats what its filename suggests: a
+        // catalogue that sorts its own titles has already answered this.
+        category: title.category || inferCategory(entry.path, site, title.title),
         provenance: {
           providerId: provider.id,
           remoteId: title.remoteId,
@@ -245,12 +290,8 @@ export function FlowPage({
       }
     })
     dispatch({
-      type: 'sourceIndexed',
-      source: {
-        id: `source:${download.cachePath}`,
-        name: `${provider.name} cache`,
-        path: download.cachePath,
-      },
+      type: 'itemsImported',
+      source: { id: `source:${site}`, name: provider.name, path: site },
       items,
     })
     dispatch({ type: 'collectionAdded', profileId: profile.id, items })
@@ -502,12 +543,58 @@ export function FlowPage({
               continue.
             </p>
           )}
+          {step === 4 && blocked.length > 0 && (
+            <div className="blocked-titles">
+              <b>
+                {blocked.length} staged title{blocked.length === 1 ? '' : 's'} stand
+                {blocked.length === 1 ? 's' : ''} in the way of this write
+              </b>
+              <span>
+                {BLOCKER_EXPLANATIONS.filter((entry) =>
+                  blocked.some((title) => title.kind === entry.kind),
+                ).map((entry) => (
+                  <span key={entry.kind}>
+                    <b>
+                      {blocked.filter((title) => title.kind === entry.kind).length}{' '}
+                      {entry.label}
+                    </b>{' '}
+                    {entry.detail}
+                  </span>
+                ))}
+              </span>
+              <ul className="plan-files">
+                {blocked.slice(0, 6).map((title) => (
+                  <li key={title.item.id}>{title.item.canonicalTitle}</li>
+                ))}
+                {blocked.length > 6 && <li>…and {blocked.length - 6} more</li>}
+              </ul>
+              <button
+                className="button secondary compact"
+                onClick={() =>
+                  dispatch({
+                    type: 'collectionRemoved',
+                    profileId: profile.id,
+                    itemIds: blocked.map((title) => title.item.id),
+                  })
+                }
+              >
+                <X />
+                Take {blocked.length === 1 ? 'it' : `all ${blocked.length}`} out of{' '}
+                {profile.name}
+              </button>
+            </div>
+          )}
           {step === 4 &&
-            plan?.warnings.map((warning) => (
-              <p className="inline-error build-review-error" key={warning}>
-                {warning}
-              </p>
-            ))}
+            plan?.warnings
+              // Anything already listed above is not said twice.
+              .filter(
+                (warning) => !blocked.some((title) => title.message === warning),
+              )
+              .map((warning) => (
+                <p className="inline-error build-review-error" key={warning}>
+                  {warning}
+                </p>
+              ))}
 
           {step === 5 && plan && (
             <section className="build-review" aria-label="Write confirmation">

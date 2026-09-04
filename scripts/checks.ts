@@ -34,6 +34,7 @@ import {
 import {
   belongsToPlatform,
   classifyMedia,
+  elideMiddle,
   forProfile,
   formatBytes,
   isFirmwareCompatible,
@@ -49,6 +50,8 @@ import {
 import {
   categories,
   categoryFolder,
+  inferCategory,
+  inferCategoryFromName,
   inferCategoryId,
   UNCATEGORISED,
 } from '../src/domain/categories'
@@ -69,7 +72,7 @@ import {
   flashFloppyConfig,
   mergeFlashFloppyConfig,
 } from '../src/domain/firmwareConfig'
-import { isOnDestination, summarisePlan } from '../src/domain/plan'
+import { blockedTitles, isOnDestination, summarisePlan } from '../src/domain/plan'
 import {
   defaultProviders,
   faultIn,
@@ -78,6 +81,7 @@ import {
   readCustomProviders,
   readProviderConfig,
 } from '../src/domain/providers'
+import { downloadSourceOf, groupDownloads } from '../src/domain/downloads'
 import { countBy, omitKey, removeById, upsertById } from '../src/domain/records'
 import { isNewer, newerRelease, parseVersion } from '../src/domain/version'
 import {
@@ -203,10 +207,63 @@ check('an unassigned title still matches its likely platform', () => {
 })
 
 check('OLED naming trims release labels but keeps the extension', () => {
-  assert.equal(oledName('Elite_(Disk 1)_1984.ssd', 24), 'Elite 1984.ssd')
   assert.equal(oledName('A Very Long Retro Game Title Indeed.ssd', 24), 'A Very Long Retro Ga.ssd')
+  // A label that says nothing about which file this is still goes.
+  assert.equal(oledName('Turrican II (1991 demo).adf', 24), 'Turrican II.adf')
   // Factory firmware has a much smaller display.
   assert.equal(oledName('Elite.ssd', 8).length <= 8, true)
+})
+
+check('which disk of a set a file is survives being trimmed for the display', () => {
+  // The whole point: two disks must never arrive at one name. They did, and
+  // the write refused — a four-disk game became one file's worth of collisions,
+  // because the letter that tells them apart sits exactly where trimming cuts.
+  const set = [
+    'Another World (Delphine + U.S. Gold) A.adf',
+    'Another World (Delphine + U.S. Gold) B.adf',
+    'Another World (Delphine + U.S. Gold) C.adf',
+  ].map((name) => oledName(name, 24))
+
+  assert.equal(new Set(set).size, 3, `two disks share a name: ${set.join(', ')}`)
+  assert.ok(set.every((name) => name.length <= 24))
+  assert.deepEqual(set, [
+    'Another World A.adf',
+    'Another World B.adf',
+    'Another World C.adf',
+  ])
+
+  // The publisher goes before the name does. What sits in brackets says which
+  // release this is, never which file, so it is the first thing to lose when
+  // the display cannot hold everything — leaving the game and the disk.
+  assert.equal(
+    oledName('Another World (Delphine + U.S. Gold) A.adf', 24),
+    'Another World A.adf',
+  )
+  assert.equal(oledName('Apocalypse (Miracle + Virgin) C.adf', 24), 'Apocalypse C.adf')
+  // A name that already fits keeps its brackets: nothing is dropped for the
+  // sake of it.
+  assert.equal(oledName('Zool 1 (Gremlin).adf', 24), 'Zool 1 (Gremlin).adf')
+  // Nothing bracketed to drop, so the front gives way and the disk still stands.
+  assert.equal(
+    oledName('An Extremely Long Amiga Game Title Without Brackets B.adf', 24),
+    'An Extremely Long B.adf',
+  )
+
+  // However the set writes it. A number is written D2, which on a two-line
+  // display cannot be read as a year or a sequel.
+  assert.equal(oledName('Elite_(Disk 1)_1984.ssd', 24), 'Elite 1984 D1.ssd')
+  assert.equal(oledName('Elite (Disk 2 of 3).adf', 24), 'Elite D2.adf')
+  assert.equal(oledName('Monkey Island Disk 4.adf', 24), 'Monkey Island D4.adf')
+  assert.equal(oledName('Lemmings (Side B).adf', 24), 'Lemmings B.adf')
+
+  // And a name that merely ends in something is left alone.
+  assert.equal(oledName('Zool 1 (Gremlin).adf', 24), 'Zool 1 (Gremlin).adf')
+  assert.equal(oledName('Rick Dangerous II.adf', 24), 'Rick Dangerous II.adf')
+
+  // Even with no room at all, the disk is what survives.
+  const tight = oledName('An Extremely Long Amiga Game Title (Publisher) B.adf', 20)
+  assert.ok(tight.length <= 20)
+  assert.ok(tight.endsWith(' B.adf'), tight)
 })
 
 check('title keys normalise enough to compare, and no further', () => {
@@ -258,17 +315,19 @@ check('transfer operations apply the profile layout and naming', () => {
     assignedPlatformId: 'bbc',
   }
 
+  // The disk number survives the shortening: it is the only thing telling this
+  // file apart from the rest of its set, and dropping it made them collide.
   const [organised] = transferOperations([item], bbcProfile)
-  assert.equal(organised.relativePath, 'BBC/Elite.ssd')
+  assert.equal(organised.relativePath, 'BBC/Elite D1.ssd')
 
   const [flat] = transferOperations([item], { ...bbcProfile, folderLayout: 'flat' })
-  assert.equal(flat.relativePath, 'Elite.ssd')
+  assert.equal(flat.relativePath, 'Elite D1.ssd')
 
   const [original] = transferOperations([item], { ...bbcProfile, naming: 'original' })
   assert.equal(original.relativePath, 'BBC/Elite (Disk 1).ssd')
 
   const [unorganised] = transferOperations([item], { ...bbcProfile, organise: false })
-  assert.equal(unorganised.relativePath, 'Elite.ssd')
+  assert.equal(unorganised.relativePath, 'Elite D1.ssd')
 })
 
 check('a custom folder template expands its tokens', () => {
@@ -368,7 +427,9 @@ check('naming and layout decide where a title is written, never what it is', () 
   const [a] = transferOperations([item], oledPlatform)
   const [b] = transferOperations([item], originalInitial)
 
-  assert.equal(a.relativePath, 'CPC464/Zynaps (1987)(Hewson.dsk')
+  // The year and the publisher go, because neither says which file this is and
+  // the drive's display cannot hold them.
+  assert.equal(a.relativePath, 'CPC464/Zynaps.dsk')
   assert.equal(b.relativePath, 'Z/Zynaps (1987)(Hewson Consultants).dsk')
   // Different destinations, same source file. Identity lives in the contents,
   // which the native side compares; neither path is the file's identity.
@@ -506,6 +567,7 @@ function planWith(result: TransferResultEntry[]): TransferPlan {
     result,
     totalBytes: 0,
     warnings: [],
+    blockers: [],
     ready: true,
   }
 }
@@ -545,6 +607,52 @@ check('the summary counts what is there now, what changes, and what results', ()
   assert.equal(summary.counts.add, 2)
   assert.equal(summary.counts.remove, 0)
   assert.equal(summary.hasChanges, true)
+})
+
+check('the titles in the way of a write are named, so they can be taken out', () => {
+  const gone = classifyMedia(entry('Gone.ssd'), '/library')
+  const first = classifyMedia(entry('Another World A.ssd'), '/library')
+  const second = classifyMedia(entry('Another World B.ssd'), '/library')
+  const bySource = new Map([gone, first, second].map((item) => [item.path, item]))
+
+  const blocked = blockedTitles(
+    {
+      ...planWith([]),
+      ready: false,
+      warnings: ['Source is unavailable: /library/Gone.ssd'],
+      blockers: [
+        {
+          kind: 'unavailable',
+          source: '/library/Gone.ssd',
+          message: 'Source is unavailable: /library/Gone.ssd',
+        },
+        {
+          kind: 'collision',
+          source: '/library/Another World B.ssd',
+          message: 'Two titles would be written to AW.ssd',
+        },
+        // The same title twice says nothing new, and a blocker about something
+        // that is not staged cannot be acted on here.
+        {
+          kind: 'collision',
+          source: '/library/Another World B.ssd',
+          message: 'Two titles would be written to AW.ssd',
+        },
+        { kind: 'other', message: 'Not enough room on the destination.' },
+      ],
+    },
+    bySource,
+  )
+
+  assert.deepEqual(
+    blocked.map((title) => [title.kind, title.item.name]),
+    [
+      ['unavailable', 'Gone.ssd'],
+      ['collision', 'Another World B.ssd'],
+    ],
+  )
+  // The first of a colliding pair keeps its place; only the later one is named.
+  assert.ok(!blocked.some((title) => title.item.name === 'Another World A.ssd'))
 })
 
 check('a plan with nothing to do reports no changes', () => {
@@ -805,6 +913,29 @@ check('a folder above the source never decides a title s category', () => {
   assert.equal(inferCategoryId(`${source}/Elite.adf`, source), undefined)
 })
 
+check('a title with no telling folders is read by its own name', () => {
+  // A download has no folders to read: it lands in a cache named after the site
+  // and the download. Its name is the only evidence there is.
+  assert.equal(inferCategoryFromName('Zool 1 (Gremlin) demo.adf'), 'demos')
+  assert.equal(inferCategoryFromName('Amiga Format 42 coverdisk.adf'), 'magazines')
+  assert.equal(inferCategoryFromName('SysInfo v4.4 utility.adf'), 'utilities')
+
+  // Whole words only. "Demolition" is not a demo, and a game show is not a
+  // game — a wrong category is silent and puts a title in the wrong folder.
+  assert.equal(inferCategoryFromName('Demolition Man.adf'), undefined)
+  assert.equal(inferCategoryFromName('Gameshow Quiz.adf'), undefined)
+  assert.equal(inferCategoryFromName('Another World A.adf'), undefined)
+
+  // Folders first, name second: the folders a collection files a title under
+  // are the better evidence, and only the name is left when there are none.
+  const source = '/library/TOSEC/Amiga'
+  assert.equal(inferCategory(`${source}/Games/Elite demo.adf`, source), 'games')
+  assert.equal(
+    inferCategory('/cache/downloads/site-1/dl_AAA/images/Elite demo.adf', '/cache', 'Elite demo.adf'),
+    'demos',
+  )
+})
+
 check('every category has a folder name a two-line display can show', () => {
   for (const category of categories) {
     assert.ok(category.folderName.length <= 8, `${category.name} is too long for a display`)
@@ -815,6 +946,89 @@ check('every category has a folder name a two-line display can show', () => {
   // An uncategorised title still needs somewhere to go.
   assert.equal(categoryFolder(undefined), UNCATEGORISED)
   assert.equal(categoryFolder('games'), 'Games')
+})
+
+// ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
+
+const CACHE = '/home/x/.cache/uk.co.gotekmanager.desktop/online-library/downloads'
+
+check('a cached download belongs to the site it came from', () => {
+  assert.equal(
+    downloadSourceOf(`${CACHE}/site-1788/https___example.com_dl.php_id_AAA/images/Elite.adf`),
+    `${CACHE}/site-1788`,
+  )
+  // The site folder itself is already where it belongs.
+  assert.equal(downloadSourceOf(`${CACHE}/site-1788`), `${CACHE}/site-1788`)
+  // A folder the user chose is not a download and is never moved.
+  assert.equal(downloadSourceOf('/library/Amiga/Games'), undefined)
+})
+
+check('downloads are gathered under one source per site, not one per title', () => {
+  // What a library built up before this looks like: a source per download,
+  // each holding a single title, filling the list meant for chosen folders.
+  const sources = [
+    { id: 'source:/library/Amiga', name: 'Amiga', path: '/library/Amiga' },
+    ...['AAA', 'BBB', 'CCC'].map((id) => ({
+      id: `source:${CACHE}/site-1788/dl_${id}`,
+      name: 'Amiga 500 Archive cache',
+      path: `${CACHE}/site-1788/dl_${id}`,
+    })),
+    {
+      id: `source:${CACHE}/site-9999/dl_ZZZ`,
+      name: 'Another Site cache',
+      path: `${CACHE}/site-9999/dl_ZZZ`,
+    },
+  ]
+  const items = [
+    { ...classifyMedia(entry('Local.adf'), '/library/Amiga'), source: '/library/Amiga' },
+    ...['AAA', 'BBB', 'CCC'].map((id) => ({
+      ...classifyMedia(entry(`${id}.adf`), `${CACHE}/site-1788/dl_${id}`),
+      source: `${CACHE}/site-1788/dl_${id}`,
+    })),
+  ]
+
+  const grouped = groupDownloads(sources, items)
+
+  assert.deepEqual(
+    grouped.sources.map((source) => source.path),
+    ['/library/Amiga', `${CACHE}/site-1788`, `${CACHE}/site-9999`],
+  )
+  // Named for the site, without the wording that suited a single download.
+  assert.equal(grouped.sources[1].name, 'Amiga 500 Archive')
+  // Every title moved to its site, and none was lost on the way.
+  assert.equal(grouped.items.length, items.length)
+  assert.equal(
+    grouped.items.filter((item) => item.source === `${CACHE}/site-1788`).length,
+    3,
+  )
+  // A chosen folder is left exactly as it was.
+  assert.equal(grouped.items[0].source, '/library/Amiga')
+  // Nothing to gather means nothing is rebuilt: the very same arrays come
+  // back, so reading a library of chosen folders costs nothing.
+  const chosen = [sources[0]]
+  const held = [items[0]]
+  const untouched = groupDownloads(chosen, held)
+  assert.equal(untouched.sources, chosen)
+  assert.equal(untouched.items, held)
+})
+
+check('a download adds to its site rather than replacing what it holds', () => {
+  const site = `${CACHE}/site-1788`
+  const source = { id: `source:${site}`, name: 'Amiga 500 Archive', path: site }
+  const first = { ...classifyMedia(entry('First.adf'), site), source: site }
+  const second = { ...classifyMedia(entry('Second.adf'), site), source: site }
+
+  const after = workspaceReducer(
+    workspaceReducer(emptyWorkspace, { type: 'itemsImported', source, items: [first] }),
+    { type: 'itemsImported', source, items: [second] },
+  )
+
+  // Indexing a folder stands for everything in it; a download does not, and
+  // replacing would empty the site every time a title arrived.
+  assert.deepEqual(after.items.map((item) => item.name), ['First.adf', 'Second.adf'])
+  assert.equal(after.sources.length, 1)
 })
 
 // ---------------------------------------------------------------------------
@@ -1616,6 +1830,26 @@ check('changing the selection leaves the library slice untouched', () => {
     items: [],
   })
   assert.notEqual(indexed.items, before.items)
+})
+
+check('a title too long to show has its middle taken out, never its ends', () => {
+  // The publisher sits in the middle; the game is at the front and which disk
+  // it is at the back. Cutting the end leaves a column of rows reading alike.
+  const long = 'Another World (Delphine + U.S. Gold) A.adf'
+  const shown = elideMiddle(long, 30)
+
+  assert.ok(shown.length <= 30, shown)
+  assert.ok(shown.startsWith('Another World'), shown)
+  assert.ok(shown.endsWith('A.adf'), shown)
+  assert.ok(shown.includes('…'), shown)
+
+  // Two disks of a set stay distinguishable, which is the whole point.
+  assert.notEqual(
+    elideMiddle('Another World (Delphine + U.S. Gold) A.adf', 30),
+    elideMiddle('Another World (Delphine + U.S. Gold) B.adf', 30),
+  )
+  // Anything that fits is left exactly as it is.
+  assert.equal(elideMiddle('Zool 1 (Gremlin).adf', 44), 'Zool 1 (Gremlin).adf')
 })
 
 check('a stored column order gains a column it predates', () => {
