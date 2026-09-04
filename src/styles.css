@@ -369,9 +369,10 @@ button[aria-pressed="true"]{box-shadow:inset 0 -4px 0 #a46800;background:#fff1c7
 /* The generic first-column width is meant for the plain tables; the tick column
    is not the first column in any meaningful sense and keeps its own. */
 th.select-cell{width:34px}
-/* A long title wraps rather than being cut, up to two lines. Cutting it lost
-   the end — which for a multi-disk set is the letter saying which disk it is,
-   the one thing telling those rows apart. */
+/* A title has its middle elided before it gets here, so what is left is the
+   game and the disk. Wrapping to a second line is the backstop for a column too
+   narrow even for that: it costs a row's height, where cutting would cost the
+   end — which for a multi-disk set is the letter telling those rows apart. */
 .library-table td.title b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow:hidden;line-height:1.3}
 
 /* The title is what the table is for, so it takes the room and keeps the
