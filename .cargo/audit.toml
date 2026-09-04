@@ -1,0 +1,28 @@
+# Advisories this project has looked at and decided about.
+#
+# `cargo audit` reads this when it runs from the repository root; the CI job in
+# .github/workflows/package.yml is what runs it. An entry here is a decision,
+# not a way of quietening the tool: each one says what was found, why it cannot
+# be acted on today, and what would change that.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2024-0429 — unsoundness in glib's VariantStrIter iterators
+  # (GHSA-wrw7-89jp-8q8g), fixed in glib 0.20.
+  #
+  # There is no version of this application that can take that fix. glib comes
+  # in through Tauri's Linux WebView: tauri -> wry -> webkit2gtk/gtk -> glib.
+  # The GTK3 bindings are a finished line — gtk 0.18.2 is the last release and
+  # requires glib ^0.18 — and the newest wry still declares gtk ^0.18 and pins
+  # webkit2gtk =2.0.2. Nothing in that chain can reach glib 0.20 until Tauri
+  # moves to the GTK4/webkitgtk-6 bindings.
+  #
+  # The exposure is narrow. The dependency is behind a Linux and BSD target
+  # cfg, so the Windows and macOS builds never compile glib at all, and the
+  # unsound API is one iterator over a GVariant string array. This application
+  # does not depend on glib directly and never calls it.
+  #
+  # Remove this entry when Tauri's Linux stack moves off GTK3, and let the
+  # build tell us whether it is still needed.
+  "RUSTSEC-2024-0429",
+]
