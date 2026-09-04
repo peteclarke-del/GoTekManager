@@ -3,6 +3,32 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.4.0
+
+**Multi-disk sets write properly.** Shortening a name for the drive's display
+threw away the letter or number saying which disk of a set a file was — it sits
+at the end, which is where trimming cut — so every disk of a set arrived at one
+name and the write refused. The disk now survives, and it is the middle of a
+name that gives way instead: what sits in brackets is the publisher, and
+"Another World (Delphine + U.S. Gold) A.adf" is written as "Another World A.adf".
+
+**A write that cannot go ahead says what to do about it.** Verify used to list
+its reasons and leave the button dark. It now names the staged titles standing in
+the way — two that would be written over one another, one whose file has gone
+from the cache — and offers to take them out.
+
+**Titles are readable.** The title column was the narrowest in the table; it is
+now the widest, a long name loses its middle rather than its ends, and hovering
+gives the name in full.
+
+**Downloads belong to the site they came from**, not to a source apiece. A
+library that grew a source per download tidies itself up when it is read.
+
+**Categories are worked out from more than folders.** A download has no folders
+to read, so the site's own sections answer instead — a title found under
+"demos" is one — and failing that the title's own name, on whole words only.
+Anything unrecognised stays Unsorted rather than being guessed at.
+
 ## What is new in 0.3.0
 
 **Help says which version this is**, taken from the application itself rather

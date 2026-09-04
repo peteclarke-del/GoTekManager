@@ -28,10 +28,14 @@ profile's exact name.
 - Read-only browsing of folders, mounted volumes, Linux GVFS desktop mounts such
   as SMB shares, and FAT `.img`/`.ima` images.
 - Categories — games, applications, demos, magazines, utilities, music,
-  education, system — read from the folders an organised collection already uses
-  and set by hand for the rest, with a Category folder layout that splits a stick
-  by what the titles are. `{category}` is a folder-template token too, so a
+  education, system — worked out from the folders an organised collection already
+  uses, from the sections a site sorts its own downloads into, and failing those
+  from a title's own name on whole words; anything unrecognised stays Unsorted
+  rather than being guessed at. A Category folder layout splits a stick by what
+  the titles are, and `{category}` is a folder-template token too, so a
   multi-machine stick can be `{platform}/{category}`.
+- Downloads join one source per site rather than one per download, so the list of
+  local sources stays the folders you chose.
 - A chosen destination becomes a profile only once its platform and firmware have
   been confirmed, rather than being guessed from the folder name and applied
   silently.
