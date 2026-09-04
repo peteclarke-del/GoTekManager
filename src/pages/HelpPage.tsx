@@ -78,10 +78,14 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     question: 'Where do categories come from?',
     answer: (
       <>
-        From the folders a collection already uses: a title under{' '}
-        <code>Applications</code> or <code>Games [ADF]</code> is read as one, deepest
-        folder first, and anything unrecognised is left unset rather than guessed at.
-        Set the rest in the library table, several at a time with the tick boxes.
+        From the best evidence there is, in order. The folders a collection already
+        uses — a title under <code>Applications</code> or <code>Games [ADF]</code> is
+        read as one, deepest folder first. For a download there are none, so the site's
+        own sections answer instead, and failing that the title's own name, matched on
+        whole words so "Demolition Man" is not a demo. Anything unrecognised is left
+        Unsorted rather than guessed at, because a wrong category is silent and puts a
+        title in the wrong folder on the drive. Set those in the library table, several
+        at a time with the tick boxes.
       </>
     ),
   },

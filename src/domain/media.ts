@@ -154,7 +154,7 @@ export function formatBytes(bytes: number): string {
  * A number is written `D2` rather than `2`, which on a two-line display cannot
  * be mistaken for a year or a sequel.
  */
-export function splitDiskMarker(stem: string): { title: string; marker: string } {
+function splitDiskMarker(stem: string): { title: string; marker: string } {
   const bracketed = stem.match(/[([]\s*(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\b[^)\]]*[)\]]/i)
   if (bracketed) {
     return {
