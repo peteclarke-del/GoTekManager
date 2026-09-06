@@ -1,6 +1,6 @@
 import { Check, ChevronRight, HardDrive, Pencil } from 'lucide-react'
 import { requireFirmware, requirePlatform } from '../../domain/catalog'
-import { formatBytes } from '../../domain/media'
+import { formatBytes, namingChoice } from '../../domain/media'
 import { Empty } from '../../components/Feedback'
 import type { Profile } from '../../domain/types'
 import { isWritable } from '../../state/workspace'
@@ -81,7 +81,7 @@ export function ProfileStep({
           </div>
           <div>
             <span>File naming</span>
-            <b>{active.naming === 'oled' ? 'OLED friendly' : 'Original'}</b>
+            <b>{namingChoice(active.naming).name}</b>
           </div>
           {active.destination.availableBytes !== undefined && (
             <div>

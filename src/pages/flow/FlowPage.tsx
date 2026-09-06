@@ -9,7 +9,11 @@ import {
   managedFormats,
   transferOperations,
 } from '../../domain/media'
-import { inferCategory } from '../../domain/categories'
+import {
+  categoryFolder,
+  destinationCategoryFolders,
+  inferCategory,
+} from '../../domain/categories'
 import { downloadSourceOf } from '../../domain/downloads'
 import { basename } from '../../domain/paths'
 import { upsertById } from '../../domain/records'
@@ -120,6 +124,29 @@ export function FlowPage({
 
   const platform = requirePlatform(profile?.platformId)
   const browser = useDirectoryBrowser(profile, true)
+
+  /**
+   * The category folders this destination already uses, as it spells them.
+   *
+   * Only read at the root, where they are, and never applied on its own: a
+   * stick calling its applications folder `Applications` is a fact about the
+   * stick, but writing there instead of to `Apps` changes where this profile
+   * puts things, and that is the user's decision to make.
+   */
+  const usesCategories =
+    profile?.organise &&
+    (profile.folderLayout === 'category' ||
+      (profile.folderLayout === 'custom' &&
+        (profile.folderTemplate ?? '').includes('{category}')))
+
+  const unadopted = useMemo(() => {
+    if (!profile || !usesCategories) return []
+    const root = browser.isImage ? '' : profile.destination.path
+    if (browser.path !== root) return []
+    return Object.entries(destinationCategoryFolders(browser.entries)).filter(
+      ([id, folder]) => (profile.categoryFolders?.[id] ?? categoryFolder(id)) !== folder,
+    )
+  }, [profile, usesCategories, browser.entries, browser.path, browser.isImage])
 
   // Switching profile restarts the flow: a plan, a set of staged edits, and a
   // typed confirmation only ever mean something for one destination.
@@ -245,21 +272,40 @@ export function FlowPage({
     }
   }
 
-  const refreshLocation = async (source: SourceLocation) => {
-    setBusySourceId(source.id)
-    setSourceStatus({ kind: 'info', text: `Re-indexing ${source.name}…` })
-    try {
-      const found = await indexSource(source)
-      setSourceStatus({
-        kind: 'success',
-        text: `Re-indexed ${source.name}: ${found} recognised file${found === 1 ? '' : 's'}.`,
-      })
-    } catch (reason) {
-      setSourceStatus({ kind: 'error', text: errorMessage(reason) })
-    } finally {
-      setBusySourceId('')
+  /**
+   * Re-indexes sources in turn, which is what re-reading one and scanning them
+   * all both amount to.
+   *
+   * One source that cannot be read does not abandon the rest: a share that is
+   * no longer mounted is worth reporting, not worth losing the other nine
+   * sources over.
+   */
+  const reindexSources = async (chosen: SourceLocation[]) => {
+    const failures: string[] = []
+    let found = 0
+    for (const source of chosen) {
+      setBusySourceId(source.id)
+      setSourceStatus({ kind: 'info', text: `Re-indexing ${source.name}…` })
+      try {
+        found += await indexSource(source)
+      } catch (reason) {
+        failures.push(`${source.name}: ${errorMessage(reason)}`)
+      }
     }
+    setBusySourceId('')
+    const files = `${found} recognised file${found === 1 ? '' : 's'}`
+    const what =
+      chosen.length === 1
+        ? `Re-indexed ${chosen[0]?.name}: ${files}.`
+        : `Re-indexed ${chosen.length} sources: ${files}.`
+    setSourceStatus(
+      failures.length
+        ? { kind: 'error', text: `${what} Could not read ${failures.join('; ')}.` }
+        : { kind: 'success', text: what },
+    )
   }
+
+  const refreshLocation = (source: SourceLocation) => reindexSources([source])
 
   const importDownload = (
     download: CachedDownload,
@@ -496,6 +542,46 @@ export function FlowPage({
             </div>
           )}
 
+          {step === 2 && unadopted.length > 0 && profile && (
+            <div className="profile-mismatch">
+              <b>
+                This destination already sorts itself, and spells{' '}
+                {unadopted.length === 1 ? 'one folder' : `${unadopted.length} folders`}{' '}
+                differently
+              </b>
+              <span>
+                It has {unadopted.map(([, folder]) => <code key={folder}>{folder}/</code>)
+                  .reduce<React.ReactNode[]>(
+                    (list, node, index) => (index ? [...list, ', ', node] : [node]),
+                    [],
+                  )}{' '}
+                where this profile would write{' '}
+                {unadopted.map(([id]) => (
+                  <code key={id}>{categoryFolder(id)}/</code>
+                ))}
+                . Writing to its own folders fills them; writing to ours makes a second set
+                beside them.
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  dispatch({
+                    type: 'profileUpdated',
+                    profile: {
+                      ...profile,
+                      categoryFolders: {
+                        ...profile.categoryFolders,
+                        ...Object.fromEntries(unadopted),
+                      },
+                    },
+                  })
+                }
+              >
+                Use the folders already here
+              </button>
+            </div>
+          )}
+
           {step === 2 ? (
             <ContentsStep
               profile={profile}
@@ -703,6 +789,7 @@ export function FlowPage({
               sources={workspace.sources}
               collection={collection}
               addLocation={() => void addLocation()}
+              reindexSources={reindexSources}
               refreshLocation={(source) => void refreshLocation(source)}
               renameLocation={(source) => dispatch({ type: 'sourceRenamed', source })}
               removeLocation={(source) => dispatch({ type: 'sourceRemoved', source })}

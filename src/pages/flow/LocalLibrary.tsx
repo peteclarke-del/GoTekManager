@@ -10,6 +10,7 @@ import {
   Search,
   Tag,
   Trash2,
+  Wand2,
 } from 'lucide-react'
 import {
   BulkBar,
@@ -19,6 +20,7 @@ import {
 } from '../../components/BulkSelection'
 import { Empty, InlineStatus } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
+import { BulkAddDialog } from './BulkAddDialog'
 import { acceptedFormats, platforms, requireFirmware, type Platform } from '../../domain/catalog'
 import { categories } from '../../domain/categories'
 import {
@@ -27,21 +29,24 @@ import {
   forProfile,
   formatBytes,
   isFirmwareCompatible,
+  namingLabel,
   outputFileName,
   outputFolder,
-  transferOperations,
+  setIndexOf,
+  SINGLE_DISC,
+  type SetPosition,
 } from '../../domain/media'
 import { relativeTo } from '../../domain/paths'
-import type {
-  FileStatus,
-  MediaItem,
-  Profile,
-  SourceLocation,
-  TargetFileStatus,
-} from '../../domain/types'
-import { compareTargetFiles } from '../../native/commands'
+import {
+  isOnTarget,
+  PRESENCE_BY_STATUS,
+  PRESENCE_ORDER,
+  type Presence,
+} from '../../domain/presence'
+import type { MediaItem, Profile, SourceLocation } from '../../domain/types'
 import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { useTargetPresence } from '../../hooks/useTargetPresence'
 import { useTitleRoom } from '../../hooks/useTitleRoom'
 import type { TablePreferences } from '../../state/useWorkspace'
 
@@ -55,36 +60,6 @@ const PRESENCE_FILTERS: Array<[PresenceFilter, string]> = [
 ]
 
 /**
- * Present means the destination holds these contents somewhere, whether or not
- * it is where this profile would write them. Unavailable counts as missing:
- * whatever is wrong with it, it is not on the media.
- */
-function isOnTarget(presence: Presence): boolean {
-  return presence === 'Identical' || presence === 'Elsewhere'
-}
-
-/** How a library title compares with what is already on the destination. */
-type Presence =
-  | 'Unchecked'
-  | 'Checking'
-  | 'New'
-  | 'Identical'
-  | 'Different'
-  | 'Elsewhere'
-  | 'Unavailable'
-
-/**
- * How many titles are compared with the destination without being asked.
- *
- * Presence is decided by contents, which means reading every title: exact, and
- * not free. For a few hundred that is a moment. For a few thousand — a library
- * of archived titles on a network share, say — it is minutes, and doing it the
- * instant the step opens looks like the application has hung. Beyond this many,
- * the check is offered rather than taken.
- */
-const AUTOMATIC_CHECK_LIMIT = 500
-
-/**
  * How many titles the table draws at once.
  *
  * Every row carries a platform and a category to choose from, which is some
@@ -94,25 +69,6 @@ const AUTOMATIC_CHECK_LIMIT = 500
  * are one button away — or, more usually, one search away.
  */
 const PAGE_SIZE = 150
-
-const PRESENCE_BY_STATUS: Record<FileStatus, Presence> = {
-  new: 'New',
-  identical: 'Identical',
-  different: 'Different',
-  elsewhere: 'Elsewhere',
-  unavailable: 'Unavailable',
-}
-
-/** Sort order for the target column: the most actionable state first. */
-const PRESENCE_ORDER: Presence[] = [
-  'New',
-  'Different',
-  'Elsewhere',
-  'Identical',
-  'Unavailable',
-  'Checking',
-  'Unchecked',
-]
 
 /** Which titles to show, by whether this profile already stages them. */
 type ProfileFilter = 'all' | 'staged' | 'unstaged'
@@ -150,6 +106,7 @@ export function LocalLibrary({
   sources,
   collection,
   addLocation,
+  reindexSources,
   refreshLocation,
   renameLocation,
   removeLocation,
@@ -169,6 +126,8 @@ export function LocalLibrary({
   sources: SourceLocation[]
   collection: MediaItem[]
   addLocation: () => void
+  /** Re-indexes a set of sources, used by the scan of everything. */
+  reindexSources: (chosen: SourceLocation[]) => Promise<void>
   refreshLocation: (source: SourceLocation) => void
   renameLocation: (source: SourceLocation) => void
   removeLocation: (source: SourceLocation) => void
@@ -189,10 +148,8 @@ export function LocalLibrary({
   const [profileFilter, setProfileFilter] = useState<ProfileFilter>('all')
   const [editing, setEditing] = useState<SourceLocation | null>(null)
   const [renaming, setRenaming] = useState<MediaItem | null>(null)
-  const [statuses, setStatuses] = useState<Record<string, TargetFileStatus>>({})
-  const [checking, setChecking] = useState(false)
-  /** Set once the user asks for a comparison too large to run unprompted. */
-  const [checkAsked, setCheckAsked] = useState(false)
+  /** Whether the scan of every source is open. */
+  const [scanning, setScanning] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
   /** How many of the matching titles are drawn. */
   const [shown, setShown] = useState(PAGE_SIZE)
@@ -228,62 +185,19 @@ export function LocalLibrary({
     return counts
   }, [items, platform.id])
 
-  // Comparing every title with the destination is exact but not free, so it
-  // runs once per profile and library change rather than on every keystroke.
-  const comparable = useMemo(
-    () =>
-      items
-        .filter((item) => belongsToPlatform(item, platform.id))
-        // Compare against the path the title would actually be written to,
-        // which for an unassigned title means this profile's platform folder.
-        .map((item) => forProfile(item, platform.id)),
-    [items, platform.id],
+  const { statuses, checking, checked, comparable, askForCheck } = useTargetPresence(
+    profile,
+    items,
+    platform.id,
   )
+
   useEffect(() => {
     setShown(PAGE_SIZE)
   }, [query, selectedSources, presenceFilter, profileFilter, platform.id, profile.id])
 
-  const automatic = comparable.length <= AUTOMATIC_CHECK_LIMIT
-  const checked = automatic || checkAsked
-
-  // A different destination is a different answer, so an answer already given
-  // is not carried across to one that has not been asked for.
-  useEffect(() => {
-    setCheckAsked(false)
-    setStatuses({})
-  }, [profile.id, platform.id])
-
-  useEffect(() => {
-    let active = true
-    if (!comparable.length || !checked) {
-      setStatuses({})
-      return
-    }
-    setChecking(true)
-    compareTargetFiles(
-      profile.destination.path,
-      transferOperations(comparable, profile),
-    )
-      .then((results) => {
-        if (!active) return
-        setStatuses(Object.fromEntries(results.map((entry) => [entry.source, entry])))
-      })
-      .catch(() => active && setStatuses({}))
-      .finally(() => {
-        if (active) setChecking(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    comparable,
-    checked,
-    profile.destination.path,
-    profile.firmwareId,
-    profile.organise,
-    profile.folderLayout,
-    profile.naming,
-  ])
+  // Which disc of which set each title is, so a preview of the name a title
+  // will be written under says the same thing the plan will.
+  const sets = useMemo(() => setIndexOf(comparable), [comparable])
 
   const staged = useMemo(() => new Set(collection.map((item) => item.id)), [collection])
   const sourceName = (item: MediaItem) => {
@@ -370,14 +284,14 @@ export function LocalLibrary({
    * An ambiguous format is committed to this profile's platform at the moment
    * it is added, so the plan is never a guess about what a .dsk holds.
    */
-  const stage = (chosen: Row[]) => {
-    const unassigned = chosen
-      .filter((row) => !row.item.assignedPlatformId)
-      .map((row) => row.item.id)
+  const stageItems = (chosen: MediaItem[]) => {
+    const unassigned = chosen.filter((item) => !item.assignedPlatformId).map((item) => item.id)
     if (unassigned.length) assignPlatform(unassigned, platform.id)
-    addToCollection(chosen.map((row) => forProfile(row.item, platform.id)))
+    addToCollection(chosen.map((item) => forProfile(item, platform.id)))
     selection.clear()
   }
+
+  const stage = (chosen: Row[]) => stageItems(chosen.map((row) => row.item))
 
   const unstage = (chosen: Row[]) => {
     removeFromCollection(chosen.map((row) => row.item.id))
@@ -616,6 +530,19 @@ export function LocalLibrary({
           <FolderOpen />
           Add location
         </button>
+        <button
+          className="button secondary"
+          disabled={!sources.length}
+          title={
+            sources.length
+              ? `Scan every source and add everything matching a filter to ${profile.name}`
+              : 'Add a source location first'
+          }
+          onClick={() => setScanning(true)}
+        >
+          <Wand2 />
+          Add from all sources…
+        </button>
         {status && <InlineStatus kind={status.kind}>{status.text}</InlineStatus>}
       </section>
 
@@ -686,7 +613,7 @@ export function LocalLibrary({
               Matched on contents, so the names and folders do not have to agree
               {sampleFoundAt ? <> — one of them is at <code>{sampleFoundAt}</code></> : null}.
               This profile would write them to <code>{profileFolder || 'the root'}/</code>{' '}
-              using {profile.naming === 'oled' ? 'shortened OLED' : 'original'} names, which
+              using {namingLabel(profile.naming)} names, which
               would make a second copy. Change its layout and naming to match the
               destination and they will show as already in place.
             </span>
@@ -703,7 +630,7 @@ export function LocalLibrary({
             <button
               className="button secondary compact"
               disabled={checking}
-              onClick={() => setCheckAsked(true)}
+              onClick={askForCheck}
             >
               <RefreshCw className={checking ? 'spinning' : ''} />
               Check against the target
@@ -855,10 +782,26 @@ export function LocalLibrary({
         </div>
       </section>
 
+      {scanning && (
+        <BulkAddDialog
+          profile={profile}
+          platform={platform}
+          items={items}
+          sources={sources}
+          staged={staged}
+          presence={statuses}
+          reindexSources={reindexSources}
+          assignCategory={assignCategory}
+          stage={stageItems}
+          close={() => setScanning(false)}
+        />
+      )}
+
       {renaming && (
         <DisplayNameDialog
           item={renaming}
           profile={profile}
+          set={sets.get(renaming.id) ?? SINGLE_DISC}
           close={() => setRenaming(null)}
           save={(alias) => {
             setDisplayTitle(renaming.id, alias)
@@ -907,16 +850,18 @@ export function LocalLibrary({
 function DisplayNameDialog({
   item,
   profile,
+  set,
   close,
   save,
 }: {
   item: MediaItem
   profile: Profile
+  set: SetPosition
   close: () => void
   save: (alias: string) => void
 }) {
   const [alias, setAlias] = useState(item.displayTitle ?? '')
-  const preview = outputFileName({ ...item, displayTitle: alias }, profile)
+  const preview = outputFileName({ ...item, displayTitle: alias }, profile, set)
   const folder = outputFolder(item, profile)
 
   return (
@@ -930,7 +875,7 @@ function DisplayNameDialog({
         <input
           autoFocus
           value={alias}
-          placeholder={outputFileName({ ...item, displayTitle: undefined }, profile)}
+          placeholder={outputFileName({ ...item, displayTitle: undefined }, profile, set)}
           onChange={(event) => setAlias(event.target.value)}
         />
       </label>

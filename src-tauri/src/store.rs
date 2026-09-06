@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 /// Bumped whenever the schema changes; `migrate` moves an older file forward.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     naming           TEXT NOT NULL,
     verify_checksums INTEGER NOT NULL DEFAULT 0,
     removal_policy   TEXT NOT NULL DEFAULT 'keep',
-    display          TEXT
+    display          TEXT,
+    category_folders TEXT
 );
 CREATE TABLE IF NOT EXISTS sources (
     id         TEXT PRIMARY KEY,
@@ -109,6 +110,13 @@ pub struct StoredProfile {
     /// The drive's panel, written to FF.CFG. Added in schema 4.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<String>,
+    /// The destination's own folder name for each category, by category id.
+    ///
+    /// Kept as JSON for the same reason the destination is: which categories
+    /// exist belongs to the domain model, and a column apiece would mean a
+    /// migration every time one was added. Added in schema 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_folders: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +232,12 @@ fn migrate(connection: &Connection) -> Result<()> {
     // added to a table that already exists does not, so it is added here.
     add_missing_column(connection, "items", "category", "category TEXT")?;
     add_missing_column(connection, "profiles", "display", "display TEXT")?;
+    add_missing_column(
+        connection,
+        "profiles",
+        "category_folders",
+        "category_folders TEXT",
+    )?;
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -255,8 +269,8 @@ fn add_missing_column(
 fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
     let mut profiles = connection.prepare(
         "SELECT id, name, destination, platform_id, firmware_id, organise, folder_layout, \
-         folder_template, naming, verify_checksums, removal_policy, display \
-         FROM profiles ORDER BY position",
+         folder_template, naming, verify_checksums, removal_policy, display, \
+         category_folders FROM profiles ORDER BY position",
     )?;
     let mut removal_policies = std::collections::HashMap::new();
     let rows = profiles
@@ -278,6 +292,9 @@ fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
                     naming: row.get(8)?,
                     verify_checksums: row.get::<_, i64>(9)? != 0,
                     display: row.get(11)?,
+                    category_folders: row
+                        .get::<_, Option<String>>(12)?
+                        .and_then(|folders| serde_json::from_str(&folders).ok()),
                 },
                 id,
                 policy,
@@ -381,7 +398,8 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
         transaction.execute(
             "INSERT INTO profiles (id, position, name, destination, platform_id, firmware_id, \
              organise, folder_layout, folder_template, naming, verify_checksums, \
-             removal_policy, display) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+             removal_policy, display, category_folders) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 profile.id,
                 position as i64,
@@ -396,6 +414,11 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
                 profile.verify_checksums as i64,
                 policy,
                 profile.display,
+                profile
+                    .category_folders
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
             ],
         )?;
     }
@@ -529,6 +552,7 @@ mod tests {
             naming: "oled".into(),
             verify_checksums: true,
             display: Some("oled-128x64-rotate".into()),
+            category_folders: Some(serde_json::json!({ "applications": "Applications" })),
         }
     }
 
@@ -589,6 +613,14 @@ mod tests {
         assert_eq!(
             loaded.profiles[0].display.as_deref(),
             Some("oled-128x64-rotate")
+        );
+        // So do the folder names the destination already uses: a stick calling
+        // its applications folder `Applications` has to keep being written
+        // there, or the next run makes a second folder beside it and every
+        // title in it reports as filed somewhere unexpected.
+        assert_eq!(
+            loaded.profiles[0].category_folders,
+            Some(serde_json::json!({ "applications": "Applications" }))
         );
     }
 
@@ -669,6 +701,8 @@ mod tests {
         assert_eq!(loaded.profiles.len(), 1);
         // No panel named yet, which is the firmware's own default.
         assert_eq!(loaded.profiles[0].display, None);
+        // Nor any folder names of its own, so the canonical ones are used.
+        assert_eq!(loaded.profiles[0].category_folders, None);
     }
 
     #[test]

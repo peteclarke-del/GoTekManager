@@ -67,10 +67,20 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
         The platform layout writes into short per-platform folders, and the category
         layout into <code>Games</code>, <code>Apps</code>, <code>Demos</code> and the
         rest, with <code>Unsorted</code> for titles nobody has filed. A custom layout
-        combines them, as in <code>{'{platform}/{category}'}</code>. OLED naming removes
-        common release labels and trims the filename to the firmware's display width.
-        The library always keeps the canonical name, and source files are never renamed
-        or moved.
+        combines them, as in <code>{'{platform}/{category}'}</code>. If the destination
+        already sorts itself and spells a folder differently — <code>Applications</code>
+        rather than <code>Apps</code> — it can be told to use the folders already there,
+        so titles fill them instead of a second set appearing beside them.
+        <br />
+        <br />
+        Naming decides what a file is called once it reaches the drive.{' '}
+        <b>Title only</b> writes the name of the game or application and nothing else:{' '}
+        <code>Dungeon Master (1987)(FTL)(GB)[cr QTX].adf</code> becomes{' '}
+        <code>Dungeon Master.adf</code>, with a disc marker added only when the set has
+        more than one disc. <b>Shortened for the display</b> is the same name cut to the
+        firmware's display width, and the disc is never what gives up the room.{' '}
+        <b>Original filename</b> keeps whatever the collection called it. The library
+        always keeps the canonical name, and source files are never renamed or moved.
       </>
     ),
   },
@@ -82,10 +92,35 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
         uses — a title under <code>Applications</code> or <code>Games [ADF]</code> is
         read as one, deepest folder first. For a download there are none, so the site's
         own sections answer instead, and failing that the title's own name, matched on
-        whole words so "Demolition Man" is not a demo. Anything unrecognised is left
-        Unsorted rather than guessed at, because a wrong category is silent and puts a
-        title in the wrong folder on the drive. Set those in the library table, several
-        at a time with the tick boxes.
+        whole words so "Demolition Man" is not a demo. A folder named after a
+        collection's own catalogue reads too, as in{' '}
+        <code>Commodore Amiga - Games - [ADF]</code>. A bracketed{' '}
+        <code>(demo)</code> is a playable demo of a commercial game rather than a
+        demoscene production, so it does not file a title under Demos. Anything
+        unrecognised is left Unsorted rather than guessed at, because a wrong category is
+        silent and puts a title in the wrong folder on the drive. Set those in the
+        library table, several at a time with the tick boxes.
+      </>
+    ),
+  },
+  {
+    question: 'Can I fill a stick from my whole collection at once?',
+    answer: (
+      <>
+        Yes. <b>Add from all sources</b> on the Sources step re-indexes every local
+        source and then offers a filter built from what the collection itself records:
+        language, unfinished builds such as prototypes and playable demos, dumps marked
+        cracked or bad, how the software was published, region, and category. Every
+        choice shows how many titles carry it, so it is made against the library in front
+        of you.
+        <br />
+        <br />
+        Two rules do most of the work. A multi-disc set is only useful whole, so discs
+        are chosen together and a set missing one is left out and named rather than
+        half written. And where several copies of one title survive the filter, one is
+        chosen — the original first, then the fixed dump, then the alternates, and so on
+        down. Nothing is staged until you have seen how many titles it would add and
+        which folder on the drive each of them would land in.
       </>
     ),
   },

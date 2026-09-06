@@ -29,11 +29,37 @@ profile's exact name.
   as SMB shares, and FAT `.img`/`.ima` images.
 - Categories — games, applications, demos, magazines, utilities, music,
   education, system — worked out from the folders an organised collection already
-  uses, from the sections a site sorts its own downloads into, and failing those
-  from a title's own name on whole words; anything unrecognised stays Unsorted
-  rather than being guessed at. A Category folder layout splits a stick by what
-  the titles are, and `{category}` is a folder-template token too, so a
-  multi-machine stick can be `{platform}/{category}`.
+  uses, including the compound names collections take from their own catalogues
+  such as `Commodore Amiga - Games - [ADF]`, from the name of the archive a title
+  sits in, from the sections a site sorts its own downloads into, and failing
+  those from a title's own name on whole words; anything unrecognised stays
+  Unsorted rather than being guessed at. A bracketed `(demo)` is read as a
+  playable demo of a commercial game rather than a demoscene production, so game
+  demos do not end up filed with the demoscene. A Category folder layout splits a
+  stick by what the titles are, and `{category}` is a folder-template token too,
+  so a multi-machine stick can be `{platform}/{category}`.
+- A destination that already sorts itself keeps its own folder names. A stick
+  holding `Applications/` is offered them rather than having `Apps/` written
+  beside it, and the choice is confirmed on the profile rather than applied
+  silently.
+- One name for a title however it arrived. A file written to the drive is called
+  what the software is and nothing else: `Dungeon Master (1987)(FTL)(GB)(Disk 1
+  of 2)[cr QTX].adf` becomes `Dungeon Master D1.adf`, and a one-disc game gets no
+  disc marker at all. The year, publisher, region, language, version and dump
+  flags are all left in the library, which keeps the original name. A local scan,
+  a bulk add and an online download all go through the same rule, so a stick is
+  never a mixture of two conventions. Naming for a small panel is a separate
+  choice, and the disc marker is never what gives up the room.
+- Filling a stick from a whole collection in one pass, with a filter built from
+  what the collection itself records — language, prototypes and playable demos,
+  dumps marked cracked, alternate or bad, how the software was published, region,
+  and category — each choice showing how many titles carry it. A multi-disc set is
+  taken whole from one release where one is whole and filled disc by disc where
+  none is, and a set missing a disc is left out and named rather than half
+  written. Where several copies of a title survive, one is chosen: the original
+  first, then the fixed dump, then the alternates. Nothing is staged before the
+  preview has said how many titles it would add and which folder on the drive each
+  would land in.
 - Downloads join one source per site rather than one per download, so the list of
   local sources stays the folders you chose.
 - A chosen destination becomes a profile only once its platform and firmware have

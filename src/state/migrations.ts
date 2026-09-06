@@ -41,7 +41,7 @@ export const defaultSettings: AppSettings = {
     firmwareId: 'flashfloppy',
     organise: true,
     folderLayout: 'platform',
-    naming: 'oled',
+    naming: 'title',
   },
 }
 
