@@ -40,21 +40,33 @@ import {
   isFirmwareCompatible,
   isOutsideProfile,
   managedFormats,
-  oledName,
+  namingChoice,
   outputFileName,
   outputFolder,
+  releaseName,
   renderFolderTemplate,
+  setIndexOf,
   softwareTitleKey,
   transferOperations,
 } from '../src/domain/media'
 import {
   categories,
   categoryFolder,
+  categoryFolderFor,
+  destinationCategoryFolders,
   inferCategory,
   inferCategoryFromName,
   inferCategoryId,
   UNCATEGORISED,
 } from '../src/domain/categories'
+import { dumpRank, readTags, releaseSignature } from '../src/domain/tags'
+import {
+  CLEAN_RELEASES,
+  judge,
+  planBulkAdd,
+  SCAN_PRESETS,
+  type ScanFilter,
+} from '../src/domain/bulkAdd'
 import {
   basename,
   dottedExtensionOf,
@@ -206,64 +218,138 @@ check('an unassigned title still matches its likely platform', () => {
   assert.equal(belongsToPlatform({ ...item, assignedPlatformId: 'electron' }, 'bbc'), false)
 })
 
-check('OLED naming trims release labels but keeps the extension', () => {
-  assert.equal(oledName('A Very Long Retro Game Title Indeed.ssd', 24), 'A Very Long Retro Ga.ssd')
-  // A label that says nothing about which file this is still goes.
-  assert.equal(oledName('Turrican II (1991 demo).adf', 24), 'Turrican II.adf')
-  // Factory firmware has a much smaller display.
-  assert.equal(oledName('Elite.ssd', 8).length <= 8, true)
+/** A library title, named as a collection would name it. */
+function media(name: string, platformId = 'bbc'): MediaItem {
+  return { ...classifyMedia(entry(name), '/library'), assignedPlatformId: platformId }
+}
+
+check('a title is written under its own name and nothing else', () => {
+  // Everything a collection records about a release — the year, the publisher,
+  // the region, the language, the dump — says which copy this is. None of it
+  // says what the software is, and none of it fits a two-line display.
+  assert.equal(
+    releaseName(media('Dungeon Master (1987)(FTL)(GB)[cr QTX].adf', 'amiga')),
+    'Dungeon Master.adf',
+  )
+  assert.equal(releaseName(media('Elite (1984)(Acornsoft).ssd')), 'Elite.ssd')
+  assert.equal(releaseName(media('Zool 1 (Gremlin).adf', 'amiga')), 'Zool 1.adf')
+  assert.equal(releaseName(media('Turrican II (1991 demo).adf', 'amiga')), 'Turrican II.adf')
+
+  // A title whose own name looks like a tag is still its own name.
+  assert.equal(releaseName(media('Elite II.ssd')), 'Elite II.ssd')
+  assert.equal(releaseName(media('Rick Dangerous II.adf', 'amiga')), 'Rick Dangerous II.adf')
+  assert.equal(releaseName(media('SWIV.ssd')), 'SWIV.ssd')
 })
 
-check('which disk of a set a file is survives being trimmed for the display', () => {
-  // The whole point: two disks must never arrive at one name. They did, and
-  // the write refused — a four-disk game became one file's worth of collisions,
-  // because the letter that tells them apart sits exactly where trimming cuts.
-  const set = [
-    'Another World (Delphine + U.S. Gold) A.adf',
-    'Another World (Delphine + U.S. Gold) B.adf',
-    'Another World (Delphine + U.S. Gold) C.adf',
-  ].map((name) => oledName(name, 24))
+check('a disc is only marked when the set has more than one', () => {
+  // A one-disc game is called what it is. Numbering a set of one says nothing
+  // and takes room the display does not have.
+  const single = [media('Elite (1984).ssd')]
+  assert.equal(releaseName(single[0], setIndexOf(single).get(single[0].id)), 'Elite.ssd')
 
-  assert.equal(new Set(set).size, 3, `two disks share a name: ${set.join(', ')}`)
-  assert.ok(set.every((name) => name.length <= 24))
-  assert.deepEqual(set, [
+  // The whole point of the marker: two discs must never arrive at one name.
+  // They did, and the write refused — a four-disc game became one file's worth
+  // of collisions, because the letter telling them apart sits exactly where
+  // trimming cuts.
+  const set = [
+    media('Another World (1991)(Delphine + U.S. Gold) A.adf', 'amiga'),
+    media('Another World (1991)(Delphine + U.S. Gold) B.adf', 'amiga'),
+    media('Another World (1991)(Delphine + U.S. Gold) C.adf', 'amiga'),
+  ]
+  const positions = setIndexOf(set)
+  const names = set.map((item) => releaseName(item, positions.get(item.id), 24))
+  assert.equal(new Set(names).size, 3, `two discs share a name: ${names.join(', ')}`)
+  assert.deepEqual(names, [
     'Another World A.adf',
     'Another World B.adf',
     'Another World C.adf',
   ])
 
-  // The publisher goes before the name does. What sits in brackets says which
-  // release this is, never which file, so it is the first thing to lose when
-  // the display cannot hold everything — leaving the game and the disk.
-  assert.equal(
-    oledName('Another World (Delphine + U.S. Gold) A.adf', 24),
-    'Another World A.adf',
+  // However the set writes it. A number becomes D2, which on a two-line
+  // display cannot be read as a year or a sequel.
+  const numbered = [media('Elite (Disk 1 of 2).adf', 'amiga'), media('Elite (Disk 2 of 2).adf', 'amiga')]
+  const marked = setIndexOf(numbered)
+  assert.deepEqual(
+    numbered.map((item) => releaseName(item, marked.get(item.id))),
+    ['Elite D1.adf', 'Elite D2.adf'],
   )
-  assert.equal(oledName('Apocalypse (Miracle + Virgin) C.adf', 24), 'Apocalypse C.adf')
-  // A name that already fits keeps its brackets: nothing is dropped for the
-  // sake of it.
-  assert.equal(oledName('Zool 1 (Gremlin).adf', 24), 'Zool 1 (Gremlin).adf')
-  // Nothing bracketed to drop, so the front gives way and the disk still stands.
+
+  // Written without brackets, or as a side, and read just the same.
+  const loose = [media('Monkey Island Disk 4.adf', 'amiga'), media('Monkey Island Disk 3.adf', 'amiga')]
   assert.equal(
-    oledName('An Extremely Long Amiga Game Title Without Brackets B.adf', 24),
+    releaseName(loose[0], setIndexOf(loose).get(loose[0].id)),
+    'Monkey Island D4.adf',
+  )
+  const sides = [media('Lemmings (Side A).adf', 'amiga'), media('Lemmings (Side B).adf', 'amiga')]
+  assert.equal(releaseName(sides[1], setIndexOf(sides).get(sides[1].id)), 'Lemmings B.adf')
+
+  // A set says how many discs it has even when only one of them is here, so a
+  // disc that arrives on its own is still numbered rather than renamed.
+  const partial = [media('Elite (Disk 1 of 3).adf', 'amiga')]
+  assert.equal(releaseName(partial[0], setIndexOf(partial).get(partial[0].id)), 'Elite D1.adf')
+})
+
+check('a name cut for the display gives up the title, never the disc', () => {
+  assert.equal(
+    releaseName(media('A Very Long Retro Game Title Indeed.ssd'), undefined, 24),
+    'A Very Long Retro Ga.ssd',
+  )
+  // Factory firmware has a much smaller display.
+  assert.ok(releaseName(media('Elite.ssd'), undefined, 8).length <= 8)
+
+  const set = [
+    media('An Extremely Long Amiga Game Title Without Brackets A.adf', 'amiga'),
+    media('An Extremely Long Amiga Game Title Without Brackets B.adf', 'amiga'),
+  ]
+  const positions = setIndexOf(set)
+  assert.equal(
+    releaseName(set[1], positions.get(set[1].id), 24),
     'An Extremely Long B.adf',
   )
-
-  // However the set writes it. A number is written D2, which on a two-line
-  // display cannot be read as a year or a sequel.
-  assert.equal(oledName('Elite_(Disk 1)_1984.ssd', 24), 'Elite 1984 D1.ssd')
-  assert.equal(oledName('Elite (Disk 2 of 3).adf', 24), 'Elite D2.adf')
-  assert.equal(oledName('Monkey Island Disk 4.adf', 24), 'Monkey Island D4.adf')
-  assert.equal(oledName('Lemmings (Side B).adf', 24), 'Lemmings B.adf')
-
-  // And a name that merely ends in something is left alone.
-  assert.equal(oledName('Zool 1 (Gremlin).adf', 24), 'Zool 1 (Gremlin).adf')
-  assert.equal(oledName('Rick Dangerous II.adf', 24), 'Rick Dangerous II.adf')
-
-  // Even with no room at all, the disk is what survives.
-  const tight = oledName('An Extremely Long Amiga Game Title (Publisher) B.adf', 20)
+  // Even with no room at all, the disc is what survives.
+  const tight = releaseName(set[1], positions.get(set[1].id), 20)
   assert.ok(tight.length <= 20)
   assert.ok(tight.endsWith(' B.adf'), tight)
+})
+
+check('every route into the library writes the same name', () => {
+  // A title scanned from a folder, one read out of an archive, and one
+  // downloaded from a catalogue are the same software and must arrive on the
+  // drive under the same name, or a stick becomes a mixture of conventions.
+  const profile: Profile = { ...bbcProfile, platformId: 'amiga', folderLayout: 'flat' }
+  const scanned = media('Dungeon Master (1987)(FTL)(GB).adf', 'amiga')
+  const archived: MediaItem = {
+    ...scanned,
+    id: '/library/Dungeon Master (1987)(FTL)(GB).zip!/disk1.adf',
+    path: '/library/Dungeon Master (1987)(FTL)(GB).zip!/disk1.adf',
+    name: 'disk1.adf',
+  }
+  const downloaded: MediaItem = {
+    ...scanned,
+    id: '/cache/dl/Dungeon Master (1987)(FTL)(GB).adf',
+    path: '/cache/dl/Dungeon Master (1987)(FTL)(GB).adf',
+  }
+
+  for (const item of [scanned, archived, downloaded]) {
+    const [operation] = transferOperations([item], profile)
+    assert.equal(operation.relativePath, 'Dungeon Master.adf', item.path)
+  }
+})
+
+check('two titles that reduce to one name are kept apart', () => {
+  // Stripping a name to its title is exactly what makes two files collide. The
+  // planner would refuse the write; naming them apart is better than explaining
+  // a collision the user did not cause.
+  const profile: Profile = { ...bbcProfile, folderLayout: 'flat' }
+  const operations = transferOperations(
+    [media('Elite (1984)(Acornsoft).ssd'), media('Elite (1987)(Firebird).ssd')],
+    profile,
+  )
+
+  assert.equal(operations[0].relativePath, 'Elite.ssd')
+  assert.notEqual(operations[1].relativePath, operations[0].relativePath)
+  // The difference the collection itself recorded, rather than a bare number.
+  assert.equal(operations[1].relativePath, 'Elite (1987).ssd')
 })
 
 check('title keys normalise enough to compare, and no further', () => {
@@ -310,23 +396,20 @@ check('an unassigned title is read as belonging to the profile being prepared', 
 })
 
 check('transfer operations apply the profile layout and naming', () => {
-  const item: MediaItem = {
-    ...classifyMedia(entry('Elite (Disk 1).ssd'), '/library'),
-    assignedPlatformId: 'bbc',
-  }
+  const set = [media('Elite (Disk 1).ssd'), media('Elite (Disk 2).ssd')]
 
   // The disk number survives the shortening: it is the only thing telling this
   // file apart from the rest of its set, and dropping it made them collide.
-  const [organised] = transferOperations([item], bbcProfile)
+  const [organised] = transferOperations(set, bbcProfile)
   assert.equal(organised.relativePath, 'BBC/Elite D1.ssd')
 
-  const [flat] = transferOperations([item], { ...bbcProfile, folderLayout: 'flat' })
+  const [flat] = transferOperations(set, { ...bbcProfile, folderLayout: 'flat' })
   assert.equal(flat.relativePath, 'Elite D1.ssd')
 
-  const [original] = transferOperations([item], { ...bbcProfile, naming: 'original' })
+  const [original] = transferOperations(set, { ...bbcProfile, naming: 'original' })
   assert.equal(original.relativePath, 'BBC/Elite (Disk 1).ssd')
 
-  const [unorganised] = transferOperations([item], { ...bbcProfile, organise: false })
+  const [unorganised] = transferOperations(set, { ...bbcProfile, organise: false })
   assert.equal(unorganised.relativePath, 'Elite D1.ssd')
 })
 
@@ -397,9 +480,10 @@ check('a custom layout drives the actual destination path', () => {
 
   const [operation] = transferOperations([item], custom)
 
-  // OLED naming strips release labels such as "(disk 2)", but a year is part
-  // of the title and is kept.
-  assert.equal(operation.relativePath, 'BBC/E/Elite (1984).ssd')
+  // The layout decides the folder and the naming rule decides the file: the
+  // year is something the collection recorded about this copy, not part of what
+  // the software is called, so it does not reach the drive.
+  assert.equal(operation.relativePath, 'BBC/E/Elite.ssd')
 })
 
 check('naming and layout decide where a title is written, never what it is', () => {
@@ -444,8 +528,8 @@ check('a display alias decides the written name and nothing else', () => {
     assignedPlatformId: 'bbc',
   }
 
-  // Without an alias, OLED naming applies.
-  assert.equal(outputFileName(item, bbcProfile), 'Elite (1984).ssd')
+  // Without an alias, the profile's naming rule applies.
+  assert.equal(outputFileName(item, bbcProfile), 'Elite.ssd')
 
   const aliased = { ...item, displayTitle: 'ELITE' }
   assert.equal(outputFileName(aliased, bbcProfile), 'ELITE.ssd')
@@ -460,7 +544,7 @@ check('a display alias decides the written name and nothing else', () => {
   // An alias never changes which folder the title lands in.
   assert.equal(outputFolder(aliased, bbcProfile), outputFolder(item, bbcProfile))
   // An empty alias falls back to the generated name.
-  assert.equal(outputFileName({ ...item, displayTitle: '  ' }, bbcProfile), 'Elite (1984).ssd')
+  assert.equal(outputFileName({ ...item, displayTitle: '  ' }, bbcProfile), 'Elite.ssd')
 })
 
 check('firmware compatibility needs the machine, the firmware, and the format', () => {
@@ -934,6 +1018,410 @@ check('a title with no telling folders is read by its own name', () => {
     inferCategory('/cache/downloads/site-1/dl_AAA/images/Elite demo.adf', '/cache', 'Elite demo.adf'),
     'demos',
   )
+})
+
+// ---------------------------------------------------------------------------
+// Release tags
+// ---------------------------------------------------------------------------
+
+check('release tags read the same on every machine', () => {
+  // The vocabulary belongs to the naming convention, not to the hardware. If
+  // any of this needed a per-machine rule the whole design would be wrong, so
+  // one name per machine is checked against one set of expectations.
+  const named = [
+    'Elite (1984)(Acornsoft)(GB)[cr]. ssd',
+    'Elite (1984)(Acornsoft)(GB)[cr].ssd',
+    'Elite (1984)(Firebird)(GB)[cr].adf',
+    'Elite (1984)(Firebird)(GB)[cr].dsk',
+    'Elite (1984)(Firebird)(GB)[cr].trd',
+    'Elite (1984)(Firebird)(GB)[cr].st',
+    'Elite (1984)(Firebird)(GB)[cr].atr',
+  ]
+  for (const name of named) {
+    const tags = readTags(name)
+    assert.equal(tags.bareTitle, 'Elite', name)
+    assert.equal(tags.year, '1984', name)
+    assert.deepEqual(tags.regions, ['GB'], name)
+    assert.deepEqual(tags.dumpFlags, ['cracked'], name)
+  }
+})
+
+check('every group of a release name is read, and nothing is silently dropped', () => {
+  const tags = readTags('Dungeon Master (1987)(FTL)(GB)(Disk 1 of 2)[cr QTX].adf')
+
+  assert.equal(tags.bareTitle, 'Dungeon Master')
+  assert.equal(tags.year, '1987')
+  assert.equal(tags.publisher, 'FTL')
+  assert.deepEqual(tags.regions, ['GB'])
+  assert.deepEqual(tags.dumpFlags, ['cracked'])
+  assert.deepEqual(tags.disk, { label: 'D1', index: 1, of: 2 })
+
+  // A numbered or annotated flag is still that flag.
+  assert.deepEqual(readTags('Elite [a2].ssd').dumpFlags, ['alternate'])
+  assert.deepEqual(readTags('Elite [b2 corrupt].ssd').dumpFlags, ['bad'])
+  assert.deepEqual(readTags('Elite [tr en].ssd').dumpFlags, ['translated'])
+  // `[tr]` is a translation and `[t]` a trainer: reading one as the other would
+  // put every translated game in the wrong bucket.
+  assert.deepEqual(readTags('Elite [t].ssd').dumpFlags, ['trained'])
+
+  // Case is what separates a language from the country it is spoken in.
+  assert.deepEqual(readTags('Elite (de).adf').languages, ['de'])
+  assert.deepEqual(readTags('Elite (DE).adf').regions, ['DE'])
+  assert.deepEqual(readTags('Elite (DE).adf').languages, [])
+  assert.equal(readTags('Elite (M4).adf').multiLanguage, true)
+
+  // A bracket nothing recognised is part of no rule, but it is not thrown away:
+  // it is what tells two otherwise identical releases apart.
+  assert.deepEqual(readTags('Elite (Some Publisher).ssd').unknown, ['Some Publisher'])
+
+  // An unfinished build says so, and is not a demoscene production.
+  assert.equal(readTags('Zool (1992)(Gremlin)(demo).adf').devStatus, 'demo')
+  assert.equal(readTags('Zool (1992)(Gremlin)(proto).adf').devStatus, 'prototype')
+  assert.equal(readTags('Elite (1984)(PD).ssd').distribution, 'pd')
+})
+
+check('a title that states no language is never read as English', () => {
+  // The convention is that it usually is. Assuming so silently would take a few
+  // thousand untagged files out of an English-only scan without saying why.
+  assert.deepEqual(readTags('Elite (1984).ssd').languages, [])
+  assert.equal(readTags('Elite (1984).ssd').multiLanguage, false)
+})
+
+check('the preference order runs from the original down to the unwanted', () => {
+  const rank = (name: string) => dumpRank(readTags(name))
+
+  assert.equal(rank('Elite (1984).ssd'), rank('Elite (1984)[!].ssd'))
+  assert.ok(rank('Elite (1984).ssd') < rank('Elite (1984)[f].ssd'))
+  assert.ok(rank('Elite (1984)[f].ssd') < rank('Elite (1984)[a].ssd'))
+  assert.ok(rank('Elite (1984)[a].ssd') < rank('Elite (1984)[cr].ssd'))
+  assert.ok(rank('Elite (1984)[cr].ssd') < rank('Elite (1984)[b].ssd'))
+
+  // Two discs belong to one release when the collection recorded the same
+  // things about them, which is what lets a set be taken whole.
+  assert.equal(
+    releaseSignature(readTags('Elite (1984)(Acornsoft)(Disk 1 of 2).ssd')),
+    releaseSignature(readTags('Elite (1984)(Acornsoft)(Disk 2 of 2).ssd')),
+  )
+  assert.notEqual(
+    releaseSignature(readTags('Elite (1984)(Disk 1 of 2).ssd')),
+    releaseSignature(readTags('Elite (1984)(Disk 2 of 2)[a].ssd')),
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Adding from every source at once
+// ---------------------------------------------------------------------------
+
+const scanProfile: Profile = { ...bbcProfile, folderLayout: 'flat', naming: 'title' }
+
+function scan(names: string[], filter: ScanFilter = CLEAN_RELEASES) {
+  return planBulkAdd(names.map((name) => media(name)), scanProfile, 'bbc', filter)
+}
+
+function written(names: string[], filter: ScanFilter = CLEAN_RELEASES): string[] {
+  return scan(names, filter).included.map((item) => item.name).sort()
+}
+
+check('a scan takes one copy of a title, the original first', () => {
+  const names = [
+    'Elite (1984)(Acornsoft)[cr].ssd',
+    'Elite (1984)(Acornsoft)[a].ssd',
+    'Elite (1984)(Acornsoft).ssd',
+  ]
+  assert.deepEqual(written(names), ['Elite (1984)(Acornsoft).ssd'])
+
+  // No original kept, so the next best is taken rather than nothing.
+  assert.deepEqual(
+    written(['Elite (1984)[a2].ssd', 'Elite (1984)[a].ssd'], {
+      ...CLEAN_RELEASES,
+      dumpFlags: ['alternate'],
+    }),
+    ['Elite (1984)[a].ssd'],
+  )
+
+  // Whatever order the library was read in.
+  const shuffled = [...names].reverse()
+  assert.deepEqual(written(shuffled), written(names))
+})
+
+check('a set is taken whole from one release where one is whole', () => {
+  // Disc 1 exists twice and disc 2 only once. Taking the best disc 1 and the
+  // best disc 2 separately would build the game out of two different releases
+  // when one release holds all of it.
+  const plan = scan(
+    [
+      'Dungeon Master (1987)(FTL)(Disk 1 of 2).ssd',
+      'Dungeon Master (1987)(FTL)(Disk 2 of 2).ssd',
+      'Dungeon Master (1987)(FTL)(Disk 1 of 2)[a].ssd',
+    ],
+    { ...CLEAN_RELEASES, dumpFlags: ['alternate'] },
+  )
+
+  assert.equal(plan.included.length, 2)
+  assert.deepEqual(plan.mixed, [])
+  assert.deepEqual(
+    plan.included.map((item) => item.name).sort(),
+    [
+      'Dungeon Master (1987)(FTL)(Disk 1 of 2).ssd',
+      'Dungeon Master (1987)(FTL)(Disk 2 of 2).ssd',
+    ],
+  )
+})
+
+check('a set with no whole release is filled disc by disc, and says so', () => {
+  const plan = scan(
+    [
+      'Dungeon Master (1987)(FTL)(Disk 1 of 2).ssd',
+      'Dungeon Master (1987)(FTL)(Disk 2 of 2)[a].ssd',
+    ],
+    { ...CLEAN_RELEASES, dumpFlags: ['alternate'] },
+  )
+
+  assert.equal(plan.included.length, 2)
+  assert.deepEqual(plan.mixed, ['Dungeon Master'])
+})
+
+check('a set missing a disc is left out rather than half written', () => {
+  // Disc 2 is a bad dump, which the filter refuses. Writing discs 1 and 3 is a
+  // game that cannot be finished, so the whole set goes.
+  const names = [
+    'Dungeon Master (1987)(FTL)(Disk 1 of 3).ssd',
+    'Dungeon Master (1987)(FTL)(Disk 2 of 3)[b].ssd',
+    'Dungeon Master (1987)(FTL)(Disk 3 of 3).ssd',
+  ]
+  const plan = scan(names)
+
+  assert.deepEqual(plan.included, [])
+  assert.deepEqual(plan.incomplete, [{ title: 'Dungeon Master', missing: ['D2'] }])
+
+  // Told not to keep sets whole, it takes what passed and says nothing.
+  const loose = scan(names, { ...CLEAN_RELEASES, keepDiskSetsWhole: false })
+  assert.equal(loose.included.length, 2)
+  assert.deepEqual(loose.incomplete, [])
+
+  // A set that labels its discs with letters is completed with letters. Looking
+  // for a `D2` that can never arrive would leave every lettered set incomplete.
+  const sides = scan([
+    'Another World (1991)(Delphine)(Side A of 2).ssd',
+    'Another World (1991)(Delphine)(Side B of 2).ssd',
+  ])
+  assert.equal(sides.included.length, 2)
+  assert.deepEqual(sides.incomplete, [])
+
+  const half = scan(['Another World (1991)(Delphine)(Side A of 2).ssd'])
+  assert.deepEqual(half.incomplete, [{ title: 'Another World', missing: ['B'] }])
+
+  // A set nothing survived was not left out for want of a disc: it was left out
+  // for whatever reason its members were, and saying both explains it twice.
+  const none = scan(['Another World (1991)[b].adf', 'Another World (1991)[b] B.adf'])
+  assert.deepEqual(none.incomplete, [])
+  assert.deepEqual(
+    none.excluded.map((group) => group.reason),
+    ['marked bad'],
+  )
+})
+
+check('every dimension of the filter is asked, and says why', () => {
+  const accepted = ['.ssd']
+  const reason = (name: string, filter: ScanFilter = CLEAN_RELEASES) => {
+    const verdict = judge(media(name), readTags(name), filter, accepted)
+    return verdict.included ? undefined : verdict.reason
+  }
+
+  assert.equal(reason('Elite (1984).ssd'), undefined)
+  assert.equal(reason('Elite (1984)[b].ssd'), 'marked bad')
+  assert.equal(reason('Elite (1984)(proto).ssd'), 'a prototype build')
+  assert.equal(reason('Elite (1984).adf'), 'a format this drive cannot load')
+
+  const english: ScanFilter = {
+    ...CLEAN_RELEASES,
+    languages: { include: ['en'], includeUntagged: false },
+  }
+  assert.equal(reason('Elite (1984)(de).ssd', english), 'in de')
+  assert.equal(reason('Elite (1984)(en).ssd', english), undefined)
+  assert.equal(reason('Elite (1984).ssd', english), 'states no language')
+  assert.equal(
+    reason('Elite (1984).ssd', {
+      ...english,
+      languages: { include: ['en'], includeUntagged: true },
+    }),
+    undefined,
+  )
+
+  // A build that was asked for is not a reason to leave anything out.
+  assert.equal(reason('Elite (1984)(proto).ssd', { ...CLEAN_RELEASES, devStatus: ['prototype'] }), undefined)
+})
+
+check('a scan reports where everything would land, and what it left behind', () => {
+  const plan = planBulkAdd(
+    [
+      { ...media('Elite (1984).ssd'), category: 'games' },
+      { ...media('View (1983).ssd'), category: 'applications' },
+      { ...media('Nothing (1984)[b].ssd'), category: 'games' },
+      media('Unknown (1984).ssd'),
+    ],
+    { ...bbcProfile, folderLayout: 'category', naming: 'title' },
+    'bbc',
+    CLEAN_RELEASES,
+  )
+
+  assert.equal(plan.considered, 4)
+  assert.equal(plan.included.length, 3)
+  assert.deepEqual(
+    plan.byFolder.map((group) => group.folder),
+    ['Apps', 'Games', UNCATEGORISED],
+  )
+  assert.equal(plan.unsorted.length, 1)
+  assert.deepEqual(
+    plan.excluded.map((group) => group.reason),
+    ['marked bad'],
+  )
+  assert.equal(plan.totalBytes, plan.included.reduce((total, item) => total + item.size, 0))
+})
+
+check('a scan never offers a title already staged against the profile', () => {
+  const item = media('Elite (1984).ssd')
+  const plan = planBulkAdd([item], scanProfile, 'bbc', CLEAN_RELEASES, {
+    staged: new Set([item.id]),
+  })
+
+  assert.deepEqual(plan.included, [])
+  assert.equal(plan.excluded[0].count, 1)
+})
+
+check('every preset is a filter a scan can actually run', () => {
+  const names = [
+    'Elite (1984).ssd',
+    'Elite (1984)[a].ssd',
+    'Zool (1992)(demo).ssd',
+    'Broken (1984)[b].ssd',
+  ]
+  for (const preset of SCAN_PRESETS) {
+    const plan = scan(names, preset.filter)
+    assert.ok(plan.considered === 4, preset.id)
+    assert.ok(plan.included.length <= 4, preset.id)
+  }
+  // The default keeps one clean copy and nothing else.
+  assert.deepEqual(written(names), ['Elite (1984).ssd'])
+  // Everything means everything, including both copies of the same title.
+  const everything = SCAN_PRESETS.find((preset) => preset.id === 'everything')!
+  assert.equal(scan(names, everything.filter).included.length, 4)
+})
+
+check('a library of a few thousand titles is planned in a moment', () => {
+  const many = Array.from({ length: 1500 }, (_, index) => [
+    media(`Title ${index} (1984)(Acornsoft)(Disk 1 of 2).ssd`),
+    media(`Title ${index} (1984)(Acornsoft)(Disk 2 of 2).ssd`),
+  ]).flat()
+  const started = Date.now()
+  const plan = planBulkAdd(many, scanProfile, 'bbc', CLEAN_RELEASES)
+
+  assert.equal(plan.included.length, 3000)
+  assert.ok(
+    Date.now() - started < 4000,
+    `planning 3000 titles took ${Date.now() - started}ms`,
+  )
+})
+
+check('a naming rule always has a name to show for itself', () => {
+  for (const naming of ['title', 'oled', 'original'] as const) {
+    assert.equal(namingChoice(naming).id, naming)
+    assert.ok(namingChoice(naming).summary.length > 20)
+  }
+})
+
+check('a collection that names its folders after its catalogue still reads', () => {
+  // Real collections name folders after their own dat files rather than after
+  // the word alone. Requiring the segment to *be* the word left every one of
+  // these unsorted, and a whole TOSEC tree with it.
+  const source = '/library/TOSEC'
+  assert.equal(
+    inferCategoryId(`${source}/Commodore Amiga - Games - [ADF]/Elite.adf`, source),
+    'games',
+  )
+  assert.equal(
+    inferCategoryId(`${source}/Acorn BBC Micro - Applications - [SSD]/View.ssd`, source),
+    'applications',
+  )
+  assert.equal(
+    inferCategoryId(`${source}/Sinclair ZX Spectrum - Demos/Shock.trd`, source),
+    'demos',
+  )
+  assert.equal(
+    inferCategoryId(`${source}/Amstrad CPC - Magazines - [DSK]/Amstrad Action.dsk`, source),
+    'magazines',
+  )
+
+  // Still whole words, or every game show would be a game.
+  assert.equal(inferCategoryId(`${source}/Gameshow Collection/Quiz.adf`, source), undefined)
+  assert.equal(inferCategoryId(`${source}/Demolition/Man.adf`, source), undefined)
+})
+
+check('a bracketed demo is a build, not a demoscene production', () => {
+  // In a collection's naming convention `(demo)` is a development status — a
+  // playable demo of a commercial game — and filing every one of those under
+  // Demos alongside the demoscene work is exactly the sort of silent mistake
+  // that a few thousand titles turns into an afternoon's work.
+  assert.equal(inferCategoryFromName('Turrican II (1991)(Rainbow Arts)(demo).adf'), undefined)
+  assert.equal(inferCategoryFromName('Zool (1992)(Gremlin)(demo-playable).adf'), undefined)
+
+  // Said outright, rather than in brackets, it still means what it says.
+  assert.equal(inferCategoryFromName('Desert Dream demo.adf'), 'demos')
+  const source = '/library/TOSEC/Amiga'
+  assert.equal(inferCategory(`${source}/Demos/Enigma (1991)(demo).adf`, source), 'demos')
+})
+
+check("a destination's own folder names are used rather than ours", () => {
+  // A stick that calls its applications folder `Applications` has to keep being
+  // written to `Applications`. Writing `Apps` beside it makes a second folder
+  // and every title in it reports as filed somewhere unexpected.
+  const listing = [
+    { name: 'Applications', path: '/media/gotek/Applications', extension: '', size: 0, directory: true },
+    { name: 'Games', path: '/media/gotek/Games', extension: '', size: 0, directory: true },
+    { name: 'Demos', path: '/media/gotek/Demos', extension: '', size: 0, directory: true },
+    { name: 'Elite.ssd', path: '/media/gotek/Elite.ssd', extension: 'ssd', size: 1, directory: false },
+  ]
+  const found = destinationCategoryFolders(listing)
+
+  // Only what differs from the name this application would choose: an override
+  // saying the same thing as the default is noise.
+  assert.deepEqual(found, { applications: 'Applications' })
+
+  const profile: Profile = { ...bbcProfile, folderLayout: 'category', categoryFolders: found }
+  assert.equal(categoryFolderFor(profile, 'applications'), 'Applications')
+  assert.equal(categoryFolderFor(profile, 'games'), 'Games')
+  // Nothing discovered means the canonical name, and no category means the
+  // bucket everything unsorted shares.
+  assert.equal(categoryFolderFor(undefined, 'applications'), 'Apps')
+  assert.equal(categoryFolderFor(profile, undefined), UNCATEGORISED)
+
+  const item: MediaItem = { ...media('View (1983).ssd'), category: 'applications' }
+  const [operation] = transferOperations([item], profile)
+  assert.equal(operation.relativePath, 'Applications/View.ssd')
+  // And through a custom template, which is the same decision spelled out.
+  const [templated] = transferOperations([item], {
+    ...profile,
+    folderLayout: 'custom',
+    folderTemplate: '{platform}/{category}',
+  })
+  assert.equal(templated.relativePath, 'BBC/Applications/View.ssd')
+})
+
+check("an archive's own name says what its contents are and what they are called", () => {
+  // A single-title archive carries the tags; the file inside is often just
+  // `disk1.adf`, which says nothing at all.
+  const inside = classifyMedia(
+    {
+      name: 'disk1.adf',
+      path: '/library/Games/Dungeon Master (1987)(FTL).zip!/disk1.adf',
+      extension: 'adf',
+      size: 901120,
+      directory: false,
+    },
+    '/library',
+  )
+  assert.equal(inside.category, 'games')
+  assert.equal(releaseName({ ...inside, assignedPlatformId: 'amiga' }), 'Dungeon Master.adf')
 })
 
 check('every category has a folder name a two-line display can show', () => {
@@ -1738,7 +2226,7 @@ check('a stored record is revived against the shape being read, not returned as 
   // a profile created from it with no naming rule at all.
   assert.equal(revived.defaults.firmwareId, 'hxc')
   assert.equal(revived.defaults.organise, false)
-  assert.equal(revived.defaults.naming, 'oled')
+  assert.equal(revived.defaults.naming, 'title')
   assert.equal(revived.defaults.folderLayout, 'platform')
 })
 
@@ -1943,6 +2431,9 @@ check('a workspace survives the trip to the native store and back', () => {
         verifyChecksums: true,
         folderTemplate: '{platform}/{initial}',
         display: 'oled-128x64-rotate',
+        // The folder names this destination already uses have to survive with
+        // the profile, or the next write makes a second set beside them.
+        categoryFolders: { applications: 'Applications' },
       },
     ],
     activeProfileId: bbcProfile.id,

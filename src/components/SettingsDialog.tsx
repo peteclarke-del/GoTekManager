@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { firmwareProfiles } from '../domain/catalog'
-import { formatBytes } from '../domain/media'
+import { formatBytes, NAMING_CHOICES } from '../domain/media'
 import type {
   AppSettings,
   CacheSummary,
@@ -228,8 +228,11 @@ export function SettingsDialog({
                   setDefault('naming', event.target.value as ProfileDefaults['naming'])
                 }
               >
-                <option value="oled">OLED friendly</option>
-                <option value="original">Original</option>
+                {NAMING_CHOICES.map((choice) => (
+                  <option key={choice.id} value={choice.id}>
+                    {choice.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label>

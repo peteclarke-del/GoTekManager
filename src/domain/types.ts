@@ -11,7 +11,14 @@
 export type Page = 'Flow' | 'Profiles' | 'Devices' | 'Help'
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
-export type NamingRule = 'original' | 'oled'
+/**
+ * What a file is called once it reaches the drive.
+ *
+ * `title` is the name of the game or application and nothing else; `oled` is
+ * that name cut to what the drive's panel can show; `original` keeps whatever
+ * the collection called the file. See `NAMING_CHOICES` in `./media`.
+ */
+export type NamingRule = 'original' | 'title' | 'oled'
 export type FolderLayout = 'flat' | 'platform' | 'category' | 'custom'
 
 /**
@@ -62,6 +69,14 @@ export type Profile = {
   display?: DisplayType
   /** Used when folderLayout is 'custom'. See renderFolderTemplate. */
   folderTemplate?: string
+  /**
+   * The folder this destination already uses for a category, by category id.
+   *
+   * Discovered from the destination's own listing and confirmed rather than
+   * applied silently, because writing `Apps` to a stick that already has
+   * `Applications` makes a second folder instead of filling the first.
+   */
+  categoryFolders?: Record<string, string>
   naming: NamingRule
   /**
    * Compare a digest of every copied file against its source.

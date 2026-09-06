@@ -13,6 +13,8 @@ export type StoredProfile = {
   organise: boolean
   folderLayout: string
   folderTemplate?: string
+  /** The destination's own folder names, by category id. */
+  categoryFolders?: Record<string, string>
   naming: string
   verifyChecksums: boolean
   display?: string

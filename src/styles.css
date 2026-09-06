@@ -413,3 +413,42 @@ th.select-cell{width:34px}
 .browse-into svg{width:14px;height:14px;flex:none;color:#a46800}
 .browse-into:hover{color:#8a5600}
 .app.dark .browse-into:hover{color:#f2b84a}
+
+/* The scan of every source.
+   Wider than an ordinary dialog because its whole value is the preview: a list
+   of folders, counts and sizes that has to be readable before anybody presses
+   the button. The sections are separated by rules rather than cards, so a long
+   dialog still scans as one thing. */
+.modal.scan-modal{width:min(720px,100%)}
+.scan-dialog section{padding:18px 0;border-top:1px solid var(--a11y-border)}
+.scan-dialog section:first-child{border-top:0;padding-top:0}
+.scan-dialog h3{margin:0 0 10px;font-size:13px}
+.scan-sources{display:grid;gap:2px;max-height:150px;overflow:auto}
+.scan-sources .check-label{margin-top:0;font-weight:400}
+.scan-sources small{color:var(--a11y-muted)}
+.scan-presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.scan-options{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 12px;padding:0;border:0}
+.scan-options legend{float:left;width:100%;margin-bottom:6px;padding:0;font:700 11px inherit;color:var(--a11y-muted)}
+.chip{padding:5px 9px;border:1px solid var(--a11y-border);border-radius:99px;background:var(--a11y-control);color:var(--a11y-text);font:700 11px inherit;cursor:pointer}
+.chip small{margin-left:4px;color:var(--a11y-muted);font-weight:400}
+.chip.active{border-color:#a46800;background:#fff1c7;color:#17212b}
+.chip.active small{color:#755000}
+.app.dark .chip.active{border-color:#f2b84a;background:#45391f;color:#fff}
+.app.dark .chip.active small{color:#f5ca68}
+.scan-headline{margin:0 0 10px;font-size:12px}
+.scan-headline b{font-size:15px;color:var(--a11y-text)}
+.scan-table{margin-bottom:12px}
+.scan-table th:first-child{width:auto}
+.scan-table th:nth-child(2),.scan-table th:nth-child(3){width:90px}
+.scan-table code{font-family:'DM Mono',monospace}
+.scan-unsorted{display:grid;gap:8px;margin-bottom:12px;padding:10px;border-left:4px solid #a26d00;background:#fff0c9;color:#604400;font-size:11px}
+.app.dark .scan-unsorted{background:#443718;color:#f5ca68}
+.scan-detail{margin-bottom:8px;font-size:11px}
+.scan-detail summary{cursor:pointer;font-weight:700}
+.scan-detail ul{margin:8px 0 0;padding-left:18px;color:var(--a11y-muted)}
+.scan-detail li{margin-bottom:3px}
+/* The folder names a destination already uses, shown so they can be corrected
+   rather than merely inherited. */
+.category-folders{margin-top:14px;padding:12px;border:1px solid var(--a11y-border);border-radius:7px}
+.category-folders label:first-of-type{margin-top:0}
+@media(prefers-color-scheme:dark){.app.system-theme .chip.active{border-color:#f2b84a;background:#45391f;color:#fff}.app.system-theme .chip.active small{color:#f5ca68}.app.system-theme .scan-unsorted{background:#443718;color:#f5ca68}}
