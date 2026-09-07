@@ -3,6 +3,57 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.5.0
+
+**A stick can be filled from a whole collection in one pass.** **Scan all sources**,
+below **Add location** on the Sources step, re-indexes every local source and then offers a
+filter built from what the collection itself records: language, unfinished builds such
+as prototypes and playable demos, dumps marked cracked, alternate or bad, how the
+software was published, region, and category. Every choice says how many titles carry
+it, so it is made against the library in front of you rather than in the abstract.
+Nothing is staged until the preview has said how many titles it would add, which folder
+on the drive each would land in, how much room they need, and what was left out and why.
+
+**A multi-disc set is only useful whole**, so discs are chosen together rather than
+separately. A set is taken from one release where one release holds all of it, filled
+disc by disc and reported as mixed where none does, and left out and named where a disc
+is missing altogether — two thirds of a game is worse than none of it. And where several
+copies of one title survive the filter, one is chosen: the original first, then the
+fixed dump, then the alternates, and so on down.
+
+**A file is named for what it is.** Everything a collection records about a release —
+the year, the publisher, the region, the language, the version, the dump flags — says
+which copy this is, not what the software is, and none of it fits a two-line display.
+`Dungeon Master (1987)(FTL)(GB)(Disk 1 of 2)[cr QTX].adf` is now written as
+`Dungeon Master D1.adf`, and a one-disc game gets no disc marker at all. The library
+keeps the original name either way. A folder scan, a bulk add, an online download and a
+title staged by hand all go through the same rule, so a stick is never a mixture of two
+conventions. Naming for a small panel is now a separate choice from stripping the tags,
+and **Original filename** is still there for anyone who wants their collection's names
+verbatim. Existing profiles keep whatever they were set to; new ones start on
+**Title only**.
+
+Reducing names this way is also what makes two titles collide — two editions of Elite
+both become `Elite.adf` — so where that happens the later one keeps the smallest thing
+the collection recorded that tells them apart, rather than the write being refused.
+
+**Categories read more of the evidence.** A folder named after a collection's own
+catalogue now reads, which had left whole trees such as
+`Commodore Amiga - Games - [ADF]` unsorted. A bracketed `(demo)` is a playable demo of a
+commercial game rather than a demoscene production, so game demos no longer file
+themselves with the demoscene. An archive's own name says what its contents are and what
+they are called, which is all a single-title ZIP holding `disk1.adf` has to go on.
+
+**A destination that already sorts itself keeps its own folder names.** A stick holding
+`Applications/` is offered them rather than having `Apps/` written beside it, so titles
+fill the folders already there instead of a second set appearing next to them. It is
+offered on the Contents step and confirmed on the profile, never applied silently.
+
+**Upgrading.** The stored library moves to schema 5 the first time this version opens
+it, in place, to carry the folder names a destination uses. A profile written by an
+older version arrives with none of its own and uses the standard names. An older version
+opening the library afterwards will say so and stop rather than quietly downgrade.
+
 ## What is new in 0.4.0
 
 **Multi-disk sets write properly.** Shortening a name for the drive's display

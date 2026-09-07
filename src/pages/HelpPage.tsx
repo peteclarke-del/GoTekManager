@@ -107,8 +107,9 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     question: 'Can I fill a stick from my whole collection at once?',
     answer: (
       <>
-        Yes. <b>Add from all sources</b> on the Sources step re-indexes every local
-        source and then offers a filter built from what the collection itself records:
+        Yes. <b>Scan all sources</b>, below <b>Add location</b> on the Sources step,
+        re-indexes every local source and then offers a filter built from what the collection itself
+        records:
         language, unfinished builds such as prototypes and playable demos, dumps marked
         cracked or bad, how the software was published, region, and category. Every
         choice shows how many titles carry it, so it is made against the library in front

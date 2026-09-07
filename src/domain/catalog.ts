@@ -46,7 +46,7 @@ export type FirmwareProfile = {
   id: string
   name: string
   family: string
-  /** Characters the drive's display can show, used for OLED naming. */
+  /** Characters the drive's display can show, used to shorten written names. */
   oledLength: number
   /** Formats the firmware loads directly from the USB stick. */
   formats: string[]
