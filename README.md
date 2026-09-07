@@ -50,7 +50,8 @@ profile's exact name.
   a bulk add and an online download all go through the same rule, so a stick is
   never a mixture of two conventions. Naming for a small panel is a separate
   choice, and the disc marker is never what gives up the room.
-- Filling a stick from a whole collection in one pass, with a filter built from
+- Filling a stick from a whole collection in one pass — **Scan all sources**,
+  below **Add location** on the Sources step — with a filter built from
   what the collection itself records — language, prototypes and playable demos,
   dumps marked cracked, alternate or bad, how the software was published, region,
   and category — each choice showing how many titles carry it. A multi-disc set is
@@ -116,8 +117,10 @@ profile's exact name.
 - Guarded device provisioning: the media is built as an image first, then written
   in one pass and read back to verify.
 - FAT image creation, population, and unpacking, for partitioned and bare layouts.
-- Custom folder templates, per-title display names, and optional checksum
-  verification on every copy.
+- Three naming rules — the title alone, the title shortened to the drive's
+  display width, or the collection's original filename — plus custom folder
+  templates, per-title display names, and optional checksum verification on
+  every copy.
 - A managed download cache with size limits, least-recently-used eviction, and
   digests re-checked on reuse.
 - A transactional SQLite library, so a few thousand titles is no longer near a

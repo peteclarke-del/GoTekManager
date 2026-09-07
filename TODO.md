@@ -24,6 +24,23 @@ newest wry still requires them. When Tauri moves to the GTK4/webkitgtk-6
 bindings, delete the entry and let the audit job say whether it was still
 needed. That file explains the reasoning; this is only the reminder to look.
 
+## Settle two naming questions the collection cannot answer for us
+
+Reducing a written name to the title alone left two cases decided by the letter
+of the rule rather than by what somebody would want, and both are a line of
+code either way.
+
+A file named `Elite (Disk 1).ssd` that has no siblings and never says "of 2" is
+written `Elite.ssd`, because as far as the library knows the set is one disc.
+That is right until the second disc is added in a later pass, at which point the
+set becomes `Elite D1.adf` and `Elite D2.adf` and the file written first is
+orphaned beside them. Treating any stated disc number as evidence of a set would
+fix that at the cost of a redundant `D1` on genuinely single-disc releases.
+
+Stripping tags takes every bracketed group, so a title whose real name carries
+one — a subtitle in brackets, say — loses it. `ReleaseTags.unknown` keeps what
+was dropped, so the interface could offer it back, but nothing does that yet.
+
 ## Re-run the help screenshots when a screen changes
 
 `npm run screenshots` drives the real application against fixture folders and
