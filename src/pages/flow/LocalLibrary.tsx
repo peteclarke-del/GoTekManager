@@ -526,23 +526,25 @@ export function LocalLibrary({
             </button>
           )}
         </div>
-        <button className="button" onClick={addLocation}>
-          <FolderOpen />
-          Add location
-        </button>
-        <button
-          className="button secondary"
-          disabled={!sources.length}
-          title={
-            sources.length
-              ? `Scan every source and add everything matching a filter to ${profile.name}`
-              : 'Add a source location first'
-          }
-          onClick={() => setScanning(true)}
-        >
-          <Wand2 />
-          Add from all sources…
-        </button>
+        <div className="sidebar-actions">
+          <button className="button" onClick={addLocation}>
+            <FolderOpen />
+            Add location
+          </button>
+          <button
+            className="button secondary"
+            disabled={!sources.length}
+            title={
+              sources.length
+                ? `Scan every source and add everything matching a filter to ${profile.name}`
+                : 'Add a source location first'
+            }
+            onClick={() => setScanning(true)}
+          >
+            <Wand2 />
+            Scan all
+          </button>
+        </div>
         {status && <InlineStatus kind={status.kind}>{status.text}</InlineStatus>}
       </section>
 
