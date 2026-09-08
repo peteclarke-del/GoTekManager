@@ -17,6 +17,7 @@ use crate::task::blocking;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::Manager;
 
 /// Bumped whenever the schema changes; `migrate` moves an older file forward.
@@ -130,7 +131,15 @@ pub struct StoredSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredItem {
-    pub id: String,
+    /// The item's own identity, when it is not simply where the file is.
+    ///
+    /// A scanned title is identified by its path, so for all but a handful of
+    /// rows these two are the same string — and the path is the longest column
+    /// in the library. Carrying both doubles it, several megabytes across a
+    /// large collection, for no information at all, so it travels only when it
+    /// genuinely differs. See {@link identity}.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub source: String,
     pub path: String,
     pub name: String,
@@ -138,7 +147,13 @@ pub struct StoredItem {
     pub size: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified: Option<i64>,
-    pub canonical_title: String,
+    /// The real name of the title, when it is not simply the file's name.
+    ///
+    /// Left out for the same reason as `id`: a scanned title is named by its
+    /// file, and only a download — which is named by the catalogue it came
+    /// from — has anything different to say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -198,7 +213,22 @@ fn open(app: &tauri::AppHandle) -> Result<Connection> {
     Ok(connection)
 }
 
+/// How long a writer waits for another one to finish before giving up.
+///
+/// Several connections write by design: the workspace is saved while a transfer
+/// records fingerprints. Saving replaces the whole workspace in one
+/// transaction, which on a library of tens of thousands of items takes long
+/// enough that the driver's own five-second default runs out — and the user is
+/// told the database is locked when nothing is wrong and the wait would have
+/// ended. Thirty seconds is well past any write here and still short enough
+/// that a genuine deadlock surfaces rather than hanging the window forever.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub fn prepare(connection: &Connection) -> Result<()> {
+    // Before anything else, so it covers the schema statements below as well.
+    connection
+        .busy_timeout(BUSY_TIMEOUT)
+        .context("Unable to set the database busy timeout")?;
     // Write-ahead logging survives an abrupt exit far better than the default
     // journal, which matters for an application that talks to removable media.
     connection
@@ -331,15 +361,19 @@ fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
         .query_map([], |row| {
             let likely: String = row.get(11)?;
             let provenance: Option<String> = row.get(12)?;
+            let id: String = row.get(0)?;
+            let path: String = row.get(2)?;
+            let title: String = row.get(7)?;
+            let name: String = row.get(3)?;
             Ok(StoredItem {
-                id: row.get(0)?,
+                id: (id != path).then_some(id),
                 source: row.get(1)?,
-                path: row.get(2)?,
-                name: row.get(3)?,
+                name: name.clone(),
                 extension: row.get(4)?,
                 size: row.get(5)?,
                 modified: row.get(6)?,
-                canonical_title: row.get(7)?,
+                canonical_title: (title != name).then_some(title),
+                path,
                 display_title: row.get(8)?,
                 assigned_platform_id: row.get(9)?,
                 category: row.get(10)?,
@@ -378,6 +412,14 @@ fn read_workspace(connection: &Connection) -> Result<StoredWorkspace> {
         sources,
         items,
     })
+}
+
+/// An item's identity: its own, or the path that stands in for it.
+///
+/// One place decides this, because a staged collection refers to items by it
+/// and a disagreement here would silently unstage somebody's whole selection.
+fn identity(item: &StoredItem) -> &str {
+    item.id.as_deref().unwrap_or(&item.path)
 }
 
 fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> Result<()> {
@@ -436,14 +478,14 @@ fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> 
              canonical_title, display_title, assigned_platform_id, category, \
              likely_platform_ids, provenance) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
-                item.id,
+                identity(item),
                 item.source,
                 item.path,
                 item.name,
                 item.extension,
                 item.size,
                 item.modified,
-                item.canonical_title,
+                item.canonical_title.as_deref().unwrap_or(&item.name),
                 item.display_title,
                 item.assigned_platform_id,
                 item.category,
@@ -529,8 +571,9 @@ pub async fn write_document(app: tauri::AppHandle, key: String, value: String) -
 mod tests {
     use super::{
         migrate, prepare, read_workspace, write_workspace, StoredItem, StoredProfile,
-        StoredSource, StoredWorkspace, SCHEMA_VERSION,
+        StoredSource, StoredWorkspace, BUSY_TIMEOUT, SCHEMA_VERSION,
     };
+    use std::time::Duration;
     use rusqlite::Connection;
 
     fn connection() -> Connection {
@@ -556,16 +599,18 @@ mod tests {
         }
     }
 
+    /// A scanned title: identified by its path and named by its file, so it
+    /// carries neither an id nor a canonical title of its own.
     fn item(id: &str, name: &str) -> StoredItem {
         StoredItem {
-            id: id.into(),
+            id: None,
             source: "/library".into(),
             path: id.into(),
             name: name.into(),
             extension: "ssd".into(),
             size: 204800,
             modified: Some(1234),
-            canonical_title: name.into(),
+            canonical_title: None,
             display_title: None,
             assigned_platform_id: Some("bbc".into()),
             category: Some("games".into()),
@@ -774,6 +819,34 @@ mod tests {
         assert_eq!(loaded.items.len(), 5000);
     }
 
+    /// A downloaded title is named by the catalogue it came from and may be
+    /// identified by something other than where it was cached, so both have to
+    /// survive; a scanned title has neither, and must not acquire one.
+    #[test]
+    fn a_title_named_by_its_catalogue_keeps_that_name_across_a_save() {
+        let mut connection = connection();
+        let mut space = workspace();
+        let mut download = item("/cache/00fa3b.adf", "00fa3b.adf");
+        download.id = Some("download:elite:1".into());
+        download.canonical_title = Some("Elite (Disk 1)".into());
+        space.items.push(download);
+
+        write_workspace(&mut connection, &space).unwrap();
+        let loaded = read_workspace(&connection).unwrap();
+
+        let scanned = loaded.items.iter().find(|i| i.path == "i1").unwrap();
+        assert_eq!(scanned.id, None, "a scanned title is its path");
+        assert_eq!(scanned.canonical_title, None, "a scanned title is its file");
+
+        let back = loaded
+            .items
+            .iter()
+            .find(|i| i.path == "/cache/00fa3b.adf")
+            .unwrap();
+        assert_eq!(back.id.as_deref(), Some("download:elite:1"));
+        assert_eq!(back.canonical_title.as_deref(), Some("Elite (Disk 1)"));
+    }
+
     #[test]
     fn a_database_from_a_newer_version_is_refused_rather_than_damaged() {
         let connection = connection();
@@ -793,6 +866,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    /// The workspace is saved while a transfer records fingerprints, so two
+    /// connections write at once by design. A whole-workspace save outlasts the
+    /// driver's own five-second default, and the writer that waited would then
+    /// be told the database is locked although the wait was about to end.
+    #[test]
+    fn a_writer_waits_far_longer_than_the_drivers_own_default() {
+        let waited: i64 = connection()
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(waited, BUSY_TIMEOUT.as_millis() as i64);
+        assert!(BUSY_TIMEOUT > Duration::from_secs(5));
     }
 }
 

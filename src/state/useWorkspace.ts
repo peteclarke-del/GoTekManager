@@ -1,6 +1,6 @@
 /** Wires the workspace reducer to persistence and derives the active profile. */
 
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   defaultProviders,
   mergeProviders,
@@ -25,6 +25,7 @@ import {
   emptyWorkspace,
   removalPolicyOf,
   workspaceReducer,
+  type Workspace,
 } from './workspace'
 
 /** Coalesces a burst of edits into one transaction. */
@@ -35,21 +36,33 @@ export function useWorkspace() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // Nothing is written back until the stored workspace has been read, or the
-  // first render's empty state would overwrite the real library.
-  const loaded = useRef(false)
+  // first render's empty state would overwrite the real library. The workspace
+  // that was read is kept as well: settling it into state is a change like any
+  // other, so without this every start ends by writing back, unaltered, the
+  // tens of thousands of rows it has just finished reading — seconds of work
+  // for a result already on disk.
+  const loaded = useRef<Workspace | undefined>(undefined)
   const pending = useRef<number | undefined>(undefined)
+  // One save at a time, and only the newest one waiting. A whole-workspace
+  // transaction over a large library takes seconds, which is longer than the
+  // debounce, so without this a steady stream of edits starts transactions
+  // faster than they finish: they queue against each other in the database and
+  // every one but the last is written for nothing.
+  const saving = useRef(false)
+  const queued = useRef<Workspace | undefined>(undefined)
 
   useEffect(() => {
     let active = true
     loadPersistedWorkspace()
       .then((stored) => {
         if (!active) return
+        loaded.current = stored
         dispatch({ type: 'workspaceLoaded', workspace: stored })
       })
       .catch((reason) => active && setError(String(reason)))
       .finally(() => {
         if (!active) return
-        loaded.current = true
+        loaded.current = loaded.current ?? emptyWorkspace
         setLoading(false)
       })
     return () => {
@@ -57,16 +70,44 @@ export function useWorkspace() {
     }
   }, [])
 
+  /**
+   * Writes whatever is waiting, then whatever arrived while it was writing.
+   *
+   * Only the newest workspace is ever kept, because each save replaces the
+   * stored workspace entirely: an older one that has been superseded has
+   * nothing left to contribute.
+   */
+  const drain = useCallback(async () => {
+    if (saving.current) return
+    saving.current = true
+    try {
+      while (queued.current) {
+        const next = queued.current
+        queued.current = undefined
+        try {
+          await persistWorkspace(next)
+        } catch (reason) {
+          setError(String(reason))
+        }
+      }
+    } finally {
+      saving.current = false
+    }
+  }, [])
+
   useEffect(() => {
-    if (!loaded.current) return
+    // Not until the stored workspace has been read, and not to write it
+    // straight back out again unchanged.
+    if (!loaded.current || workspace === loaded.current) return
     // Saving is a whole-workspace transaction, so a burst of edits is worth
     // coalescing; the delay is short enough to survive an ordinary close.
     window.clearTimeout(pending.current)
     pending.current = window.setTimeout(() => {
-      void persistWorkspace(workspace).catch((reason) => setError(String(reason)))
+      queued.current = workspace
+      void drain()
     }, SAVE_DELAY_MS)
     return () => window.clearTimeout(pending.current)
-  }, [workspace])
+  }, [workspace, drain])
 
   const activeProfile = activeProfileOf(workspace)
   const collection = collectionOf(workspace, activeProfile?.id)

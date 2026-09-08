@@ -32,3 +32,21 @@ tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["time"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
+
+# Development builds are optimised enough to carry a real library.
+#
+# A workspace of forty-five thousand titles is twenty-five megabytes of JSON on
+# its way to the window. Unoptimised that took twenty seconds to read and
+# serialise; at these settings it takes two.
+#
+# Both entries are needed, and the first is the one that matters. Serde writes
+# its `Serialize` implementations into *this* crate, so the loop that does the
+# work is this crate's code however well the dependencies are built — optimising
+# them alone changed nothing measurable. Level 1 is enough for that loop and
+# leaves rebuilds after an edit quick; the dependencies, which are rebuilt only
+# when they change, are given the lot.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
