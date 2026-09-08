@@ -81,7 +81,7 @@ const BLOCKER_EXPLANATIONS: Array<{
     kind: 'unavailable',
     label: 'cannot be found:',
     detail:
-      'the file is no longer where the library indexed it — a download cleared from the cache, or a share no longer mounted.',
+      'the file is no longer where the library indexed it: a download cleared from the cache, or a share no longer mounted.',
   },
   {
     kind: 'changed',

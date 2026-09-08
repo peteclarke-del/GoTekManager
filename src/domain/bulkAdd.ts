@@ -26,6 +26,7 @@ import { forProfile, outputFolder, plannedNames, setKeyOf, tagsOf } from './medi
 import {
   dumpRank,
   releaseSignature,
+  spokenLanguages,
   type DevStatus,
   type Distribution,
   type DumpFlag,
@@ -185,12 +186,17 @@ export function judge(
 
   if (filter.languages !== 'any') {
     const { include, includeUntagged } = filter.languages
-    if (!tags.languages.length) {
+    // Stated, or implied by the country it was sold in: a collection that marks
+    // three thousand German releases (DE) and never writes (de) would otherwise
+    // slip every one of them past a filter asking for English. See
+    // {@link spokenLanguages}.
+    const spoken = spokenLanguages(tags)
+    if (!spoken.length) {
       // A multi-language release states that it is one without listing which,
       // so it is treated as stating a language rather than stating nothing.
       if (!includeUntagged && !tags.multiLanguage) return reason('states no language')
-    } else if (!tags.languages.some((code) => include.includes(code))) {
-      return reason(`in ${tags.languages.join(', ')}`)
+    } else if (!spoken.some((code) => include.includes(code))) {
+      return reason(`in ${spoken.join(', ')}`)
     }
   }
   if (filter.distribution !== 'any') {

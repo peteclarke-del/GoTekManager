@@ -29,9 +29,11 @@ import { formatBytes, managedFormats } from '../domain/media'
 import {
   costOf,
   proposeExclusions,
+  writableMount,
   type Capacity,
   type HeldFile,
 } from '../domain/deviceBuild'
+import { acceptedFormats } from '../domain/catalog'
 import { ContentsPicker } from './ContentsPicker'
 import type {
   ImageOptions,
@@ -42,11 +44,14 @@ import type {
   ProvisionReport,
 } from '../domain/types'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { useWriteProgress, writePercentage } from '../hooks/useWriteProgress'
 import {
   chooseImageFile,
   deviceIdentity,
   executeProvision,
+  executeTransfer,
   imageCapacity,
+  inspectTarget,
   physicalDevices,
   planProvision,
   readDestination,
@@ -141,7 +146,7 @@ function DeviceRow({
                 .join(' · ')
             : 'No partitions'}
         </small>
-        {device.system && <small className="device-system">System device — protected</small>}
+        {device.system && <small className="device-system">System device, protected</small>}
       </span>
       {selected && <Check />}
     </button>
@@ -168,6 +173,9 @@ export function DevicesPage({
   /** What the chosen profile's destination holds, read when it is chosen. */
   const [held, setHeld] = useState<HeldFile[] | null>(null)
   const [capacity, setCapacity] = useState<Capacity | null>(null)
+  // What is free on a stick that is already formatted, which is the room a copy
+  // has. The room a format would have is measured separately, below.
+  const [freeOnStick, setFreeOnStick] = useState<number | null>(null)
   /** The files this write will carry, once anything has been left out. */
   const [chosen, setChosen] = useState<HeldFile[] | null>(null)
   const [picking, setPicking] = useState<{ excluded: Set<string>; steps: string[] } | null>(
@@ -211,6 +219,14 @@ export function DevicesPage({
 
   const profile = profiles.find((entry) => entry.id === profileId) ?? profiles[0]
 
+  const written = useWriteProgress()
+
+  // Where this device can simply be written to as a folder, if anywhere. A
+  // stick already formatted for a GoTek needs its files copied, not the whole
+  // of it rebuilt; see writableMount.
+  const mount = selected ? writableMount(selected) : undefined
+  const copying = sourceKind === 'build' && !!mount
+
   // What goes on the stick: the profile's destination as it stands, minus
   // anything left out for this write. The folder is the master and the stick is
   // a copy of it, so nothing is re-laid-out on the way.
@@ -225,8 +241,28 @@ export function DevicesPage({
     [writing_files],
   )
 
-  const needed = capacity ? costOf(writing_files, capacity.clusterBytes) : 0
-  const fits = !capacity || needed <= capacity.usableBytes
+  /** Whether the figure below came from the stick itself rather than the device. */
+  const measuredOnStick = copying && !!capacity && freeOnStick !== null
+
+  /**
+   * The room this write actually has.
+   *
+   * Formatting gives the whole device, less what the filesystem itself costs,
+   * which is what measuring an image of it reports. Copying gives what is free
+   * on the stick now, and the cluster size measured for the format route stands
+   * in for the stick's own, which the system does not report: both are FAT on
+   * the same device, so it is the right order of magnitude, where counting
+   * bytes instead would understate the cost.
+   *
+   * For a copy this is the pessimistic reading, because a file the stick
+   * already holds is not written again and so costs nothing.
+   */
+  const room: Capacity | null = measuredOnStick
+    ? { usableBytes: freeOnStick, clusterBytes: capacity!.clusterBytes }
+    : capacity
+
+  const needed = room ? costOf(writing_files, room.clusterBytes) : 0
+  const fits = !room || needed <= room.usableBytes
 
   // Reading a destination and measuring the stick are both about one pairing of
   // profile and device, so they are asked for together and forgotten together.
@@ -234,9 +270,10 @@ export function DevicesPage({
     setHeld(null)
     setChosen(null)
     setCapacity(null)
+    setFreeOnStick(null)
     if (!profile || !selected || sourceKind !== 'build') return
     void reading.run(async () => {
-      const [files, measured] = await Promise.all([
+      const [files, measured, stick] = await Promise.all([
         readDestination(profile.destination.path),
         imageCapacity({
           sizeBytes: imageSizeFor(selected),
@@ -244,12 +281,16 @@ export function DevicesPage({
           fat: 'auto',
           partitioned: true,
         }),
+        // Only asked of a stick that can be copied to; there is nothing to be
+        // free on one that has still to be formatted.
+        mount ? inspectTarget(mount) : Promise.resolve(null),
       ])
       setHeld(files)
       setCapacity(measured)
+      setFreeOnStick(stick?.availableBytes ?? null)
       return files
     })
-  }, [profile?.id, profile?.destination.path, selectedNode, sourceKind])
+  }, [profile?.id, profile?.destination.path, selectedNode, sourceKind, mount])
 
   const source = (): ProvisionSource | null => {
     if (sourceKind === 'image') {
@@ -269,6 +310,31 @@ export function DevicesPage({
     const chosen = source()
     if (!selected || !chosen) return null
     return { deviceIdentity: deviceIdentity(selected), source: chosen }
+  }
+
+  /** Copies the profile's files onto a stick that is already formatted. */
+  const copy = () => {
+    if (!mount || !profile || !operations.length || !fits) return
+    void writing.run(async () => {
+      const result = await executeTransfer({
+        target: mount,
+        operations,
+        edits: [],
+        removeExisting: false,
+        managedExtensions: acceptedFormats(profile.platformId, profile.firmwareId),
+        verifyChecksums: profile.verifyChecksums,
+      })
+      const failed = result.failures ?? []
+      const copied = result.operations.length - failed.length
+      notify({
+        kind: failed.length ? 'error' : 'success',
+        text: failed.length
+          ? `Copied ${copied.toLocaleString()} files. ${failed.length} could not be written.`
+          : `Copied ${copied.toLocaleString()} files to ${mount}.`,
+      })
+      await refresh()
+      return result
+    })
   }
 
   const buildPlan = () => {
@@ -426,30 +492,41 @@ export function DevicesPage({
                   </InlineStatus>
                 )}
                 {reading.error && <p className="inline-error">{reading.error}</p>}
-                {held && capacity && (
+                {held && room && (
                   <>
                     <p className="mode-note">
-                      A fresh FAT volume labelled “{profile?.name}” holding a copy of{' '}
-                      <code>{profile?.destination.path}</code>, exactly as it is laid out
-                      there. {managedFormats(profile!).join(', ')}.
+                      {copying ? (
+                        <>
+                          A copy of <code>{profile?.destination.path}</code> on the stick as
+                          it stands, laid out exactly as it is there.{' '}
+                          {managedFormats(profile!).join(', ')}.
+                        </>
+                      ) : (
+                        <>
+                          A fresh FAT volume labelled “{profile?.name}” holding a copy of{' '}
+                          <code>{profile?.destination.path}</code>, exactly as it is laid out
+                          there. {managedFormats(profile!).join(', ')}.
+                        </>
+                      )}
                     </p>
                     <p className="capacity">
                       <b className={fits ? 'fits' : 'over'}>
-                        {formatBytes(needed)} of {formatBytes(capacity.usableBytes)}
+                        {formatBytes(needed)} of {formatBytes(room.usableBytes)}
+                        {measuredOnStick ? ' free' : ''}
                       </b>{' '}
                       · {writing_files.length.toLocaleString()} file
                       {writing_files.length === 1 ? '' : 's'}
                       {fits ? (
-                        <> · fits, with {formatBytes(capacity.usableBytes - needed)} to spare</>
+                        <> · fits, with {formatBytes(room.usableBytes - needed)} to spare</>
                       ) : (
-                        <> · {formatBytes(needed - capacity.usableBytes)} too much</>
+                        <> · {formatBytes(needed - room.usableBytes)} too much</>
                       )}
                     </p>
                     {!fits && (
                       <div className="too-big">
                         <b>This profile will not fit on this stick</b>
                         <span>
-                          Choose what to leave off — for this write only. The profile's own
+                          Choose what to leave off, for this write only. The profile's own
                           folder is never changed.
                         </span>
                         <div className="too-big-actions">
@@ -463,7 +540,7 @@ export function DevicesPage({
                           <button
                             className="button secondary compact"
                             onClick={() => {
-                              const proposal = proposeExclusions(held, profile!, capacity)
+                              const proposal = proposeExclusions(held, profile!, room)
                               setPicking({
                                 excluded: proposal.excluded,
                                 steps: proposal.fits
@@ -512,9 +589,40 @@ export function DevicesPage({
               </div>
             )}
 
+            {copying && (
+              <InlineStatus kind="info">
+                <b>This device is already formatted for a GoTek.</b> Its files can be
+                copied straight onto it, which moves only what is missing and leaves
+                everything else on the stick alone. Formatting is offered alongside, for
+                a device that needs it, or to start again from empty.
+              </InlineStatus>
+            )}
+
             <div className="flow-actions">
-              <button className="button" disabled={!canPlan || planning.busy} onClick={buildPlan}>
-                {planning.busy ? 'Building plan' : 'Plan this write'}
+              {copying && (
+                <button
+                  className="button"
+                  disabled={!operations.length || !fits || writing.busy}
+                  onClick={copy}
+                >
+                  <Upload />
+                  {writing.busy
+                    ? 'Copying'
+                    : `Copy ${operations.length.toLocaleString()} file${
+                        operations.length === 1 ? '' : 's'
+                      } to ${mount}`}
+                </button>
+              )}
+              <button
+                className={`button ${copying ? 'secondary' : ''}`}
+                disabled={!canPlan || planning.busy}
+                onClick={buildPlan}
+              >
+                {planning.busy
+                  ? 'Building plan'
+                  : copying
+                    ? 'Erase and format instead'
+                    : 'Plan this write'}
               </button>
             </div>
             {planning.error && <p className="inline-error">{planning.error}</p>}
@@ -532,7 +640,7 @@ export function DevicesPage({
                 <ul className="plan-files">
                   {plan.destroys.map((entry) => (
                     <li key={entry.node}>
-                      <b>{entry.node}</b> — {entry.description}
+                      <b>{entry.node}</b>: {entry.description}
                     </li>
                   ))}
                 </ul>
@@ -590,11 +698,11 @@ export function DevicesPage({
         )}
       </section>
 
-      {picking && profile && held && capacity && (
+      {picking && profile && held && room && (
         <ContentsPicker
           profile={profile}
           files={held}
-          capacity={capacity}
+          capacity={room}
           initial={picking}
           close={() => setPicking(null)}
           confirm={(kept) => {
@@ -604,7 +712,18 @@ export function DevicesPage({
         />
       )}
 
-      {writing.busy && (
+      {writing.busy && copying && (
+        <ProgressDialog
+          title="Copying to the device"
+          detail={
+            written
+              ? `${written.current || 'Copying'} (${written.done.toLocaleString()} of ${written.total.toLocaleString()})`
+              : 'Do not unplug the device. Each file is written, flushed and checked before the next one starts.'
+          }
+          progress={written ? writePercentage(written) : undefined}
+        />
+      )}
+      {writing.busy && !copying && (
         <ProgressDialog
           title="Writing to the device"
           detail="Do not unplug the device. It is being written and will then be read back in full to verify."

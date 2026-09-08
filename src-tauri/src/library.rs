@@ -15,9 +15,11 @@
 //! JavaScript.
 
 use crate::error::Result;
-use crate::store::{identity, item_from_row, open, StoredItem, ITEM_COLUMNS, ITEM_ORDER};
+use crate::store::{
+    identity, item_from_row, open, write_transaction, StoredItem, ITEM_COLUMNS,
+};
 use crate::task::blocking;
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Transaction};
 
 /// The fields of an item that a person can change by hand.
 ///
@@ -129,7 +131,7 @@ pub async fn replace_source_items(
 ) -> Result<()> {
     blocking(move || {
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         drop_items(&transaction, "source = ?1", &[&source])?;
         for item in &items {
             put_item(&transaction, item)?;
@@ -145,7 +147,7 @@ pub async fn replace_source_items(
 pub async fn upsert_items(app: tauri::AppHandle, items: Vec<StoredItem>) -> Result<()> {
     blocking(move || {
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         for item in &items {
             put_item(&transaction, item)?;
         }
@@ -160,7 +162,7 @@ pub async fn upsert_items(app: tauri::AppHandle, items: Vec<StoredItem>) -> Resu
 pub async fn forget_source(app: tauri::AppHandle, source: String) -> Result<()> {
     blocking(move || {
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         drop_items(&transaction, "source = ?1", &[&source])?;
         transaction.execute("DELETE FROM sources WHERE path = ?1", params![source])?;
         transaction.commit()?;
@@ -199,7 +201,7 @@ pub async fn update_items(
         }
 
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         // In batches, because a library allows a person to select every title
         // they own and SQLite will not take an unbounded number of parameters.
         for batch in ids.chunks(500) {
@@ -228,7 +230,7 @@ pub async fn update_items(
 pub async fn clear_library(app: tauri::AppHandle) -> Result<()> {
     blocking(move || {
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         transaction.execute("DELETE FROM collection_items", [])?;
         transaction.execute("DELETE FROM item_platforms", [])?;
         transaction.execute("DELETE FROM items", [])?;
@@ -309,7 +311,7 @@ pub async fn stage_items(
 ) -> Result<()> {
     blocking(move || {
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         let mut next: i64 = transaction.query_row(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM collection_items WHERE profile_id = ?1",
             params![profile_id],
@@ -342,7 +344,7 @@ pub async fn unstage_items(
 ) -> Result<()> {
     blocking(move || {
         let mut connection = open(&app)?;
-        let transaction = connection.transaction()?;
+        let transaction = write_transaction(&mut connection)?;
         for batch in ids.chunks(500) {
             let holes = vec!["?"; batch.len()].join(",");
             let mut bound: Vec<&dyn rusqlite::ToSql> = vec![&profile_id];
@@ -379,7 +381,8 @@ pub async fn clear_collection(app: tauri::AppHandle, profile_id: String) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::prepare;
+    use crate::store::{prepare, ITEM_ORDER};
+    use rusqlite::Connection;
 
     fn connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();

@@ -342,3 +342,40 @@ export function proposeExclusions(
 
   return { excluded, steps, fits: fits(), keptBytes: cost() }
 }
+
+// ---------------------------------------------------------------------------
+// How a stick should be written to
+// ---------------------------------------------------------------------------
+
+/** Filesystems a GoTek can read, as the operating system names them. */
+const FAT_FILESYSTEMS = ['vfat', 'fat', 'fat12', 'fat16', 'fat32', 'msdos', 'exfat']
+
+/**
+ * Where a device can simply be written to, if it can.
+ *
+ * A stick already formatted for a GoTek and mounted by the desktop is an
+ * ordinary folder, and copying files into it is the whole job: only what is
+ * missing moves, an interrupted copy leaves one obvious partial file, and
+ * nothing has to be erased. Building an image of the entire device and writing
+ * it back byte for byte is how you *format* a stick, which is a different
+ * question and a far more expensive answer: eight gigabytes of reading and
+ * writing to deliver one gigabyte of games.
+ *
+ * So this asks the cheaper question first. `undefined` means the device cannot
+ * be written to as a folder, and has to be formatted before it can hold
+ * anything.
+ */
+export function writableMount(device: {
+  partitions: ReadonlyArray<{
+    filesystem?: string | null
+    mountPoints?: readonly string[]
+  }>
+}): string | undefined {
+  for (const partition of device.partitions) {
+    const kind = (partition.filesystem ?? '').toLowerCase()
+    if (!FAT_FILESYSTEMS.includes(kind)) continue
+    const mount = (partition.mountPoints ?? []).find((path) => path && path !== '[SWAP]')
+    if (mount) return mount
+  }
+  return undefined
+}

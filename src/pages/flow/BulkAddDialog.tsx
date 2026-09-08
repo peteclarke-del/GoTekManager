@@ -22,7 +22,8 @@ import {
   SCAN_PRESETS,
   type ScanFilter,
 } from '../../domain/bulkAdd'
-import { belongsToPlatform, formatBytes, tagsOf } from '../../domain/media'
+import { formatBytes, tagsOf } from '../../domain/media'
+import { spokenLanguages } from '../../domain/tags'
 import type { DevStatus, Distribution, DumpFlag } from '../../domain/tags'
 import type { MediaItem, Profile, SourceLocation, TargetFileStatus } from '../../domain/types'
 import { errorMessage } from '../../native/commands'
@@ -202,10 +203,14 @@ export function BulkAddDialog({
   /** What this library actually contains, which is what the choices offer. */
   const available = useMemo(() => {
     const tags = mine.map((item) => tagsOf(item))
+    // The same reading the filter applies, so a choice offering "German, 3,593"
+    // and a filter that then keeps them all cannot happen.
     const languages = tally(
-      tags.flatMap((entry) =>
-        entry.languages.length ? entry.languages : entry.multiLanguage ? [] : [UNTAGGED],
-      ),
+      tags.flatMap((entry) => {
+        const spoken = spokenLanguages(entry)
+        if (spoken.length) return spoken
+        return entry.multiLanguage ? [] : [UNTAGGED]
+      }),
     )
     return {
       languages: optionsFrom(languages, (value) =>
@@ -551,7 +556,7 @@ export function BulkAddDialog({
                 finished with a disc your filter would have refused
               </summary>
               <p className="mode-note">
-                Every copy of those discs carries something you asked to leave out — very
+                Every copy of those discs carries something you asked to leave out, very
                 often a crack, which is simply how most of this software circulated. The
                 alternative was losing a game that plays perfectly well, so they were taken
                 anyway.
@@ -559,7 +564,7 @@ export function BulkAddDialog({
               <ul>
                 {plan.compromised.slice(0, 20).map((set) => (
                   <li key={set.title}>
-                    {set.title} — {set.discs.join(', ')}
+                    {set.title}: {set.discs.join(', ')}
                   </li>
                 ))}
               </ul>
@@ -575,7 +580,7 @@ export function BulkAddDialog({
               <ul>
                 {plan.incomplete.slice(0, 20).map((set) => (
                   <li key={set.title}>
-                    {set.title} — missing {set.missing.join(', ')}
+                    {set.title}, missing {set.missing.join(', ')}
                   </li>
                 ))}
               </ul>
@@ -614,7 +619,7 @@ export function BulkAddDialog({
               <ul>
                 {plan.renamed.slice(0, 20).map((entry) => (
                   <li key={entry.relativePath}>
-                    <code>{entry.relativePath}</code> — from {entry.name}
+                    <code>{entry.relativePath}</code>, from {entry.name}
                   </li>
                 ))}
               </ul>
@@ -629,7 +634,7 @@ export function BulkAddDialog({
               <ul>
                 {plan.excluded.map((group) => (
                   <li key={group.reason}>
-                    <b>{group.count}</b> {group.reason} — {group.examples.join(', ')}
+                    <b>{group.count}</b> {group.reason}: {group.examples.join(', ')}
                   </li>
                 ))}
               </ul>

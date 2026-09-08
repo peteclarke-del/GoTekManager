@@ -500,3 +500,70 @@ export function releaseSignature(tags: ReleaseTags): string {
     tags.regions.join('+'),
   ].join('|')
 }
+
+// ---------------------------------------------------------------------------
+// What language a release is actually in
+// ---------------------------------------------------------------------------
+
+/**
+ * The language a release from a given country is in.
+ *
+ * The naming convention writes a language in lower case and a country in upper
+ * case, so `(de)` is German and `(DE)` is Germany. Collections in the wild are
+ * nothing like as disciplined: a real TOSEC Amiga set marks thousands of German
+ * releases `(DE)` and never states a language at all. Read strictly, every one
+ * of those states no language, and an "English only" filter that keeps
+ * untagged titles lets the lot through.
+ *
+ * So where a release says nothing about its language but does say which country
+ * it was published for, the country answers. A game sold in Germany is in
+ * German. Countries with more than one language give all of them, because the
+ * filter asks whether any match and a Swiss release really might be any of the
+ * three.
+ */
+const REGION_LANGUAGES: Record<string, string[]> = {
+  AT: ['de'],
+  AU: ['en'],
+  BE: ['nl', 'fr'],
+  BR: ['pt'],
+  CA: ['en', 'fr'],
+  CH: ['de', 'fr', 'it'],
+  CZ: ['cs'],
+  DE: ['de'],
+  DK: ['da'],
+  EN: ['en'],
+  ES: ['es'],
+  FI: ['fi'],
+  FR: ['fr'],
+  GB: ['en'],
+  GR: ['el'],
+  HU: ['hu'],
+  IE: ['en'],
+  IT: ['it'],
+  JP: ['ja'],
+  NL: ['nl'],
+  NO: ['no'],
+  NZ: ['en'],
+  PL: ['pl'],
+  PT: ['pt'],
+  RU: ['ru'],
+  SE: ['sv'],
+  SK: ['sk'],
+  TR: ['tr'],
+  US: ['en'],
+}
+
+/**
+ * The languages a release is in, stated or implied by where it was sold.
+ *
+ * One answer for everything that asks the question, so the choices a filter
+ * offers and the titles it then keeps cannot disagree with each other.
+ *
+ * An empty result means the name genuinely says nothing either way, which is
+ * most of a collection and is a different thing from saying "not English".
+ */
+export function spokenLanguages(tags: ReleaseTags): string[] {
+  if (tags.languages.length) return tags.languages
+  const implied = tags.regions.flatMap((region) => REGION_LANGUAGES[region] ?? [])
+  return [...new Set(implied)]
+}

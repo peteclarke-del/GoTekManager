@@ -54,7 +54,11 @@ profile's exact name.
   sources** below **Add location** on the Sources step. The filter is built from
   what the collection itself records: language, prototypes and playable demos,
   dumps marked cracked, alternate or bad, how the software was published,
-  region, and category, each choice showing how many titles carry it. A multi-disc set is
+  region, and category, each choice showing how many titles carry it. Where a
+  name says which country a release was sold in but never says a language, the
+  country answers: real collections mark thousands of German releases `(DE)` and
+  never write `(de)` at all, and read strictly every one of those would slip
+  past a filter asking for English. A multi-disc set is
   taken whole from one release where one is whole and filled disc by disc where
   none is, and a set missing a disc is left out and named rather than half
   written. Where several copies of a title survive, one is chosen: the original
@@ -119,7 +123,13 @@ profile's exact name.
   is.
 - **Devices** is where a stick is written. Pick a profile by name and its
   destination is copied to the media, whether that destination is a folder, a
-  mounted volume or a FAT image. The running total is counted in clusters
+  mounted volume or a FAT image. A stick that is already formatted for a GoTek
+  and mounted by the desktop is copied to rather than rebuilt, so only the files
+  it is missing move and everything else on it is left alone; formatting is
+  offered for a stick that needs it, or to start again from empty. The
+  difference matters: rebuilding an eight gigabyte stick reads and writes eight
+  gigabytes to deliver one gigabyte of games. The running total is counted in
+  clusters
   rather than bytes, because an 881 KB disk image on a 32 KB cluster costs
   896 KB and across ten thousand titles that difference decides whether a write
   fits.
@@ -181,8 +191,9 @@ as high-risk.
 - A device is addressed by node, model, serial, and size, never by where it is
   mounted, and is re-resolved immediately before writing. A stick swapped after
   planning is a different device and is refused.
-- Writing to a device needs a typed phrase naming that exact device, including
-  the tail of its serial, so it cannot be confirmed from memory.
+- Formatting a device needs a typed phrase naming that exact device, including
+  the tail of its serial, so it cannot be confirmed from memory. Copying onto a
+  stick that is already formatted erases nothing and so does not ask for it.
 - The media is built as an image file first, so a device is never left
   half-formatted, and it is read back and compared afterwards.
 - **Keep** preserves everything already on the destination. **Remove** deletes

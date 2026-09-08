@@ -32,7 +32,6 @@ import {
 } from '../../domain/providers'
 import type {
   CachedDownload,
-  MediaItem,
   OnlineProvider,
   OnlineTitle,
   ProviderAdapter,

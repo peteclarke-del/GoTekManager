@@ -345,11 +345,21 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
     case 'workspaceLoaded':
       return action.workspace
 
-    case 'collectionLoaded':
+    case 'collectionLoaded': {
+      // Merged, never replaced. The fetch was started when the profile became
+      // active and answers a question about how things were then; anything
+      // staged while it was in flight is newer than the answer, and replacing
+      // would throw it away moments after the user asked for it. The store has
+      // both by this point, because staging wrote its row as it happened.
+      const held = state.collections[action.profileId] ?? []
+      const loaded = action.items.filter(
+        (item) => !held.some((entry) => entry.id === item.id),
+      )
       return {
         ...state,
-        collections: { ...state.collections, [action.profileId]: action.items },
+        collections: { ...state.collections, [action.profileId]: [...loaded, ...held] },
       }
+    }
 
     case 'libraryCleared':
       return {
