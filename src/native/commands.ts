@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { supportedExtensionList } from '../domain/catalog'
+import type { Capacity, HeldFile } from '../domain/deviceBuild'
 import type {
   CachedDownload,
   CacheSummary,
@@ -117,6 +118,27 @@ export function scanFolder(
   convert = true,
 ): Promise<FileEntry[]> {
   return invokeNative<FileEntry[]>('scan_folder', { path, extensions, convert })
+}
+
+/**
+ * Everything a profile's destination holds, ready to be copied to media.
+ *
+ * Every file, not only recognised images: a stick built from a destination has
+ * to carry the drive's own configuration too. A destination is wherever it was
+ * kept — a folder, a mounted volume, or a FAT image — and all three answer.
+ */
+export function readDestination(path: string): Promise<HeldFile[]> {
+  return invokeNative<HeldFile[]>('read_destination', { path })
+}
+
+/**
+ * What a stick of this size will actually hold.
+ *
+ * Asked rather than estimated: the cluster size is chosen by the formatter, and
+ * it is the number that decides whether a collection fits.
+ */
+export function imageCapacity(options: ImageOptions): Promise<Capacity> {
+  return invokeNative<Capacity>('image_capacity', { options })
 }
 
 export function supportedConversions(): Promise<ConversionSupport[]> {

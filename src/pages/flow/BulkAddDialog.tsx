@@ -9,7 +9,7 @@
  * and the drive.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { FolderTree, ListPlus, RefreshCw, Wand2 } from 'lucide-react'
 import { Modal } from '../../components/Modal'
 import { InlineStatus } from '../../components/Feedback'
@@ -26,6 +26,7 @@ import { belongsToPlatform, formatBytes, tagsOf } from '../../domain/media'
 import type { DevStatus, Distribution, DumpFlag } from '../../domain/tags'
 import type { MediaItem, Profile, SourceLocation, TargetFileStatus } from '../../domain/types'
 import { errorMessage } from '../../native/commands'
+import { useScanProgress } from '../../hooks/useScanProgress'
 
 /** One selectable value, with how many titles in the library carry it. */
 type Option = { value: string; label: string; count: number }
@@ -82,6 +83,7 @@ function OptionRow({
   options,
   chosen,
   anyLabel,
+  reset = 'all',
   onChange,
 }: {
   legend: string
@@ -89,17 +91,28 @@ function OptionRow({
   /** `undefined` means every value, including ones not listed. */
   chosen: string[] | undefined
   anyLabel: string
+  /**
+   * What the leading button means, because the two are opposites.
+   *
+   * Most rows narrow from everything: no choice means every language. Two of
+   * them widen from nothing: an empty list of unfinished builds means finished
+   * releases only, and each tick lets one more kind in. Reading the second as
+   * the first left "Finished releases only" permanently unlit and doing
+   * nothing when pressed, because the list it would clear was empty already.
+   */
+  reset?: 'all' | 'none'
   onChange: (chosen: string[] | undefined) => void
 }) {
   if (!options.length) return null
+  const cleared = reset === 'all' ? chosen === undefined : !chosen?.length
   return (
     <fieldset className="scan-options">
       <legend>{legend}</legend>
       <button
         type="button"
-        className={chosen === undefined ? 'chip active' : 'chip'}
-        aria-pressed={chosen === undefined}
-        onClick={() => onChange(undefined)}
+        className={cleared ? 'chip active' : 'chip'}
+        aria-pressed={cleared}
+        onClick={() => onChange(reset === 'all' ? undefined : [])}
       >
         {anyLabel}
       </button>
@@ -159,7 +172,8 @@ export function BulkAddDialog({
   /** The whole library; this narrows it to the machine being prepared. */
   items: MediaItem[]
   sources: SourceLocation[]
-  staged: ReadonlySet<string>
+  /** What this profile already holds, so a second copy of a disc is refused. */
+  staged: readonly MediaItem[]
   presence: Record<string, TargetFileStatus>
   /** Re-indexes the chosen sources before they are scanned. */
   reindexSources: (chosen: SourceLocation[]) => Promise<void>
@@ -169,11 +183,17 @@ export function BulkAddDialog({
 }) {
   const [filter, setFilter] = useState<ScanFilter>(CLEAN_RELEASES)
   const [preset, setPreset] = useState('clean')
-  const [rescan, setRescan] = useState(true)
+  // Off by default. Re-reading every source takes minutes on a network share,
+  // and opening a dialog is not consent to start it — the button is right
+  // there, and the counts below say how stale the library is.
+  const [rescan, setRescan] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [failure, setFailure] = useState('')
   /** A category to give everything the scan could not sort, before staging. */
   const [sortUnsorted, setSortUnsorted] = useState('')
+  // Re-reading every source is the slowest thing this dialog does, so it says
+  // where it has got to rather than sitting on one unchanging sentence.
+  const progress = useScanProgress()
 
   const mine = useMemo(
     () => items.filter((item) => belongsToPlatform(item, platform.id)),
@@ -263,14 +283,6 @@ export function BulkAddDialog({
     }
   }
 
-  // Re-indexing is what "scan every source" means, so it happens when the
-  // dialog opens rather than waiting to be asked for a second time.
-  useEffect(() => {
-    if (rescan) void runScan()
-    // Deliberately once: re-running it on every filter change would re-read the
-    // whole library each time somebody ticked a box.
-  }, [])
-
   const apply = () => {
     // The preview already shows these titles under the category they are about
     // to be given, so the library is told about it too rather than the two
@@ -326,7 +338,7 @@ export function BulkAddDialog({
               checked={rescan}
               onChange={(event) => setRescan(event.target.checked)}
             />
-            Re-index these sources before scanning
+            Re-index these sources first
           </label>
           <button
             type="button"
@@ -339,8 +351,12 @@ export function BulkAddDialog({
           </button>
           {scanning && (
             <InlineStatus kind="info">
-              <RefreshCw className="spinning" /> Re-indexing every chosen source. A library on
-              a network share takes minutes; nothing is staged until you confirm.
+              <RefreshCw className="spinning" />{' '}
+              {progress
+                ? `Re-indexing: ${progress.found} found in ${progress.folders} folder${progress.folders === 1 ? '' : 's'} so far.`
+                : 'Re-indexing every chosen source.'}{' '}
+              A library on a network share takes minutes; nothing is staged until you
+              confirm.
             </InlineStatus>
           )}
           {failure && <InlineStatus kind="error">{failure}</InlineStatus>}
@@ -390,6 +406,7 @@ export function BulkAddDialog({
           <OptionRow
             legend="Unfinished builds"
             anyLabel="Finished releases only"
+            reset="none"
             options={available.devStatus}
             chosen={filter.devStatus}
             onChange={(chosen) => change({ devStatus: (chosen ?? []) as DevStatus[] })}
@@ -397,6 +414,7 @@ export function BulkAddDialog({
           <OptionRow
             legend="Dumps to allow"
             anyLabel="Untouched dumps only"
+            reset="none"
             options={available.dumpFlags}
             chosen={filter.dumpFlags}
             onChange={(chosen) => change({ dumpFlags: (chosen ?? []) as DumpFlag[] })}
@@ -527,11 +545,33 @@ export function BulkAddDialog({
             </div>
           )}
 
+          {plan.compromised.length > 0 && (
+            <details className="scan-detail">
+              <summary>
+                {plan.compromised.length} set{plan.compromised.length === 1 ? '' : 's'}{' '}
+                finished with a disc your filter would have refused
+              </summary>
+              <p className="mode-note">
+                Every copy of those discs carries something you asked to leave out — very
+                often a crack, which is simply how most of this software circulated. The
+                alternative was losing a game that plays perfectly well, so they were taken
+                anyway.
+              </p>
+              <ul>
+                {plan.compromised.slice(0, 20).map((set) => (
+                  <li key={set.title}>
+                    {set.title} — {set.discs.join(', ')}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           {plan.incomplete.length > 0 && (
             <details className="scan-detail">
               <summary>
-                {plan.incomplete.length} set{plan.incomplete.length === 1 ? '' : 's'} left out
-                for want of a disc
+                {plan.incomplete.length} set{plan.incomplete.length === 1 ? '' : 's'} left out:
+                no copy of a disc exists at all
               </summary>
               <ul>
                 {plan.incomplete.slice(0, 20).map((set) => (

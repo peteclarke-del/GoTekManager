@@ -53,6 +53,8 @@ import {
   categories,
   categoryFolder,
   categoryFolderFor,
+  categoryFromSource,
+  inferCategoryFor,
   destinationCategoryFolders,
   inferCategory,
   inferCategoryFromName,
@@ -61,8 +63,19 @@ import {
 } from '../src/domain/categories'
 import { dumpRank, readTags, releaseSignature } from '../src/domain/tags'
 import {
+  costOf,
+  isExcluded,
+  keptFiles,
+  looksLikeSetup,
+  proposeExclusions,
+  titleOf,
+  treeOf,
+  type HeldFile,
+} from '../src/domain/deviceBuild'
+import {
   CLEAN_RELEASES,
   judge,
+  REASONS,
   planBulkAdd,
   SCAN_PRESETS,
   type ScanFilter,
@@ -289,6 +302,40 @@ check('a disc is only marked when the set has more than one', () => {
   assert.equal(releaseName(partial[0], setIndexOf(partial).get(partial[0].id)), 'Elite D1.adf')
 })
 
+check('a disc number is found in the middle of a name, and survives the cut', () => {
+  // Written as "Data Disk #6 - Suzi & Melissa": the number is mid-name and
+  // carries a hash, so it was not read as a disc at all. Each disc became a set
+  // of its own, and when the display width cut the name to something two discs
+  // shared, the year was borrowed to tell them apart — which says nothing about
+  // which disc is which, and is the one thing somebody at the machine needs.
+  const sixth = readTags('Strip Poker Three Data Disk #6 - Suzi & Melissa (1991)(Artworx).adf')
+  assert.equal(sixth.bareTitle, 'Strip Poker Three Data')
+  assert.equal(sixth.disk?.label, 'D6')
+  assert.equal(sixth.disk?.index, 6)
+
+  const set = [
+    media('Strip Poker Three Data Disk #5 - Suzi & Melissa (1991)(Artworx).adf', 'amiga'),
+    media('Strip Poker Three Data Disk #6 - Suzi & Melissa (1991)(Artworx).adf', 'amiga'),
+  ]
+  const positions = setIndexOf(set)
+  assert.deepEqual(
+    set.map((item) => releaseName(item, positions.get(item.id), 24)),
+    ['Strip Poker Three D5.adf', 'Strip Poker Three D6.adf'],
+    'the disc number is what tells them apart, not the year',
+  )
+
+  // A number that is not a disc marker is left where it is.
+  assert.equal(
+    readTags('Amiga Format Coverdisk 42 Extra.adf').bareTitle,
+    'Amiga Format Coverdisk 42 Extra',
+  )
+  assert.equal(readTags('Elite Disk 2.adf').bareTitle, 'Elite')
+  // Including the marker this application writes itself, so a stick it built
+  // reads back as the sets it was built from.
+  assert.equal(readTags('Elite D2.adf').bareTitle, 'Elite')
+  assert.equal(readTags('Elite D2.adf').disk?.label, 'D2')
+})
+
 check('a name cut for the display gives up the title, never the disc', () => {
   assert.equal(
     releaseName(media('A Very Long Retro Game Title Indeed.ssd'), undefined, 24),
@@ -357,6 +404,51 @@ check('title keys normalise enough to compare, and no further', () => {
   assert.equal(softwareTitleKey('/library/Chuckie Egg.ssd'), 'chuckie egg')
   assert.equal(softwareTitleKey('Dungeon Master Disk 2.adf'), 'dungeon master')
   assert.notEqual(softwareTitleKey('Elite II'), softwareTitleKey('Elite'))
+})
+
+check('a blocked title says where it would go and what is already there', () => {
+  // "This would overwrite another title" is not something anybody can act on:
+  // dropping the right one of the pair means seeing both, and the path.
+  const first = media('Strip Poker Three Data Disk 6 (1991)(Artworx).ssd')
+  const second = {
+    ...media('Strip Poker Three Data Disk 6 (1991)(Artworx)[a].ssd'),
+    id: 'second',
+    path: '/library/other/Strip Poker Three Data Disk 6 (1991)(Artworx)[a].ssd',
+  }
+  const operations = [
+    { source: first.path, relativePath: 'Games/Strip Poker.ssd', size: 1024 },
+    { source: second.path, relativePath: 'Games/Strip Poker.ssd', size: 1024 },
+  ]
+  const plan: TransferPlan = {
+    target: '/media/gotek',
+    operations: [],
+    edits: [],
+    removals: [],
+    result: [],
+    totalBytes: 0,
+    warnings: [],
+    ready: false,
+    blockers: [
+      {
+        kind: 'collision' as const,
+        source: second.path,
+        message: 'Two titles would be written to Games/Strip Poker.ssd',
+      },
+    ],
+  }
+
+  const [blockedTitle] = blockedTitles(
+    plan,
+    new Map([
+      [first.path, first],
+      [second.path, second],
+    ]),
+    operations,
+  )
+
+  assert.equal(blockedTitle.item.id, 'second')
+  assert.equal(blockedTitle.path, 'Games/Strip Poker.ssd')
+  assert.equal(blockedTitle.against?.id, first.id, 'the title already taking that path')
 })
 
 check('byte sizes are readable', () => {
@@ -1181,21 +1273,47 @@ check('a set with no whole release is filled disc by disc, and says so', () => {
   assert.deepEqual(plan.mixed, ['Dungeon Master'])
 })
 
-check('a set missing a disc is left out rather than half written', () => {
-  // Disc 2 is a bad dump, which the filter refuses. Writing discs 1 and 3 is a
-  // game that cannot be finished, so the whole set goes.
+check('a disc that only exists in a refused form is taken rather than lost', () => {
+  // The case a real collection is full of: every copy of one disc is cracked,
+  // which is simply how most of this software circulated, while another disc
+  // has a clean dump. Refusing the set loses a game that plays perfectly well
+  // over a preference about one of its discs, so the cascade carries on down
+  // to the copy that does exist — and says which disc it did that for.
   const names = [
     'Dungeon Master (1987)(FTL)(Disk 1 of 3).ssd',
-    'Dungeon Master (1987)(FTL)(Disk 2 of 3)[b].ssd',
+    'Dungeon Master (1987)(FTL)(Disk 2 of 3)[cr CSL].ssd',
     'Dungeon Master (1987)(FTL)(Disk 3 of 3).ssd',
   ]
   const plan = scan(names)
 
+  assert.equal(plan.included.length, 3, 'the whole set is written')
+  assert.deepEqual(plan.incomplete, [])
+  assert.deepEqual(plan.compromised, [{ title: 'Dungeon Master', discs: ['D2'] }])
+  // And it is the cracked copy that was taken, because it is the only one.
+  assert.ok(
+    plan.included.some((item) => item.name.includes('[cr CSL]')),
+    'the only copy of disc 2 is the one taken',
+  )
+})
+
+check('a set is only reported missing when no copy of a disc exists', () => {
+  const plan = scan([
+    'Dungeon Master (1987)(FTL)(Disk 1 of 3).ssd',
+    'Dungeon Master (1987)(FTL)(Disk 3 of 3).ssd',
+  ])
+
   assert.deepEqual(plan.included, [])
   assert.deepEqual(plan.incomplete, [{ title: 'Dungeon Master', missing: ['D2'] }])
+  assert.deepEqual(plan.compromised, [])
 
   // Told not to keep sets whole, it takes what passed and says nothing.
-  const loose = scan(names, { ...CLEAN_RELEASES, keepDiskSetsWhole: false })
+  const loose = scan(
+    [
+      'Dungeon Master (1987)(FTL)(Disk 1 of 3).ssd',
+      'Dungeon Master (1987)(FTL)(Disk 3 of 3).ssd',
+    ],
+    { ...CLEAN_RELEASES, keepDiskSetsWhole: false },
+  )
   assert.equal(loose.included.length, 2)
   assert.deepEqual(loose.incomplete, [])
 
@@ -1219,6 +1337,76 @@ check('a set missing a disc is left out rather than half written', () => {
     none.excluded.map((group) => group.reason),
     ['marked bad'],
   )
+})
+
+check('a point release does not look like a set with its discs missing', () => {
+  // Collections ship a point release as a patched first disc only. Keeping the
+  // version in the title made that single disc look like a nine disc set with
+  // eight discs missing, while the complete earlier release sat beside it.
+  assert.equal(readTags('Ambermoon v1.04 (1993)(Thalion)(Disk 1 of 9).adf').bareTitle, 'Ambermoon')
+  assert.equal(readTags('Ambermoon v1.04 (1993)(Thalion)(Disk 1 of 9).adf').version, 'v1.04')
+  assert.equal(readTags('3D Construction Kit II r2.01 (1992)(Domark).adf').bareTitle, '3D Construction Kit II')
+  // A release can carry two of them, and one pass left the number behind —
+  // which put every point release back in a set of its own.
+  assert.equal(
+    readTags('AmigaVision v1.71 rev I (1991)(Commodore)(Disk 1 of 6).adf').bareTitle,
+    'AmigaVision',
+  )
+
+  // A title that merely ends in a numeral is not a version.
+  assert.equal(readTags('Zool 2 (1993)(Gremlin).adf').bareTitle, 'Zool 2')
+  assert.equal(readTags('Turrican II (1991)(Rainbow Arts).adf').bareTitle, 'Turrican II')
+
+  const plan = scan([
+    'Ambermoon v1.01 (1993)(Thalion)(Disk 1 of 2).ssd',
+    'Ambermoon v1.01 (1993)(Thalion)(Disk 2 of 2).ssd',
+    'Ambermoon v1.04 (1993)(Thalion)(Disk 1 of 2).ssd',
+  ])
+  assert.deepEqual(plan.incomplete, [])
+  assert.equal(plan.included.length, 2, 'one complete set, not a phantom short one')
+})
+
+check('a media label never renumbers the disc it follows', () => {
+  // `(Disk 2 of 3)(Disk1)` is disc two carrying a label that says "Disk1".
+  // Letting the label win renumbered the set and lost its last disc.
+  const tags = readTags('Abduction (1998)(Epic)(Disk 2 of 3)(Disk1).adf')
+  assert.deepEqual(tags.disk, { label: 'D2', index: 2, of: 3 })
+
+  const plan = scan([
+    'Abduction (1998)(Epic)(Disk 1 of 3)(Game).ssd',
+    'Abduction (1998)(Epic)(Disk 2 of 3)(Disk1).ssd',
+    'Abduction (1998)(Epic)(Disk 3 of 3)(Disk2).ssd',
+  ])
+  assert.deepEqual(plan.incomplete, [])
+  assert.equal(plan.included.length, 3)
+})
+
+check('a set is as long as the collection bears out, not as long as anyone claims', () => {
+  // Two editions: a complete four disc release, and a five disc one whose last
+  // disc nobody kept. Believing the larger claim left the complete set out.
+  const complete = scan([
+    'Dragonstone (1994)(Core)(Disk 1 of 4).ssd',
+    'Dragonstone (1994)(Core)(Disk 2 of 4).ssd',
+    'Dragonstone (1994)(Core)(Disk 3 of 4).ssd',
+    'Dragonstone (1994)(Core)(Disk 4 of 4).ssd',
+    'Dragonstone (1995)(Core)(Disk 1 of 5).ssd',
+    'Dragonstone (1995)(Core)(Disk 2 of 5).ssd',
+  ])
+  assert.deepEqual(complete.incomplete, [])
+  assert.equal(complete.included.length, 4)
+
+  // But a set that really is short of a disc still says so.
+  const short = scan([
+    'Citadel, The (1989)(Superior)(Disk 1 of 5).ssd',
+    'Citadel, The (1989)(Superior)(Disk 3 of 5).ssd',
+    'Citadel, The (1989)(Superior)(Disk 4 of 5).ssd',
+    'Citadel, The (1989)(Superior)(Disk 5 of 5).ssd',
+  ])
+  assert.deepEqual(short.incomplete, [{ title: 'Citadel, The', missing: ['D2'] }])
+
+  // And so does one where only the first disc of three was ever kept.
+  const lonely = scan(['Wheels of Fire (1991)(Domark)(Disk 1 of 3).ssd'])
+  assert.deepEqual(lonely.incomplete, [{ title: 'Wheels of Fire', missing: ['D2', 'D3'] }])
 })
 
 check('every dimension of the filter is asked, and says why', () => {
@@ -1279,14 +1467,28 @@ check('a scan reports where everything would land, and what it left behind', () 
   assert.equal(plan.totalBytes, plan.included.reduce((total, item) => total + item.size, 0))
 })
 
-check('a scan never offers a title already staged against the profile', () => {
+check('a scan never offers a disc this profile already holds', () => {
   const item = media('Elite (1984).ssd')
-  const plan = planBulkAdd([item], scanProfile, 'bbc', CLEAN_RELEASES, {
-    staged: new Set([item.id]),
-  })
+  const plan = planBulkAdd([item], scanProfile, 'bbc', CLEAN_RELEASES, { staged: [item] })
 
   assert.deepEqual(plan.included, [])
   assert.equal(plan.excluded[0].count, 1)
+
+  // And not merely the same row: a *different* release of a disc already held
+  // is the same disc, and adding it beside the first is how a profile added to
+  // twice ended up with several copies of one application.
+  const alreadyHeld = media('3-D Professional (1990)(ASDG)(Disk 4 of 6).ssd')
+  const anotherCopy = {
+    ...media('3-D Professional (1990)(ASDG)(Disk 4 of 6)[a].ssd'),
+    id: 'another',
+    path: '/library/elsewhere/3-D Professional (1990)(ASDG)(Disk 4 of 6)[a].ssd',
+  }
+  const second = planBulkAdd([anotherCopy], scanProfile, 'bbc', CLEAN_RELEASES, {
+    staged: [alreadyHeld],
+  })
+
+  assert.deepEqual(second.included, [])
+  assert.equal(second.excluded[0].reason, REASONS.duplicate)
 })
 
 check('every preset is a filter a scan can actually run', () => {
@@ -1355,6 +1557,58 @@ check('a collection that names its folders after its catalogue still reads', () 
   // Still whole words, or every game show would be a game.
   assert.equal(inferCategoryId(`${source}/Gameshow Collection/Quiz.adf`, source), undefined)
   assert.equal(inferCategoryId(`${source}/Demolition/Man.adf`, source), undefined)
+})
+
+check('the source folder itself is read, but only as a last resort', () => {
+  // Somebody who points this at a folder called Games has said what is in it.
+  // Ignoring that left ninety-four per cent of a real library unsorted: every
+  // title of a four thousand image set under ".../Commodore Amiga/Games", and
+  // a TOSEC applications set with it, because the only folder that said
+  // anything was the one folder that was not read.
+  const games = '/library/Gamebase/Commodore/Commodore Amiga/Games'
+  assert.equal(categoryFromSource(games), 'games')
+  assert.equal(inferCategory(`${games}/A-Train_Disk1.adf`, games), 'games')
+
+  const apps = '/library/TOSEC/Commodore/Amiga/Applications/[ADF]/(2022-12-21)'
+  assert.equal(inferCategory(`${apps}/Deluxe Paint v1.0 (1985)(EA).adf`, apps), 'applications')
+
+  // Still the weakest evidence there is. A folder below the root that says
+  // something else is believed over it, and so is the title's own name.
+  assert.equal(inferCategory(`${games}/Magazines/Zzap 1.adf`, games), 'magazines')
+  assert.equal(
+    inferCategory(`${games}/Amiga Format coverdisk.adf`, games, 'Amiga Format coverdisk.adf'),
+    'magazines',
+  )
+
+  // A source that names nothing still leaves its titles unsorted rather than
+  // inventing a category for them.
+  const plain = '/library/My Stuff'
+  assert.equal(categoryFromSource(plain), undefined)
+  assert.equal(inferCategory(`${plain}/Elite.adf`, plain), undefined)
+})
+
+check('what the user called a source is read when its path says nothing', () => {
+  // A collection kept at ".../Ghostware Collection/Commodore/Amiga" says
+  // nothing about what is in it, and the folders below it say nothing either —
+  // the files sit straight in the root. The person who added it called it
+  // "Games (Ghostware)" and meant it, and that was seven thousand titles left
+  // unsorted for want of reading the one label that answered.
+  const source = {
+    path: '/library/Ghostware Collection/Commodore/Amiga',
+    name: 'Games (Ghostware)',
+  }
+  assert.equal(inferCategoryFor(`${source.path}/1 Across 2 Down_Disk1.adf`, source), 'games')
+
+  // Still the last word, after everything about the title itself.
+  assert.equal(
+    inferCategoryFor(`${source.path}/Demos/Desert Dream.adf`, source),
+    'demos',
+  )
+  // And a source whose name says nothing leaves its titles unsorted.
+  assert.equal(
+    inferCategoryFor(`${source.path}/Elite.adf`, { ...source, name: 'Ghostware' }),
+    undefined,
+  )
 })
 
 check('a bracketed demo is a build, not a demoscene production', () => {
@@ -1434,6 +1688,141 @@ check('every category has a folder name a two-line display can show', () => {
   // An uncategorised title still needs somewhere to go.
   assert.equal(categoryFolder(undefined), UNCATEGORISED)
   assert.equal(categoryFolder('games'), 'Games')
+})
+
+// ---------------------------------------------------------------------------
+// Copying a destination onto a stick
+// ---------------------------------------------------------------------------
+
+function held(relativePath: string, size = 901120): HeldFile {
+  return { source: `/master/${relativePath}`, relativePath, size }
+}
+
+check('a stick is measured in clusters, because that is what it charges', () => {
+  // The number that decides whether a collection fits. An 881 KB disk image on
+  // a 32 KB cluster occupies 896 KB, and ten thousand of them turn a
+  // comfortable byte total into an overflowing one.
+  const files = [held('Games/Elite.adf', 901120), held('Games/Zool.adf', 901120)]
+
+  assert.equal(costOf(files, 0), 1802240, 'with no clusters it is just the bytes')
+  assert.equal(costOf(files, 32768), 2 * 917504, 'each rounds up to a whole cluster')
+  assert.ok(costOf(files, 32768) > 1802240, 'and that is more than the bytes')
+
+  // A file that lands exactly on a boundary is not charged an extra one.
+  assert.equal(costOf([held('Games/Exact.adf', 65536)], 32768), 65536)
+})
+
+check('unticking a folder leaves everything inside it out', () => {
+  const files = [
+    held('Games/Elite.adf'),
+    held('Games/Deep/Zool.adf'),
+    held('Apps/Deluxe Paint.adf'),
+    held('FF.CFG', 200),
+  ]
+
+  const excluded = new Set(['Games'])
+  assert.equal(isExcluded('Games/Elite.adf', excluded), true)
+  assert.equal(isExcluded('Games/Deep/Zool.adf', excluded), true, 'however deep it is')
+  assert.equal(isExcluded('Apps/Deluxe Paint.adf', excluded), false)
+
+  assert.deepEqual(
+    keptFiles(files, excluded).map((file) => file.relativePath),
+    ['Apps/Deluxe Paint.adf', 'FF.CFG'],
+  )
+
+  // The tree carries the totals a picker shows, folders first.
+  const tree = treeOf(files)
+  assert.deepEqual(tree.map((node) => node.name), ['Apps', 'Games', 'FF.CFG'])
+  const games = tree.find((node) => node.name === 'Games')!
+  assert.equal(games.files, 2, 'counts everything beneath it')
+  assert.equal(games.size, 901120 * 2)
+})
+
+check('the discs of one title are left out together, never singly', () => {
+  // A game missing a disc is dead weight, so dropping any disc drops its set.
+  assert.equal(titleOf('Games/Elite D1.adf'), titleOf('Games/Elite D2.adf'))
+  assert.notEqual(titleOf('Games/Elite D1.adf'), titleOf('Games/Zool D1.adf'))
+  // The folder is part of it: two games of one name under different categories
+  // are not the same title.
+  assert.notEqual(titleOf('Games/Elite.adf'), titleOf('Apps/Elite.adf'))
+})
+
+check('setup and system disks are recognised on whole words only', () => {
+  assert.equal(looksLikeSetup('Apps/Workbench 3.1.adf'), true)
+  assert.equal(looksLikeSetup('Apps/Install Disk.adf'), true)
+  assert.equal(looksLikeSetup('System/Kickstart 1.3.adf'), true)
+  // And a title that merely contains one of those letters is not.
+  assert.equal(looksLikeSetup('Games/Preinstalled Hero.adf'), false)
+  assert.equal(looksLikeSetup('Games/Bootleg Racer.adf'), false)
+})
+
+check('the automatic proposal stops as soon as it fits, and says what it did', () => {
+  const profile: Profile = { ...bbcProfile, platformId: 'amiga', folderLayout: 'category' }
+  const files = [
+    held('Games/Elite D1.adf'),
+    held('Games/Elite D2.adf'),
+    held('Apps/Workbench 3.1.adf'),
+    held('Apps/Deluxe Paint.adf'),
+    held('Games/Notes.txt', 500),
+    held('FF.CFG', 200),
+  ]
+  const capacity = { usableBytes: 4 * 917504, clusterBytes: 32768 }
+
+  const proposal = proposeExclusions(files, profile, capacity)
+
+  assert.ok(proposal.fits, 'it made room')
+  assert.ok(proposal.steps.length > 0, 'and said what it did')
+  // A format the drive cannot load goes first; the drive's own configuration
+  // never does, because without it the stick will not behave.
+  assert.equal(isExcluded('Games/Notes.txt', proposal.excluded), true)
+  assert.equal(isExcluded('FF.CFG', proposal.excluded), false)
+
+  // Where a disc of a set is dropped, the whole set goes with it.
+  const elite = ['Games/Elite D1.adf', 'Games/Elite D2.adf']
+    .map((path) => isExcluded(path, proposal.excluded))
+  assert.equal(new Set(elite).size, 1, 'both discs, or neither')
+})
+
+check('a proposal gives up whole categories, least wanted first, until it fits', () => {
+  // Stopping after the setup disks and announcing that it does not fit is not
+  // help: the point of asking is to be handed something that fits, and a
+  // category is the largest thing that can go without breaking anything.
+  const profile: Profile = { ...bbcProfile, platformId: 'amiga', folderLayout: 'category' }
+  const files = [
+    held('Games/Elite.adf'),
+    held('Apps/Deluxe Paint.adf'),
+    held('Mags/Amiga Format 1.adf'),
+    held('System/Workbench.adf'),
+  ]
+  // Room for one title only, so everything but the games has to go.
+  const proposal = proposeExclusions(files, profile, {
+    usableBytes: 917504,
+    clusterBytes: 32768,
+  })
+
+  assert.ok(proposal.fits)
+  assert.deepEqual(
+    keptFiles(files, proposal.excluded).map((file) => file.relativePath),
+    ['Games/Elite.adf'],
+    'games are what the stick is for, so they are the last thing given up',
+  )
+  assert.ok(
+    proposal.steps.some((step) => step.includes('Mags')),
+    'and it says which categories it gave up',
+  )
+})
+
+check('a proposal that cannot make room says so rather than emptying the stick', () => {
+  const profile: Profile = { ...bbcProfile, platformId: 'amiga' }
+  const files = [held('Games/Elite.adf'), held('Games/Zool.adf')]
+  // Room for nothing at all.
+  const proposal = proposeExclusions(files, profile, { usableBytes: 1024, clusterBytes: 32768 })
+
+  assert.equal(proposal.fits, false)
+  assert.ok(
+    keptFiles(files, proposal.excluded).length > 0 || proposal.steps.length > 0,
+    'it reports rather than pruning on its own judgement',
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -2397,7 +2786,9 @@ check('the shell renders and waits rather than showing an empty library', () => 
   const markup = renderToString(createElement(App))
 
   assert.ok(markup.includes('GoTek'))
-  assert.ok(markup.includes('Prepare GoTek media'))
+  // The application opens on Profiles, because a profile is what everything
+  // else is about: its folder is filled, and then written to media.
+  assert.ok(markup.includes('Profiles'))
   // The workspace is read asynchronously now. Rendering "no profiles yet"
   // before it arrives would tell the user their library had vanished.
   assert.ok(markup.includes('Opening your library'))
@@ -2408,7 +2799,7 @@ check('every screen is reachable from the navigation', () => {
   storage.clear()
   const markup = renderToString(createElement(App))
 
-  for (const page of ['Flow', 'Profiles', 'Devices', 'Help']) {
+  for (const page of ['Library', 'Profiles', 'Devices', 'Help']) {
     assert.ok(markup.includes(`>${page}<`), `${page} is missing from the navigation`)
   }
 })

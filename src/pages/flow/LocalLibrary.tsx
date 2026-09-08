@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Check,
   FolderOpen,
@@ -46,6 +46,7 @@ import {
 import type { MediaItem, Profile, SourceLocation } from '../../domain/types'
 import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { PAGE_SIZE, usePagedRows } from '../../hooks/usePagedRows'
 import { useTargetPresence } from '../../hooks/useTargetPresence'
 import { useTitleRoom } from '../../hooks/useTitleRoom'
 import type { TablePreferences } from '../../state/useWorkspace'
@@ -58,17 +59,6 @@ const PRESENCE_FILTERS: Array<[PresenceFilter, string]> = [
   ['missing', 'Not on target'],
   ['present', 'On target'],
 ]
-
-/**
- * How many titles the table draws at once.
- *
- * Every row carries a platform and a category to choose from, which is some
- * thirty elements of markup; a library of a few thousand is a few hundred
- * thousand of them, and building that many takes tens of seconds during which
- * nothing on screen responds. A page of them draws in a moment, and the rest
- * are one button away — or, more usually, one search away.
- */
-const PAGE_SIZE = 150
 
 /** Which titles to show, by whether this profile already stages them. */
 type ProfileFilter = 'all' | 'staged' | 'unstaged'
@@ -151,8 +141,6 @@ export function LocalLibrary({
   /** Whether the scan of every source is open. */
   const [scanning, setScanning] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
-  /** How many of the matching titles are drawn. */
-  const [shown, setShown] = useState(PAGE_SIZE)
   const fingerprinting = useFingerprintProgress()
   // How much of a name the title column can hold, which changes with the window.
   const titleRoom = useTitleRoom()
@@ -190,14 +178,6 @@ export function LocalLibrary({
     items,
     platform.id,
   )
-
-  useEffect(() => {
-    setShown(PAGE_SIZE)
-  }, [query, selectedSources, presenceFilter, profileFilter, platform.id, profile.id])
-
-  // Which disc of which set each title is, so a preview of the name a title
-  // will be written under says the same thing the plan will.
-  const sets = useMemo(() => setIndexOf(comparable), [comparable])
 
   const staged = useMemo(() => new Set(collection.map((item) => item.id)), [collection])
   const sourceName = (item: MediaItem) => {
@@ -271,7 +251,7 @@ export function LocalLibrary({
 
   // The selection follows the table: filtering a ticked title away unticks it,
   // so a bulk action can only ever reach what is on screen.
-  const visible = useMemo(() => rows.slice(0, shown), [rows, shown])
+  const { visible, remaining, showMore } = usePagedRows(rows)
   const rowIds = useMemo(() => visible.map((row) => row.item.id), [visible])
   const selection = useRowSelection(rowIds)
   const picked = selection.chosen(visible, (row) => row.item.id)
@@ -285,7 +265,16 @@ export function LocalLibrary({
    * it is added, so the plan is never a guess about what a .dsk holds.
    */
   const stageItems = (chosen: MediaItem[]) => {
-    const unassigned = chosen.filter((item) => !item.assignedPlatformId).map((item) => item.id)
+    // Judged against the *library's* record, never against the copy handed in.
+    // A scan hands back titles already read as belonging to this machine, so
+    // asking the copy whether it has a platform always says yes and the library
+    // row keeps none. Collections are stored as ids, so the assignment is lost
+    // on the next read and every staged title comes back a format this drive
+    // cannot load — a full stick that plans as nothing to add.
+    const held = new Map(items.map((item) => [item.id, item]))
+    const unassigned = chosen
+      .filter((item) => !held.get(item.id)?.assignedPlatformId)
+      .map((item) => item.id)
     if (unassigned.length) assignPlatform(unassigned, platform.id)
     addToCollection(chosen.map((item) => forProfile(item, platform.id)))
     selection.clear()
@@ -741,16 +730,14 @@ export function LocalLibrary({
               ))}
             </tbody>
           </table>
-          {rows.length > visible.length && (
+          {remaining > 0 && (
             <div className="table-more">
               <span>
-                Showing {visible.length} of {rows.length} matching titles
+                Showing {visible.length.toLocaleString()} of {rows.length.toLocaleString()}{' '}
+                matching titles
               </span>
-              <button
-                className="button secondary compact"
-                onClick={() => setShown((count) => count + PAGE_SIZE)}
-              >
-                Show {Math.min(PAGE_SIZE, rows.length - visible.length)} more
+              <button className="button secondary compact" onClick={showMore}>
+                Show {Math.min(PAGE_SIZE, remaining).toLocaleString()} more
               </button>
               <button
                 className="button compact"
@@ -788,7 +775,7 @@ export function LocalLibrary({
           platform={platform}
           items={items}
           sources={sources}
-          staged={staged}
+          staged={collection}
           presence={statuses}
           reindexSources={reindexSources}
           assignCategory={assignCategory}
@@ -797,11 +784,13 @@ export function LocalLibrary({
         />
       )}
 
+      {/* The set index is worked out here rather than on every render: it walks
+          the whole library, and only this preview needs it. */}
       {renaming && (
         <DisplayNameDialog
           item={renaming}
           profile={profile}
-          set={sets.get(renaming.id) ?? SINGLE_DISC}
+          set={setIndexOf(comparable).get(renaming.id) ?? SINGLE_DISC}
           close={() => setRenaming(null)}
           save={(alias) => {
             setDisplayTitle(renaming.id, alias)

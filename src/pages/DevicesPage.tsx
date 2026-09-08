@@ -15,16 +15,26 @@ import {
   Archive,
   Check,
   HardDrive,
+  ListChecks,
   RefreshCw,
+  Disc,
   ShieldAlert,
   Upload,
+  Usb,
+  Wand2,
   X,
 } from 'lucide-react'
 import { Empty, InlineStatus, ProgressDialog } from '../components/Feedback'
-import { formatBytes, managedFormats, transferOperations } from '../domain/media'
+import { formatBytes, managedFormats } from '../domain/media'
+import {
+  costOf,
+  proposeExclusions,
+  type Capacity,
+  type HeldFile,
+} from '../domain/deviceBuild'
+import { ContentsPicker } from './ContentsPicker'
 import type {
   ImageOptions,
-  MediaItem,
   Notice,
   PhysicalDevice,
   Profile,
@@ -36,11 +46,51 @@ import {
   chooseImageFile,
   deviceIdentity,
   executeProvision,
+  imageCapacity,
   physicalDevices,
   planProvision,
+  readDestination,
   type ProvisionRequest,
   type ProvisionSource,
 } from '../native/commands'
+
+/**
+ * What kind of thing a device is, in the words somebody looking for their stick
+ * would use.
+ *
+ * The operating system reports a transport and a removable flag; neither on its
+ * own says "this is the USB stick I just plugged in", which is the only
+ * question being asked of this list.
+ */
+export type DeviceKind = 'usb' | 'removable' | 'fixed' | 'system'
+
+export function kindOf(device: PhysicalDevice): DeviceKind {
+  if (device.system) return 'system'
+  if ((device.transport ?? '').toLowerCase().includes('usb')) return 'usb'
+  return device.removable ? 'removable' : 'fixed'
+}
+
+const KIND_ICONS: Record<DeviceKind, typeof HardDrive> = {
+  usb: Usb,
+  removable: Disc,
+  fixed: HardDrive,
+  system: ShieldAlert,
+}
+
+const KIND_LABELS: Record<DeviceKind, string> = {
+  usb: 'USB',
+  removable: 'Removable',
+  fixed: 'Fixed disk',
+  system: 'System disk',
+}
+
+/** The filters offered above the list, in the order they are useful. */
+const KIND_FILTERS: Array<[string, string]> = [
+  ['all', 'All'],
+  ['usb', 'USB'],
+  ['removable', 'Removable'],
+  ['fixed', 'Fixed'],
+]
 
 /** Leaves room for the partition table and a little slack at the end. */
 function imageSizeFor(device: PhysicalDevice): number {
@@ -57,6 +107,8 @@ function DeviceRow({
   onSelect: () => void
 }) {
   const usable = !device.system
+  const kind = kindOf(device)
+  const Icon = KIND_ICONS[kind]
   return (
     <button
       className={`device-row ${selected ? 'selected' : ''} ${usable ? '' : 'blocked'}`}
@@ -69,16 +121,15 @@ function DeviceRow({
           : 'This device carries the running operating system and can never be written to.'
       }
     >
-      {usable ? <HardDrive /> : <ShieldAlert />}
+      <Icon />
       <span>
         <b>{device.name}</b>
         <small>
-          {device.node} · {formatBytes(device.sizeBytes)}
+          {KIND_LABELS[kind]} · {device.node} · {formatBytes(device.sizeBytes)}
           {device.transport ? ` · ${device.transport}` : ''}
-          {device.removable ? ' · removable' : ''}
           {device.serial ? ` · serial ${device.serial}` : ' · no serial reported'}
         </small>
-        <small>
+        <small className="device-partitions">
           {device.partitions.length
             ? device.partitions
                 .map(
@@ -98,18 +149,31 @@ function DeviceRow({
 }
 
 export function DevicesPage({
-  profile,
-  collection,
+  profiles,
+  activeProfileId,
   notify,
 }: {
-  profile?: Profile
-  collection: MediaItem[]
+  /** Every profile: a stick is written from whichever one is chosen here. */
+  profiles: Profile[]
+  activeProfileId: string
   notify: (notice: Notice) => void
 }) {
   const [devices, setDevices] = useState<PhysicalDevice[]>([])
   const [selectedNode, setSelectedNode] = useState('')
+  /** Which kinds of device the list shows. A stick is what people come for. */
+  const [kindFilter, setKindFilter] = useState('all')
   const [sourceKind, setSourceKind] = useState<'build' | 'image'>('build')
   const [imagePath, setImagePath] = useState('')
+  const [profileId, setProfileId] = useState(activeProfileId)
+  /** What the chosen profile's destination holds, read when it is chosen. */
+  const [held, setHeld] = useState<HeldFile[] | null>(null)
+  const [capacity, setCapacity] = useState<Capacity | null>(null)
+  /** The files this write will carry, once anything has been left out. */
+  const [chosen, setChosen] = useState<HeldFile[] | null>(null)
+  const [picking, setPicking] = useState<{ excluded: Set<string>; steps: string[] } | null>(
+    null,
+  )
+  const reading = useAsyncAction()
   const [plan, setPlan] = useState<ProvisionPlan | null>(null)
   const [confirmation, setConfirmation] = useState('')
   const [report, setReport] = useState<ProvisionReport | null>(null)
@@ -118,6 +182,12 @@ export function DevicesPage({
   const writing = useAsyncAction()
 
   const selected = devices.find((device) => device.node === selectedNode)
+  // A system disk is always listed, whatever the filter: leaving it out would
+  // suggest it might be missing rather than refused.
+  const shown = devices.filter(
+    (device) =>
+      kindFilter === 'all' || kindOf(device) === kindFilter || kindOf(device) === 'system',
+  )
 
   const refresh = () =>
     scan.run(async () => {
@@ -139,16 +209,53 @@ export function DevicesPage({
     setReport(null)
   }, [selectedNode, sourceKind, imagePath])
 
+  const profile = profiles.find((entry) => entry.id === profileId) ?? profiles[0]
+
+  // What goes on the stick: the profile's destination as it stands, minus
+  // anything left out for this write. The folder is the master and the stick is
+  // a copy of it, so nothing is re-laid-out on the way.
+  const writing_files = chosen ?? held ?? []
   const operations = useMemo(
-    () => (profile ? transferOperations(collection, profile) : []),
-    [collection, profile],
+    () =>
+      writing_files.map((file) => ({
+        source: file.source,
+        relativePath: file.relativePath,
+        size: file.size,
+      })),
+    [writing_files],
   )
+
+  const needed = capacity ? costOf(writing_files, capacity.clusterBytes) : 0
+  const fits = !capacity || needed <= capacity.usableBytes
+
+  // Reading a destination and measuring the stick are both about one pairing of
+  // profile and device, so they are asked for together and forgotten together.
+  useEffect(() => {
+    setHeld(null)
+    setChosen(null)
+    setCapacity(null)
+    if (!profile || !selected || sourceKind !== 'build') return
+    void reading.run(async () => {
+      const [files, measured] = await Promise.all([
+        readDestination(profile.destination.path),
+        imageCapacity({
+          sizeBytes: imageSizeFor(selected),
+          label: profile.name,
+          fat: 'auto',
+          partitioned: true,
+        }),
+      ])
+      setHeld(files)
+      setCapacity(measured)
+      return files
+    })
+  }, [profile?.id, profile?.destination.path, selectedNode, sourceKind])
 
   const source = (): ProvisionSource | null => {
     if (sourceKind === 'image') {
       return imagePath ? { kind: 'image', path: imagePath } : null
     }
-    if (!selected || !profile) return null
+    if (!selected || !profile || !operations.length || !fits) return null
     const options: ImageOptions = {
       sizeBytes: imageSizeFor(selected),
       label: profile.name,
@@ -194,7 +301,9 @@ export function DevicesPage({
 
   const canPlan =
     Boolean(selected) &&
-    (sourceKind === 'image' ? Boolean(imagePath) : Boolean(profile) && operations.length > 0)
+    (sourceKind === 'image'
+      ? Boolean(imagePath)
+      : Boolean(profile) && operations.length > 0 && fits)
 
   return (
     <div className="targets-layout">
@@ -211,9 +320,28 @@ export function DevicesPage({
             {scan.busy ? 'Scanning' : 'Rescan devices'}
           </button>
         </div>
+        <div className="coverage-filter" role="group" aria-label="Show devices by kind">
+          {KIND_FILTERS.map(([value, label]) => {
+            const count =
+              value === 'all'
+                ? devices.length
+                : devices.filter((device) => kindOf(device) === value).length
+            return (
+              <button
+                key={value}
+                className={kindFilter === value ? 'active' : ''}
+                aria-pressed={kindFilter === value}
+                disabled={value !== 'all' && !count}
+                onClick={() => setKindFilter(value)}
+              >
+                {label} <small>{count}</small>
+              </button>
+            )
+          })}
+        </div>
         {scan.error && <p className="inline-error">{scan.error}</p>}
         <div className="managed-targets setup-scroll-list" aria-label="Storage devices">
-          {devices.map((device) => (
+          {shown.map((device) => (
             <DeviceRow
               key={device.node}
               device={device}
@@ -254,14 +382,26 @@ export function DevicesPage({
 
             <fieldset className="write-mode">
               <legend>What to write</legend>
-              <button
-                type="button"
+              {/* The choice of profile *is* the choice of what to write, so it
+                  is one control rather than a mode button and a second list
+                  underneath repeating the same decision. */}
+              <select
                 className={sourceKind === 'build' ? 'active' : ''}
-                aria-pressed={sourceKind === 'build'}
-                onClick={() => setSourceKind('build')}
+                aria-label="Profile to copy to this device"
+                disabled={!profiles.length}
+                value={sourceKind === 'build' ? (profile?.id ?? '') : ''}
+                onChange={(event) => {
+                  setProfileId(event.target.value)
+                  setSourceKind('build')
+                }}
               >
-                Build from this profile
-              </button>
+                {!profiles.length && <option value="">No profiles yet</option>}
+                {profiles.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
                 className={sourceKind === 'image' ? 'active' : ''}
@@ -273,11 +413,90 @@ export function DevicesPage({
             </fieldset>
 
             {sourceKind === 'build' ? (
-              <p className="mode-note">
-                {profile
-                  ? `A fresh FAT volume labelled “${profile.name}” holding the ${operations.length} title${operations.length === 1 ? '' : 's'} staged for this profile, laid out by its own folder and naming rules. Formats: ${managedFormats(profile).join(', ')}.`
-                  : 'Create a profile first: the layout and naming rules come from it.'}
-              </p>
+              <>
+                {!profiles.length && (
+                  <p className="mode-note">
+                    Create a profile first: a stick is a copy of a profile's destination.
+                  </p>
+                )}
+                {reading.busy && (
+                  <InlineStatus kind="info">
+                    Reading {profile?.name} and measuring the stick. A destination held on a
+                    network share takes a moment.
+                  </InlineStatus>
+                )}
+                {reading.error && <p className="inline-error">{reading.error}</p>}
+                {held && capacity && (
+                  <>
+                    <p className="mode-note">
+                      A fresh FAT volume labelled “{profile?.name}” holding a copy of{' '}
+                      <code>{profile?.destination.path}</code>, exactly as it is laid out
+                      there. {managedFormats(profile!).join(', ')}.
+                    </p>
+                    <p className="capacity">
+                      <b className={fits ? 'fits' : 'over'}>
+                        {formatBytes(needed)} of {formatBytes(capacity.usableBytes)}
+                      </b>{' '}
+                      · {writing_files.length.toLocaleString()} file
+                      {writing_files.length === 1 ? '' : 's'}
+                      {fits ? (
+                        <> · fits, with {formatBytes(capacity.usableBytes - needed)} to spare</>
+                      ) : (
+                        <> · {formatBytes(needed - capacity.usableBytes)} too much</>
+                      )}
+                    </p>
+                    {!fits && (
+                      <div className="too-big">
+                        <b>This profile will not fit on this stick</b>
+                        <span>
+                          Choose what to leave off — for this write only. The profile's own
+                          folder is never changed.
+                        </span>
+                        <div className="too-big-actions">
+                          <button
+                            className="button secondary compact"
+                            onClick={() => setPicking({ excluded: new Set(), steps: [] })}
+                          >
+                            <ListChecks />
+                            Choose myself
+                          </button>
+                          <button
+                            className="button secondary compact"
+                            onClick={() => {
+                              const proposal = proposeExclusions(held, profile!, capacity)
+                              setPicking({
+                                excluded: proposal.excluded,
+                                steps: proposal.fits
+                                  ? proposal.steps
+                                  : [...proposal.steps, 'Even after all of that it does not fit.'],
+                              })
+                            }}
+                          >
+                            <Wand2 />
+                            Choose for me
+                          </button>
+                          <button
+                            className="button secondary compact"
+                            onClick={() => setSelectedNode('')}
+                          >
+                            <X />
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {chosen && (
+                      <p className="mode-note">
+                        {(held.length - chosen.length).toLocaleString()} file
+                        {held.length - chosen.length === 1 ? '' : 's'} left out of this write.{' '}
+                        <button className="link-button" onClick={() => setChosen(null)}>
+                          Put them back
+                        </button>
+                      </p>
+                    )}
+                  </>
+                )}
+              </>
             ) : (
               <div className="target-folder-choice">
                 <span>{imagePath || 'No image chosen'}</span>
@@ -370,6 +589,20 @@ export function DevicesPage({
           </>
         )}
       </section>
+
+      {picking && profile && held && capacity && (
+        <ContentsPicker
+          profile={profile}
+          files={held}
+          capacity={capacity}
+          initial={picking}
+          close={() => setPicking(null)}
+          confirm={(kept) => {
+            setChosen(kept)
+            setPicking(null)
+          }}
+        />
+      )}
 
       {writing.busy && (
         <ProgressDialog

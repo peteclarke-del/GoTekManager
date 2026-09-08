@@ -227,10 +227,6 @@ pub fn file_size(path: &Path) -> Option<u64> {
 }
 
 /// True when the file exists and is exactly the size that was indexed.
-pub fn matches_indexed_size(path: &Path, expected: u64) -> bool {
-    path.is_file() && file_size(path) == Some(expected)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{

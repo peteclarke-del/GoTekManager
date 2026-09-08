@@ -150,6 +150,18 @@ function wordsOf(text: string): string {
 }
 
 /**
+ * Each category's hints in the form they are matched in, worked out once.
+ *
+ * Doing it per call meant splitting every hint of every category for every path
+ * segment of every title, which on a library of thirty thousand was seconds of
+ * pure repetition.
+ */
+const HINTS: Array<{ id: string; needles: string[] }> = categories.map((category) => ({
+  id: category.id,
+  needles: category.hints.map((hint) => wordsOf(hint)),
+}))
+
+/**
  * The category a piece of free text names, if any.
  *
  * Deliberately reads *words* rather than whole labels, because collections name
@@ -160,9 +172,7 @@ function wordsOf(text: string): string {
  */
 export function categoryIn(text: string): string | undefined {
   const words = wordsOf(text)
-  return categories.find((category) =>
-    category.hints.some((hint) => words.includes(` ${wordsOf(hint).trim()} `)),
-  )?.id
+  return HINTS.find((category) => category.needles.some((needle) => words.includes(needle)))?.id
 }
 
 /**
@@ -184,8 +194,36 @@ export function inferCategoryFromName(name: string): string | undefined {
 }
 
 /**
- * What a title is, from whatever evidence there is: the folders it sits in
- * first, then its own name, then the name of the archive holding it.
+ * The category the source folder itself names, if any.
+ *
+ * Weak evidence, and asked last, but it is right far more often than it is
+ * wrong: somebody who points this application at a folder called `Games` has
+ * told it what is in there. Ignoring it left ninety-four per cent of a real
+ * library unsorted — every title of a four thousand image set under
+ * `…/Commodore Amiga/Games`, and a TOSEC applications set with it — because
+ * the only folder that said anything was the one folder that was not read.
+ *
+ * It cannot be trusted over the folders *below* the root, which is why it is
+ * asked after them: a `Magazines` folder inside a `Games` library still holds
+ * magazines.
+ */
+export function categoryFromSource(source: string): string | undefined {
+  const segments = toPosix(source)
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  for (const segment of [...segments].reverse()) {
+    const match = categoryIn(segment)
+    if (match) return match
+  }
+  return undefined
+}
+
+/**
+ * What a title is, from whatever evidence there is, strongest first: the
+ * folders it sits in below the source, then its own name and the name of the
+ * archive holding it, and failing those the source folder's own name.
  *
  * Nothing recognisable still means no category. An uncategorised title is
  * visible, filterable and easy to set in bulk; a wrongly categorised one is
@@ -202,7 +240,29 @@ export function inferCategory(
     fromNames.reduce<string | undefined>(
       (found, name) => found ?? inferCategoryFromName(name),
       undefined,
-    )
+    ) ??
+    categoryFromSource(source)
+  )
+}
+
+/**
+ * What a title is, with the source it came from as the last word.
+ *
+ * A source carries two things that say what is in it: where it is, and what the
+ * user called it. The name is the better of the two and is often the only one —
+ * a collection kept at `…/Ghostware Collection/Commodore/Amiga` says nothing
+ * about what it holds, while the person who added it called it "Games
+ * (Ghostware)" and meant it. Both are weaker than anything about the title
+ * itself, so both are asked last.
+ */
+export function inferCategoryFor(
+  path: string,
+  source: { path: string; name?: string },
+  ...names: string[]
+): string | undefined {
+  return (
+    inferCategory(path, source.path, ...names) ??
+    (source.name ? categoryIn(source.name) : undefined)
   )
 }
 
