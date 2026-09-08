@@ -68,8 +68,8 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
         layout into <code>Games</code>, <code>Apps</code>, <code>Demos</code> and the
         rest, with <code>Unsorted</code> for titles nobody has filed. A custom layout
         combines them, as in <code>{'{platform}/{category}'}</code>. If the destination
-        already sorts itself and spells a folder differently — <code>Applications</code>
-        rather than <code>Apps</code> — it can be told to use the folders already there,
+        already sorts itself and spells a folder differently, <code>Applications</code>
+        rather than <code>Apps</code>, it can be told to use the folders already there,
         so titles fill them instead of a second set appearing beside them.
         <br />
         <br />
@@ -89,7 +89,7 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     answer: (
       <>
         From the best evidence there is, in order. The folders a collection already
-        uses — a title under <code>Applications</code> or <code>Games [ADF]</code> is
+        uses: a title under <code>Applications</code> or <code>Games [ADF]</code> is
         read as one, deepest folder first. For a download there are none, so the site's
         own sections answer instead, and failing that the title's own name, matched on
         whole words so "Demolition Man" is not a demo. A folder named after a
@@ -119,7 +119,7 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
         Two rules do most of the work. A multi-disc set is only useful whole, so discs
         are chosen together and a set missing one is left out and named rather than
         half written. And where several copies of one title survive the filter, one is
-        chosen — the original first, then the fixed dump, then the alternates, and so on
+        chosen: the original first, then the fixed dump, then the alternates, and so on
         down. Nothing is staged until you have seen how many titles it would add and
         which folder on the drive each of them would land in.
       </>
@@ -143,10 +143,38 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     question: 'What can be written today?',
     answer: (
       <>
-        Verified copies into a folder or a mounted volume. Nothing is ever overwritten:
-        a destination path that already holds different content becomes a conflict and
-        blocks the plan. Formatting, partitioning, raw image writes, and creating or
-        converting image files are <b>not</b> implemented.
+        Verified copies into a folder, a mounted volume or a FAT image, and a whole
+        storage device from the Devices page. Nothing is ever overwritten: a
+        destination path that already holds different content becomes a conflict and
+        blocks the plan. Writing a whole device is not available on Windows, and{' '}
+        <code>.hfe</code> conversion is not implemented.
+      </>
+    ),
+  },
+  {
+    question: 'How do I copy a profile onto a memory stick?',
+    answer: (
+      <>
+        On the <b>Devices</b> page, choose the device and then pick the profile by
+        name. What gets written is the contents of that profile’s destination, so
+        the folder you curated is the thing that reaches the stick.
+        <br />
+        <br />
+        Space is counted the way the drive counts it, in whole clusters rather than
+        bytes, because an 881 KB disk image on a 32 KB cluster really occupies 896 KB
+        and across ten thousand titles that difference decides whether a write fits.
+        If it does not fit you are told before anything is written, and offered three
+        ways out: cancel, choose what to leave out yourself, or let the application
+        choose.
+        <br />
+        <br />
+        Choosing for you proposes rather than decides. The same tree opens with its
+        choices already made and each one saying how much it saved, and every one can
+        be put back. It gives up formats the drive cannot load first, then setup and
+        system disks, then whole categories, leaving games until last. Whole titles
+        go rather than single discs, because a game missing a disc is dead weight.
+        What you leave out applies to that one write: the profile’s own folder is
+        not changed, and the next write starts from everything again.
       </>
     ),
   },
@@ -314,14 +342,14 @@ export function HelpPage({ theme }: { theme: ThemeChoice }) {
 }
 
 /**
- * Which version this is, and — when asked — whether a newer one is published.
+ * Which version this is, and, when asked, whether a newer one is published.
  *
  * The check is a button rather than something that happens on startup: a tool
  * that writes to removable media should not be reaching out to the internet
  * unless someone has asked it a question.
  *
  * Not being able to answer is not a failure. No network, no releases yet, an
- * API that has moved — none of those mean anything is wrong with the copy in
+ * API that has moved. None of those mean anything is wrong with the copy in
  * front of the user, so they are reported as what they are: the question could
  * not be answered. Installing is left to the user and, on Linux, to their
  * package manager; this only says there is something to go and get.
@@ -376,8 +404,9 @@ function Version() {
       {check.error && <p className="inline-error">{check.error}</p>}
       {!check.busy && !check.error && !answered && newer === null && version && (
         <p className="mode-note version-note">
-          A check that comes back with nothing — no network, or a repository with no
-          releases — is not an answer, and is never read as "this is the latest".
+          A check that comes back with nothing, whether from no network or a
+          repository with no releases, is not an answer, and is never read as
+          "this is the latest".
         </p>
       )}
       {newer && (

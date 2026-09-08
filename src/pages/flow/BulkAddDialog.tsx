@@ -26,6 +26,7 @@ import { belongsToPlatform, formatBytes, tagsOf } from '../../domain/media'
 import type { DevStatus, Distribution, DumpFlag } from '../../domain/tags'
 import type { MediaItem, Profile, SourceLocation, TargetFileStatus } from '../../domain/types'
 import { errorMessage } from '../../native/commands'
+import { useAllItems } from '../../hooks/useAllItems'
 import { useScanProgress } from '../../hooks/useScanProgress'
 
 /** One selectable value, with how many titles in the library carry it. */
@@ -158,7 +159,6 @@ function optionsFrom(
 export function BulkAddDialog({
   profile,
   platform,
-  items,
   sources,
   staged,
   presence,
@@ -170,7 +170,6 @@ export function BulkAddDialog({
   profile: Profile
   platform: Platform
   /** The whole library; this narrows it to the machine being prepared. */
-  items: MediaItem[]
   sources: SourceLocation[]
   /** What this profile already holds, so a second copy of a disc is refused. */
   staged: readonly MediaItem[]
@@ -195,10 +194,10 @@ export function BulkAddDialog({
   // where it has got to rather than sitting on one unchanging sentence.
   const progress = useScanProgress()
 
-  const mine = useMemo(
-    () => items.filter((item) => belongsToPlatform(item, platform.id)),
-    [items, platform.id],
-  )
+  // Read here rather than handed in: the library is not carried about any
+  // more, and this is the one screen that genuinely wants all of it.
+  const library = useAllItems(platform.id)
+  const mine = library.items
 
   /** What this library actually contains, which is what the choices offer. */
   const available = useMemo(() => {

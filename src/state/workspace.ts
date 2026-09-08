@@ -22,15 +22,23 @@ import type {
   TargetSummary,
 } from '../domain/types'
 
+/**
+ * Everything the window holds about the collection — which is deliberately not
+ * the collection.
+ *
+ * The library itself stays in the database and is asked for a page at a time;
+ * see {@link ../native/store}. What remains here is bounded: a handful of
+ * profiles and sources, and the titles the active profile has staged, which is
+ * a chosen selection rather than everything the user owns.
+ */
 export type Workspace = {
   version: 2
   profiles: Profile[]
   activeProfileId: string
-  /** Staged titles per profile id. */
+  /** Staged titles, held for the active profile and fetched when it changes. */
   collections: Record<string, MediaItem[]>
   removalPolicies: Record<string, RemovalPolicy>
   sources: SourceLocation[]
-  items: MediaItem[]
 }
 
 export const emptyWorkspace: Workspace = {
@@ -40,7 +48,6 @@ export const emptyWorkspace: Workspace = {
   collections: {},
   removalPolicies: {},
   sources: [],
-  items: [],
 }
 
 /**
@@ -159,6 +166,8 @@ export type WorkspaceAction =
   | { type: 'libraryCleared' }
   /** Replaces everything, once, when the stored workspace has been read. */
   | { type: 'workspaceLoaded'; workspace: Workspace }
+  /** What a profile has staged, fetched when that profile becomes active. */
+  | { type: 'collectionLoaded'; profileId: string; items: MediaItem[] }
 
 /** Applies a change to every profile's staged collection at once. */
 function acrossCollections(
@@ -183,9 +192,10 @@ function editItems(
 ): Workspace {
   const chosen = new Set(itemIds)
   const apply = (item: MediaItem): MediaItem => (chosen.has(item.id) ? edit(item) : item)
+  // Only the staged copies are held here; the library's own rows are changed by
+  // the command this action is paired with, and the table re-reads them.
   return {
     ...state,
-    items: state.items.map(apply),
     collections: acrossCollections(state.collections, (items) => items.map(apply)),
   }
 }
@@ -236,13 +246,13 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
 
     case 'sourceIndexed': {
       // Re-indexing replaces this source's titles rather than accumulating
-      // stale entries for files that have since been deleted.
-      const others = state.items.filter((item) => item.source !== action.source.path)
+      // stale entries for files that have since been deleted. A staged title
+      // that survived is refreshed, and one that has gone is unstaged, because
+      // a plan built around a file that no longer exists cannot be written.
       const indexed = new Map(action.items.map((item) => [item.id, item]))
       return {
         ...state,
         sources: upsertById(state.sources, action.source),
-        items: [...others, ...action.items],
         collections: acrossCollections(state.collections, (items) =>
           items.flatMap((item) => {
             if (item.source !== action.source.path) return [item]
@@ -257,11 +267,7 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       // Unlike indexing, this does not stand for everything the source holds:
       // a download arrives on its own, and the ones cached before it are still
       // there. Replacing would empty the site's source on every new title.
-      return {
-        ...state,
-        sources: upsertById(state.sources, action.source),
-        items: upsertById(state.items, ...action.items),
-      }
+      return { ...state, sources: upsertById(state.sources, action.source) }
 
     case 'sourceRenamed':
       return { ...state, sources: replaceById(state.sources, action.source) }
@@ -270,7 +276,6 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       return {
         ...state,
         sources: removeById(state.sources, action.source.id),
-        items: state.items.filter((item) => item.source !== action.source.path),
         collections: acrossCollections(state.collections, (items) =>
           items.filter((item) => item.source !== action.source.path),
         ),
@@ -340,11 +345,16 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
     case 'workspaceLoaded':
       return action.workspace
 
+    case 'collectionLoaded':
+      return {
+        ...state,
+        collections: { ...state.collections, [action.profileId]: action.items },
+      }
+
     case 'libraryCleared':
       return {
         ...state,
         sources: [],
-        items: [],
         collections: mapValues(state.collections, () => []),
       }
 

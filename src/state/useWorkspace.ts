@@ -16,7 +16,23 @@ import {
   SETTINGS_KEY,
   TABLE_PREFS_KEY,
 } from './migrations'
-import { loadPersistedWorkspace, persistWorkspace } from './persistence.native'
+import {
+  itemsFromStored,
+  itemToStored,
+  loadPersistedWorkspace,
+  persistWorkspace,
+} from './persistence.native'
+import {
+  clearCollection,
+  clearLibrary,
+  forgetSource,
+  replaceSourceItems,
+  stageItems,
+  stagedItems,
+  unstageItems,
+  updateItems,
+  upsertItems,
+} from '../native/store'
 import { isDesktop, readConfigFile } from '../native/commands'
 import { readStored, usePersistentState } from './persistence'
 import {
@@ -26,6 +42,7 @@ import {
   removalPolicyOf,
   workspaceReducer,
   type Workspace,
+  type WorkspaceAction,
 } from './workspace'
 
 /** Coalesces a burst of edits into one transaction. */
@@ -109,11 +126,101 @@ export function useWorkspace() {
     return () => window.clearTimeout(pending.current)
   }, [workspace, drain])
 
+  /**
+   * Dispatches an action and tells the store about the part it owns.
+   *
+   * The library is no longer held in the window, so an action that changes it
+   * has two halves: what the screen should now show, which the reducer decides,
+   * and what the database should now hold, which is one statement naming the
+   * rows it touches. Pairing them here keeps the reducer pure and keeps every
+   * caller from having to remember the second half.
+   *
+   * The write is not awaited. These are small, indexed statements rather than
+   * the whole-workspace transaction they replace, and making the interface wait
+   * for a round trip before a tick box moves would undo the point of them.
+   */
+  const record = useCallback((action: WorkspaceAction) => {
+    dispatch(action)
+    if (!isDesktop()) return
+    const failed = (reason: unknown) => setError(String(reason))
+    switch (action.type) {
+      case 'sourceIndexed':
+        void replaceSourceItems(
+          action.source.path,
+          action.items.map(itemToStored),
+        ).catch(failed)
+        break
+      case 'itemsImported':
+        void upsertItems(action.items.map(itemToStored)).catch(failed)
+        break
+      case 'sourceRemoved':
+        void forgetSource(action.source.path).catch(failed)
+        break
+      case 'platformAssigned':
+        void updateItems(action.itemIds, {
+          assignedPlatformId: action.platformId || null,
+        }).catch(failed)
+        break
+      case 'categoryAssigned':
+        void updateItems(action.itemIds, { category: action.categoryId || null }).catch(
+          failed,
+        )
+        break
+      case 'displayTitleSet':
+        void updateItems([action.itemId], {
+          displayTitle: action.displayTitle.trim() || null,
+        }).catch(failed)
+        break
+      case 'collectionAdded':
+        void stageItems(
+          action.profileId,
+          action.items.map((item) => item.id),
+        ).catch(failed)
+        break
+      case 'collectionRemoved':
+        void unstageItems(action.profileId, action.itemIds).catch(failed)
+        break
+      case 'collectionCleared':
+        void clearCollection(action.profileId).catch(failed)
+        break
+      case 'libraryCleared':
+        void clearLibrary().catch(failed)
+        break
+      default:
+        break
+    }
+  }, [])
+
+  // What the active profile has staged, fetched when it becomes active. Only
+  // one profile's selection is ever in hand, so a second large profile costs
+  // nothing until it is opened.
+  const activeId = workspace.activeProfileId
+  const fetched = useRef(new Set<string>())
+  useEffect(() => {
+    if (!loaded.current || !isDesktop() || !activeId) return
+    if (fetched.current.has(activeId)) return
+    fetched.current.add(activeId)
+    let active = true
+    stagedItems(activeId)
+      .then((rows) => {
+        if (!active) return
+        dispatch({
+          type: 'collectionLoaded',
+          profileId: activeId,
+          items: itemsFromStored(rows),
+        })
+      })
+      .catch((reason) => active && setError(String(reason)))
+    return () => {
+      active = false
+    }
+  }, [activeId, loading])
+
   const activeProfile = activeProfileOf(workspace)
   const collection = collectionOf(workspace, activeProfile?.id)
   const removalPolicy = removalPolicyOf(workspace, activeProfile?.id)
 
-  return { workspace, dispatch, activeProfile, collection, removalPolicy, loading, error }
+  return { workspace, dispatch: record, activeProfile, collection, removalPolicy, loading, error }
 }
 
 export function useSettings() {

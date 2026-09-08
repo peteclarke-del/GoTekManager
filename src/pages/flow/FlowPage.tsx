@@ -878,7 +878,6 @@ export function FlowPage({
             <LocalLibrary
               profile={profile}
               platform={platform}
-              items={workspace.items}
               sources={workspace.sources}
               collection={collection}
               addLocation={() => void addLocation()}
@@ -909,7 +908,6 @@ export function FlowPage({
           ) : (
             <OnlineLibrary
               platform={platform}
-              items={workspace.items}
               providers={providers}
               saveProvider={(provider) =>
                 setCustomProviders((current) => upsertById(current, provider))

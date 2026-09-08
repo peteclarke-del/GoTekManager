@@ -22,7 +22,7 @@ import {
 import { Empty, InlineStatus, ProgressDialog } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
 import { namesAnotherPlatform, platforms, type Platform } from '../../domain/catalog'
-import { belongsToPlatform, formatBytes, softwareTitleKey } from '../../domain/media'
+import { formatBytes, softwareTitleKey } from '../../domain/media'
 import {
   adapterLabel,
   faultIn,
@@ -38,6 +38,8 @@ import type {
   ProviderAdapter,
   ProviderCatalog,
 } from '../../domain/types'
+import { isDesktop } from '../../native/commands'
+import { heldTitles } from '../../native/store'
 import { useBusyItem } from '../../hooks/useAsyncAction'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import {
@@ -55,14 +57,12 @@ const titleKey = (title: OnlineTitle) => title.downloadUrl || title.remoteId
 
 export function OnlineLibrary({
   platform,
-  items,
   providers,
   saveProvider,
   removeProvider,
   imported,
 }: {
   platform: Platform
-  items: MediaItem[]
   providers: OnlineProvider[]
   /** Adds a site, or records a change to one — including a shipped one. */
   saveProvider: (provider: OnlineProvider) => void
@@ -115,18 +115,25 @@ export function OnlineLibrary({
   }, [visible, platform.id, setError])
 
   /** Normalised titles already held locally for this platform. */
+  // The names of what is already held, asked for rather than carried. Marking
+  // a catalogue entry as owned means comparing every name against every name,
+  // which is the one question here that wants the whole library — but it wants
+  // the names, not the rows, and only once this tab is open.
+  const [held, setHeld] = useState<string[]>([])
+  useEffect(() => {
+    if (!isDesktop()) return
+    let active = true
+    heldTitles(platform.id)
+      .then((names) => active && setHeld(names))
+      .catch(() => active && setHeld([]))
+    return () => {
+      active = false
+    }
+  }, [platform.id])
+
   const localKeys = useMemo(
-    () =>
-      new Set(
-        items
-          .filter((item) => belongsToPlatform(item, platform.id))
-          .flatMap((item) => [
-            softwareTitleKey(item.canonicalTitle),
-            softwareTitleKey(item.name),
-          ])
-          .filter(Boolean),
-      ),
-    [items, platform.id],
+    () => new Set(held.map(softwareTitleKey).filter(Boolean)),
+    [held],
   )
 
   const knownKeys = useMemo(
