@@ -20,16 +20,24 @@ export type StoredProfile = {
   display?: string
 }
 
-/** Mirrors the Rust `StoredItem`. `directory` is never persisted. */
+/**
+ * Mirrors the Rust `StoredItem`. `directory` is never persisted.
+ *
+ * `id` and `canonicalTitle` are absent whenever they are the same as `path` and
+ * `name`, which for a scanned title is always: they are the longest strings in
+ * the library, and sending each of them twice costs megabytes on the way to the
+ * window without saying anything. Only a downloaded title, named by the
+ * catalogue rather than by its file, carries them.
+ */
 export type StoredItem = {
-  id: string
+  id?: string
   source: string
   path: string
   name: string
   extension: string
   size: number
   modified?: number
-  canonicalTitle: string
+  canonicalTitle?: string
   displayTitle?: string
   assignedPlatformId?: string
   category?: string

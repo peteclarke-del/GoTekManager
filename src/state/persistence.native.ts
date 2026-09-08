@@ -22,6 +22,7 @@ import {
 import { LIBRARY_KEY, loadWorkspace, splitWorkspace, WORKSPACE_KEY } from './migrations'
 import { writeStored } from './persistence'
 import { groupDownloads } from '../domain/downloads'
+import { withCategories } from '../domain/media'
 import { emptyWorkspace, type Workspace } from './workspace'
 
 function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
@@ -42,8 +43,12 @@ function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
 }
 
 function fromNative(stored: StoredWorkspace): Workspace {
+  // A scanned title is identified and named by its file, so the store leaves
+  // both out and they are restored here rather than carried across twice.
   const stored_items: MediaItem[] = stored.items.map((item) => ({
     ...item,
+    id: item.id ?? item.path,
+    canonicalTitle: item.canonicalTitle ?? item.name,
     directory: false,
     likelyPlatformIds: item.likelyPlatformIds ?? [],
   }))
@@ -51,7 +56,12 @@ function fromNative(stored: StoredWorkspace): Workspace {
   // cached title. They are gathered here rather than left for the user to
   // remove by hand, and the staged collections follow because they are built
   // from these titles below.
-  const { sources, items } = groupDownloads(stored.sources ?? [], stored_items)
+  const grouped = groupDownloads(stored.sources ?? [], stored_items)
+  const sources = grouped.sources
+  // A library indexed before the source folder's own name was read is mostly
+  // unsorted; re-reading the rules costs a moment, re-reading the share costs
+  // minutes.
+  const items = withCategories(grouped.items, sources)
   const byId = new Map(items.map((item) => [item.id, item]))
 
   const collections: Record<string, MediaItem[]> = {}
@@ -106,14 +116,16 @@ function toNative(workspace: Workspace): StoredWorkspace {
     removalPolicies: workspace.removalPolicies,
     sources: workspace.sources,
     items: workspace.items.map((item) => ({
-      id: item.id,
+      // Left out when they say nothing the path and the name do not. See
+      // {@link StoredItem}.
+      id: item.id === item.path ? undefined : item.id,
       source: item.source,
       path: item.path,
       name: item.name,
       extension: item.extension,
       size: item.size,
       modified: item.modified,
-      canonicalTitle: item.canonicalTitle,
+      canonicalTitle: item.canonicalTitle === item.name ? undefined : item.canonicalTitle,
       displayTitle: item.displayTitle,
       assignedPlatformId: item.assignedPlatformId,
       category: item.category,
