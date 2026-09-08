@@ -276,7 +276,14 @@ export function downloadOnlineTitle(
 // ---------------------------------------------------------------------------
 
 /** Read-only. Lists every disk the operating system reports, system ones too. */
-export function physicalDevices(): Promise<PhysicalDevice[]> {
+export async function physicalDevices(): Promise<PhysicalDevice[]> {
+  // A help screenshot must never name the hardware of the machine it was taken
+  // on, so a capture run is answered with invented drives instead. The
+  // condition is statically false in a production build and the import is
+  // dynamic, so neither the branch nor the module it names is bundled.
+  if (import.meta.env.DEV && import.meta.env.VITE_CAPTURE) {
+    return (await import('../dev/captureDevices')).CAPTURE_DEVICES
+  }
   return invokeNative<PhysicalDevice[]>('physical_devices')
 }
 

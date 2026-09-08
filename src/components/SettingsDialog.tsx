@@ -140,8 +140,8 @@ function Conversions({
             <li key={entry.conversion}>
               <b>
                 {entry.from} to {entry.to}
-              </b>{' '}
-              — {entry.summary}
+              </b>
+              : {entry.summary}
             </li>
           ))}
         </ul>

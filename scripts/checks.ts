@@ -61,7 +61,7 @@ import {
   inferCategoryId,
   UNCATEGORISED,
 } from '../src/domain/categories'
-import { dumpRank, readTags, releaseSignature } from '../src/domain/tags'
+import { dumpRank, readTags, releaseSignature, spokenLanguages } from '../src/domain/tags'
 import {
   costOf,
   isExcluded,
@@ -70,6 +70,7 @@ import {
   proposeExclusions,
   titleOf,
   treeOf,
+  writableMount,
   type HeldFile,
 } from '../src/domain/deviceBuild'
 import {
@@ -2074,6 +2075,140 @@ check('setting and clearing an alias reaches every staged copy', () => {
     displayTitle: '',
   })
   assert.equal(cleared.collections[bbcProfile.id][0].displayTitle, undefined)
+})
+
+/// A real TOSEC Amiga set marks thousands of German releases (DE) and never
+/// writes (de) at all. Read strictly those state no language, so a filter
+/// asking for English and keeping untagged titles would let every one through,
+/// which is exactly what it did.
+check('a release sold in Germany is read as being in German', () => {
+  const tags = readTags('Bundesliga Manager (1990)(Software 2000)(DE).adf')
+
+  assert.deepEqual(tags.languages, [], 'the name states no language')
+  assert.deepEqual(tags.regions, ['DE'])
+  assert.deepEqual(spokenLanguages(tags), ['de'])
+})
+
+check('an English-only filter leaves out the German and French releases', () => {
+  const english: ScanFilter = {
+    ...CLEAN_RELEASES,
+    languages: { include: ['en'], includeUntagged: true },
+  }
+  const kept = (name: string) => {
+    const item = { ...classifyMedia(entry(name), '/library'), assignedPlatformId: 'bbc' }
+    return judge(item, readTags(item.name), english, ['.adf', '.ssd']).included
+  }
+
+  assert.equal(kept('Bundesliga Manager (1990)(Software 2000)(DE).adf'), false)
+  assert.equal(kept('Les Voyageurs du Temps (1989)(Delphine)(FR).adf'), false)
+  // Sold in Britain or America, so English, and kept.
+  assert.equal(kept('Elite (1988)(Firebird)(GB).adf'), true)
+  assert.equal(kept('Populous (1989)(Bullfrog)(US).adf'), true)
+  // Says nothing either way, which is most of a collection and is not the same
+  // as saying "not English".
+  assert.equal(kept('Another World (1991)(Delphine).adf'), true)
+})
+
+/// A country with more than one language gives all of them, because the filter
+/// asks whether any match and a Swiss release really might be any of the three.
+check('a country with several languages is read as all of them', () => {
+  assert.deepEqual(
+    spokenLanguages(readTags('Game (1990)(Pub)(CH).adf')).sort(),
+    ['de', 'fr', 'it'],
+  )
+})
+
+/// Distribution markers are the same shape as country codes and must not be
+/// mistaken for them, or a shareware title would be read as coming from nowhere.
+check('a shareware marker is not read as a country', () => {
+  const tags = readTags('Game (1990)(Pub)(SW).adf')
+
+  assert.deepEqual(tags.regions, [])
+  assert.equal(tags.distribution, 'shareware')
+  assert.deepEqual(spokenLanguages(tags), [])
+})
+
+/// Whether a stick can be written to as a folder decides between copying the
+/// files onto it and rebuilding the whole device, which is the difference
+/// between moving a gigabyte and moving eight.
+check('a stick already formatted for a GoTek is written to as a folder', () => {
+  assert.equal(
+    writableMount({
+      partitions: [{ filesystem: 'vfat', mountPoints: ['/media/pete/GOTEK'] }],
+    }),
+    '/media/pete/GOTEK',
+  )
+})
+
+check('a stick that has to be formatted first offers no folder to write to', () => {
+  // Nothing on it at all.
+  assert.equal(writableMount({ partitions: [] }), undefined)
+  // A filesystem a GoTek cannot read.
+  assert.equal(
+    writableMount({ partitions: [{ filesystem: 'ext4', mountPoints: ['/media/pete/x'] }] }),
+    undefined,
+  )
+  // The right filesystem, but the desktop has not mounted it, so there is no
+  // folder to copy into.
+  assert.equal(writableMount({ partitions: [{ filesystem: 'vfat', mountPoints: [] }] }), undefined)
+})
+
+/// A stick can carry more than one partition, and only the one a GoTek can read
+/// is a candidate.
+check('the FAT partition is chosen from a device that has several', () => {
+  assert.equal(
+    writableMount({
+      partitions: [
+        { filesystem: 'ext4', mountPoints: ['/media/pete/data'] },
+        { filesystem: 'vfat', mountPoints: ['/media/pete/GOTEK'] },
+      ],
+    }),
+    '/media/pete/GOTEK',
+  )
+})
+
+/// Staged titles are fetched when a profile becomes active, and that answer
+/// describes how things were when it was asked. Anything staged while it was in
+/// flight is newer, so the answer must not be allowed to overwrite it.
+check('staging that happens while the stored selection loads is not lost', () => {
+  const elite = classifyMedia(entry('Elite.ssd'), '/library')
+  const repton = classifyMedia(entry('Repton.ssd'), '/library')
+  const before = workspaceWith(bbcProfile, [])
+
+  // Staged by hand first, then the fetch that was already running comes back.
+  const staged = workspaceReducer(before, {
+    type: 'collectionAdded',
+    profileId: bbcProfile.id,
+    items: [elite],
+  })
+  const settled = workspaceReducer(staged, {
+    type: 'collectionLoaded',
+    profileId: bbcProfile.id,
+    items: [repton],
+  })
+
+  assert.deepEqual(
+    settled.collections[bbcProfile.id].map((item) => item.name).sort(),
+    ['Elite.ssd', 'Repton.ssd'],
+  )
+})
+
+/// The same title in both is one title, not two.
+check('a title already staged is not duplicated when the selection loads', () => {
+  const elite = classifyMedia(entry('Elite.ssd'), '/library')
+  const staged = workspaceReducer(workspaceWith(bbcProfile, []), {
+    type: 'collectionAdded',
+    profileId: bbcProfile.id,
+    items: [elite],
+  })
+
+  const settled = workspaceReducer(staged, {
+    type: 'collectionLoaded',
+    profileId: bbcProfile.id,
+    items: [elite],
+  })
+
+  assert.equal(settled.collections[bbcProfile.id].length, 1)
 })
 
 check('a selection of titles leaves a collection in one pass', () => {

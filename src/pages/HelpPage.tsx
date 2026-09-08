@@ -18,7 +18,7 @@ import type { PublishedRelease, ThemeChoice } from '../domain/types'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { useResolvedTheme } from '../hooks/useResolvedTheme'
 import { appVersion, openExternal, publishedReleases } from '../native/commands'
-import { FLOW_SCREENS, PROFILES_SCREEN } from './helpScreens'
+import { DEVICES_SCREEN, FLOW_SCREENS, PROFILES_SCREEN } from './helpScreens'
 
 const GUIDES: Array<{ question: string; answer: ReactNode }> = [
   {
@@ -324,6 +324,35 @@ export function HelpPage({ theme }: { theme: ThemeChoice }) {
             name={PROFILES_SCREEN.name}
             title={PROFILES_SCREEN.title}
             caption={PROFILES_SCREEN.detail}
+          />
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Writing to a stick</h2>
+        <p>
+          The devices screen lists the removable media it can see, with the vendor,
+          model, serial and partitions of each, and refuses the disk the running
+          system is on. Pick a profile by name and its destination folder is what
+          gets written: the folder is the master and the stick is a copy of it, so
+          nothing is laid out again on the way.
+        </p>
+        <p>
+          There are two routes onto the stick, and which one is offered depends on
+          what is already there. A stick formatted for a GoTek and mounted by the
+          desktop is copied to, which moves only the files it does not already hold
+          and leaves the rest of it alone. A stick that cannot be written to that
+          way is formatted instead: the media is built as an image first, written in
+          one pass, and read back to check it. Formatting erases the stick, so it
+          asks you to type the name of that exact device, serial included, before it
+          will start.
+        </p>
+        <div className="help-shots">
+          <Screenshot
+            theme={resolved}
+            name={DEVICES_SCREEN.name}
+            title={DEVICES_SCREEN.title}
+            caption={DEVICES_SCREEN.detail}
           />
         </div>
       </section>

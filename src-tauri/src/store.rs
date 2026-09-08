@@ -14,7 +14,7 @@
 
 use crate::error::{Context, Result};
 use crate::task::blocking;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -247,6 +247,24 @@ pub(crate) fn open(app: &tauri::AppHandle) -> Result<Connection> {
 /// that a genuine deadlock surfaces rather than hanging the window forever.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Begins a transaction that is going to write.
+///
+/// A plain `BEGIN` is deferred: the write lock is taken at the first statement
+/// that actually writes, and a connection that reaches that point while another
+/// one is writing is refused there and then with "database is locked". The
+/// timeout above does not cover that refusal. SQLite deliberately skips the
+/// busy handler for a transaction that has already read, because two of them
+/// waiting to upgrade would wait on each other forever, so it fails one rather
+/// than deadlocking both.
+///
+/// `BEGIN IMMEDIATE` asks for the write lock at the start instead, before
+/// anything has been read, where waiting is safe and the handler does run. A
+/// workspace save that overlaps a scan then queues behind it for as long as the
+/// timeout allows rather than failing in front of the person using it.
+pub(crate) fn write_transaction(connection: &mut Connection) -> Result<Transaction<'_>> {
+    Ok(connection.transaction_with_behavior(TransactionBehavior::Immediate)?)
+}
+
 pub fn prepare(connection: &Connection) -> Result<()> {
     // Before anything else, so it covers the schema statements below as well.
     connection
@@ -317,7 +335,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 /// into many minutes of it. Nothing is stamped until this returns, so an
 /// upgrade interrupted part-way is simply an upgrade that has not happened yet.
 fn fill_item_platforms(connection: &Connection) -> Result<()> {
-    let transaction = connection.unchecked_transaction()?;
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     transaction.execute("DELETE FROM item_platforms", [])?;
     transaction.execute(
         "INSERT OR IGNORE INTO item_platforms (item_id, platform_id) \
@@ -468,7 +486,7 @@ pub(crate) fn identity(item: &StoredItem) -> &str {
 fn write_workspace(connection: &mut Connection, workspace: &StoredWorkspace) -> Result<()> {
     // One transaction: the stored workspace is replaced completely or not at
     // all, so an interrupted save can never leave a half-written library.
-    let transaction = connection.transaction()?;
+    let transaction = write_transaction(connection)?;
     // Only what this command owns. The library and what each profile has staged
     // belong to the commands in {@link crate::library}, and clearing them here
     // would make saving a renamed profile throw away the collection.
@@ -737,11 +755,11 @@ pub async fn write_document(app: tauri::AppHandle, key: String, value: String) -
 #[cfg(test)]
 mod tests {
     use super::{
-        migrate, prepare, read_workspace, write_workspace, StoredItem, StoredProfile,
+        migrate, prepare, read_workspace, write_transaction, write_workspace, StoredProfile,
         StoredSource, StoredWorkspace, BUSY_TIMEOUT, SCHEMA_VERSION,
     };
     use std::time::Duration;
-    use rusqlite::Connection;
+    use rusqlite::{Connection, Transaction, TransactionBehavior};
 
     fn connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
@@ -763,27 +781,6 @@ mod tests {
             verify_checksums: true,
             display: Some("oled-128x64-rotate".into()),
             category_folders: Some(serde_json::json!({ "applications": "Applications" })),
-        }
-    }
-
-    /// A scanned title: identified by its path and named by its file, so it
-    /// carries neither an id nor a canonical title of its own.
-    fn item(id: &str, name: &str) -> StoredItem {
-        StoredItem {
-            id: None,
-            source: "/library".into(),
-            path: id.into(),
-            name: name.into(),
-            extension: "ssd".into(),
-            size: 204800,
-            modified: Some(1234),
-            canonical_title: None,
-            display_title: None,
-            assigned_platform_id: Some("bbc".into()),
-            category: Some("games".into()),
-            likely_platform_ids: vec!["bbc".into(), "electron".into()],
-            provenance: None,
-            directory: false,
         }
     }
 
@@ -991,11 +988,6 @@ mod tests {
         assert_eq!(loaded.active_profile_id, "");
     }
 
-
-    /// A downloaded title is named by the catalogue it came from and may be
-    /// identified by something other than where it was cached, so both have to
-    /// survive; a scanned title has neither, and must not acquire one.
-
     #[test]
     fn a_database_from_a_newer_version_is_refused_rather_than_damaged() {
         let connection = connection();
@@ -1029,6 +1021,55 @@ mod tests {
 
         assert_eq!(waited, BUSY_TIMEOUT.as_millis() as i64);
         assert!(BUSY_TIMEOUT > Duration::from_secs(5));
+    }
+
+    /// And the wait has to be one SQLite will actually make. A transaction that
+    /// only asks for the write lock when it reaches its first write is refused
+    /// the instant the lock is busy, without the handler being consulted, so
+    /// the timeout above was reported to the window as a lock failure rather
+    /// than being spent. Asking for the lock at `BEGIN` is what puts the
+    /// waiting back, and this measures that it happens.
+    #[test]
+    fn a_writer_meeting_a_busy_database_waits_rather_than_giving_up_at_once() {
+        let path = std::env::temp_dir()
+            .join(format!("gotek-store-lock-{}.sqlite", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+
+        // Both connections are prepared before anything holds the lock:
+        // creating the schema is itself a write, and would otherwise be what
+        // waits.
+        let holder = Connection::open(&path).unwrap();
+        prepare(&holder).unwrap();
+        let mut waiting = Connection::open(&path).unwrap();
+        prepare(&waiting).unwrap();
+        // Short enough to measure, where the real timeout is half a minute.
+        waiting.busy_timeout(Duration::from_millis(400)).unwrap();
+
+        // Held for the rest of the test, so the writer below can never win.
+        let held = Transaction::new_unchecked(&holder, TransactionBehavior::Immediate).unwrap();
+        held.execute("DELETE FROM sources", []).unwrap();
+
+        let started = std::time::Instant::now();
+        let refused = write_transaction(&mut waiting).unwrap_err();
+        let waited = started.elapsed();
+
+        assert!(
+            refused.to_string().to_lowercase().contains("locked"),
+            "expected a lock failure, got: {refused}"
+        );
+        assert!(
+            waited >= Duration::from_millis(300),
+            "gave up after {waited:?} without waiting for the lock"
+        );
+
+        drop(held);
+        drop(holder);
+        drop(waiting);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 }
 

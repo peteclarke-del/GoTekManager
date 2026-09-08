@@ -24,7 +24,6 @@ import { BulkAddDialog } from './BulkAddDialog'
 import { acceptedFormats, platforms, requireFirmware, type Platform } from '../../domain/catalog'
 import { categories } from '../../domain/categories'
 import {
-  belongsToPlatform,
   elideMiddle,
   forProfile,
   formatBytes,
@@ -590,7 +589,7 @@ export function LocalLibrary({
             </b>
             <span>
               Matched on contents, so the names and folders do not have to agree
-              {sampleFoundAt ? <> — one of them is at <code>{sampleFoundAt}</code></> : null}.
+              {sampleFoundAt ? <>, one of them is at <code>{sampleFoundAt}</code></> : null}.
               This profile would write them to <code>{profileFolder || 'the root'}/</code>{' '}
               using {namingLabel(profile.naming)} names, which
               would make a second copy. Change its layout and naming to match the
@@ -603,8 +602,8 @@ export function LocalLibrary({
             <span>
               <b>{comparable.length} titles are not checked against {profile.name}.</b> Whether
               a title is already there is decided by its contents, so answering means reading
-              every one — minutes, for a library this size on a network share. Adding titles
-              and writing them does not need it.
+              every one, which for a library this size on a network share takes minutes.
+              Adding titles and writing them does not need it.
             </span>
             <button
               className="button secondary compact"
