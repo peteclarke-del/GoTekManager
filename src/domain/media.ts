@@ -6,7 +6,7 @@
  */
 
 import { acceptedFormats, platforms, requireFirmware } from './catalog'
-import { categoryFolderFor, inferCategory } from './categories'
+import { categoryFolderFor, inferCategoryFor } from './categories'
 import { archiveOf, basename, dottedExtensionOf, joinRelative, safeFileName } from './paths'
 import { extensionPart, readTags, type ReleaseTags } from './tags'
 import type {
@@ -140,7 +140,7 @@ export function namesOf(item: Pick<MediaItem, 'name' | 'path'>): string[] {
  * large has already been read once by then.
  */
 const TAG_CACHE = new Map<string, ReleaseTags>()
-const TAG_CACHE_LIMIT = 20000
+const TAG_CACHE_LIMIT = 200000
 
 export function tagsOf(item: Pick<MediaItem, 'name' | 'path'>): ReleaseTags {
   const key = `${item.path}\u0000${item.name}`
@@ -158,7 +158,12 @@ export function tagsOf(item: Pick<MediaItem, 'name' | 'path'>): ReleaseTags {
  * A format shared by several machines, such as `.dsk`, stays unassigned so the
  * user makes the choice explicitly rather than the application guessing.
  */
-export function classifyMedia(entry: FileEntry, source: string): MediaItem {
+export function classifyMedia(
+  entry: FileEntry,
+  source: string,
+  /** What the user called this source, which is often what says what is in it. */
+  sourceName?: string,
+): MediaItem {
   const extension = `.${entry.extension.toLowerCase()}`
   const likelyPlatformIds = platforms
     .filter((platform) => platform.formats.includes(extension))
@@ -173,8 +178,39 @@ export function classifyMedia(entry: FileEntry, source: string): MediaItem {
     // A collection that files its own titles by kind has already answered
     // this; a download has no such folders, so its name is asked instead — and
     // for a title inside an archive, the archive's name is a name too.
-    category: inferCategory(entry.path, source, ...namesOf(entry)),
+    category: inferCategoryFor(entry.path, { path: source, name: sourceName }, ...namesOf(entry)),
   }
+}
+
+/**
+ * Fills in the category of anything that has none.
+ *
+ * Applied when the library is read, for the same reason downloads are gathered
+ * under their site there: a collection indexed before the rules improved should
+ * tidy itself up rather than leave the user to re-read thirty thousand titles
+ * over a network share to get the benefit. A category somebody set by hand is
+ * never touched — only the ones nothing had answered.
+ */
+export function withCategories(
+  items: readonly MediaItem[],
+  sources: ReadonlyArray<{ path: string; name: string }> = [],
+): MediaItem[] {
+  const named = new Map(sources.map((source) => [source.path, source.name]))
+  let changed = false
+  const next = items.map((item) => {
+    if (item.category) return item
+    const category = inferCategoryFor(
+      item.path,
+      { path: item.source, name: named.get(item.source) },
+      ...namesOf(item),
+    )
+    if (!category) return item
+    changed = true
+    return { ...item, category }
+  })
+  // Unchanged means the same array, so a library that needs nothing doing to it
+  // does not become a new object and re-render everything that reads it.
+  return changed ? next : (items as MediaItem[])
 }
 
 /** True when the item belongs to this platform, whether assigned or inferred. */
@@ -443,6 +479,8 @@ function disambiguators(item: MediaItem): string[] {
 /** A title, where it will be written, and whether its name had to be changed. */
 export type PlannedName = {
   item: MediaItem
+  /** The set this title belongs to; see {@link TransferOperation.group}. */
+  group: string
   /** Always `/`-separated and relative to the destination root. */
   relativePath: string
   /**
@@ -468,16 +506,20 @@ export function plannedNames(items: readonly MediaItem[], profile: Profile): Pla
   return items.map((item) => {
     const folder = outputFolder(item, profile)
     const set = sets.get(item.id) ?? SINGLE_DISC
+    // Built one at a time: a name is only ever contested by a handful of
+    // titles, and computing every alternative for every title regardless cost
+    // thirteen times what naming the library actually needs.
     const preferred = outputFileName(item, profile, set)
-    const names = [
-      preferred,
-      ...disambiguators(item).map((value) => outputFileName(item, profile, set, ` (${value})`)),
-    ]
-    const free = names.find((name) => !taken.has(joinRelative(folder, name).toLowerCase()))
-    const name = free ?? names[0]
+    let name = preferred
+    if (taken.has(joinRelative(folder, name).toLowerCase())) {
+      for (const value of disambiguators(item)) {
+        name = outputFileName(item, profile, set, ` (${value})`)
+        if (!taken.has(joinRelative(folder, name).toLowerCase())) break
+      }
+    }
     const relativePath = joinRelative(folder, name)
     taken.add(relativePath.toLowerCase())
-    return { item, relativePath, disambiguated: name !== preferred }
+    return { item, relativePath, disambiguated: name !== preferred, group: setKeyOf(item) }
   })
 }
 
@@ -488,10 +530,11 @@ export function transferOperations(
   items: MediaItem[],
   profile: Profile,
 ): TransferOperation[] {
-  return plannedNames(items, profile).map(({ item, relativePath }) => ({
+  return plannedNames(items, profile).map(({ item, relativePath, group }) => ({
     source: item.path,
     relativePath,
     size: item.size,
+    group,
   }))
 }
 

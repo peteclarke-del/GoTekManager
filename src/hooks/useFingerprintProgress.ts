@@ -6,9 +6,7 @@
  * hang, so the backend reports where it has got to and this surfaces it.
  */
 
-import { useEffect, useState } from 'react'
-import { listen } from '@tauri-apps/api/event'
-import { isDesktop } from '../native/commands'
+import { useNativeEvent } from './useNativeEvent'
 
 export type FingerprintProgress = {
   done: number
@@ -16,27 +14,9 @@ export type FingerprintProgress = {
   current: string
 }
 
-const EVENT = 'fingerprint:progress'
-
 export function useFingerprintProgress(): FingerprintProgress | null {
-  const [progress, setProgress] = useState<FingerprintProgress | null>(null)
-
-  useEffect(() => {
-    if (!isDesktop()) return
-    let stop: (() => void) | undefined
-    let active = true
-    void listen<FingerprintProgress>(EVENT, (event) => {
-      // A finished batch clears itself, so the indicator does not linger.
-      setProgress(event.payload.done >= event.payload.total ? null : event.payload)
-    }).then((unlisten) => {
-      if (active) stop = unlisten
-      else unlisten()
-    })
-    return () => {
-      active = false
-      stop?.()
-    }
-  }, [])
-
-  return progress
+  return useNativeEvent<FingerprintProgress>('fingerprint:progress', (progress) =>
+    // A finished batch clears itself, so the indicator does not linger.
+    progress.done >= progress.total ? null : progress,
+  )
 }

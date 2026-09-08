@@ -8,7 +8,14 @@
  * whole class of inconsistency and matches how the interface talks about them.
  */
 
-export type Page = 'Flow' | 'Profiles' | 'Devices' | 'Help'
+/**
+ * The four places in the application, in the order the work happens.
+ *
+ * A profile is set up, the flow fills its folder, and Devices writes that
+ * folder to real media. The names are the nouns of the job rather than the
+ * shape of the code, which is why "Flow" is called what it does.
+ */
+export type Page = 'Library' | 'Profiles' | 'Devices' | 'Help'
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
 /**
@@ -212,6 +219,14 @@ export type TransferOperation = {
   /** Always `/`-separated and relative to the destination root. */
   relativePath: string
   size: number
+  /**
+   * The title this belongs to, so the discs of one set are written together.
+   *
+   * A game that is missing a disc will not load, so half a set on the drive is
+   * worse than none of it: if one disc cannot be read, the ones already written
+   * are taken back off and the rest are skipped.
+   */
+  group?: string
 }
 
 export type FileStatus =
@@ -264,7 +279,22 @@ export type TransferPlan = {
   warnings: string[]
   /** The same problems, each naming the staged title responsible. */
   blockers: PlanBlocker[]
+  /**
+   * Titles the write could not take, and why.
+   *
+   * A source can be unreadable through no fault of the plan — a corrupt archive
+   * is the common one, and a large collection holds a few. The write steps over
+   * them rather than abandoning everything after them, and names them here.
+   */
+  failures?: CopyFailure[]
   ready: boolean
+}
+
+/** A title the write could not take, and the reason it gave. */
+export type CopyFailure = {
+  source: string
+  relativePath: string
+  message: string
 }
 
 /** Why a plan cannot be written, tied to the title that caused it. */

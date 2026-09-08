@@ -452,3 +452,78 @@ th.select-cell{width:34px}
 .category-folders{margin-top:14px;padding:12px;border:1px solid var(--a11y-border);border-radius:7px}
 .category-folders label:first-of-type{margin-top:0}
 @media(prefers-color-scheme:dark){.app.system-theme .chip.active{border-color:#f2b84a;background:#45391f;color:#fff}.app.system-theme .chip.active small{color:#f5ca68}.app.system-theme .scan-unsorted{background:#443718;color:#f5ca68}}
+
+/* A blocked title says where it would have gone and what is already going
+   there. "This would overwrite another title" is not something anybody can act
+   on without both halves. */
+.blocked-titles .plan-files li{display:block;padding:8px 10px}
+.blocked-titles .plan-files small{display:block;margin-top:3px;color:var(--a11y-muted);font-size:11px}
+.blocked-titles .plan-files code{font-family:'DM Mono',monospace}
+
+/* Emptying a staged collection. Adding in bulk was possible and emptying was
+   not, which left a collection built up over several passes with no way back
+   short of writing it to a drive. */
+.staged-count{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:12px}
+.staged-count button{padding:3px 0;border:0;border-bottom:1px solid currentColor;background:transparent;color:inherit;font:700 12px inherit;cursor:pointer}
+
+/* Titles the write had to step over. Listed like the blocked ones, because the
+   point is the same: which files, and why. */
+.flow-summary .plan-files li{display:block;padding:8px 10px;font-size:12px}
+.flow-summary .plan-files small{display:block;margin-top:3px;color:var(--a11y-muted);font-size:11px}
+
+/* The summary has to fit the window it is shown in. A write that leaves a few
+   titles behind lists them, and the list must not push the actions off the
+   bottom of a screen that cannot be scrolled to reach them. */
+.flow-summary{margin:24px auto}
+.flow-summary .profile-mismatch{text-align:left}
+.flow-summary .plan-files{max-height:min(300px,34vh);overflow:auto}
+.flow-summary .plan-files code{font-family:'DM Mono',monospace;font-size:11px;word-break:break-all}
+.flow-summary .flow-actions{position:sticky;bottom:0;padding-top:14px;background:var(--paper,var(--a11y-control))}
+
+/* Writing a profile to a stick.
+   The running total is the number everything else hangs off, so it is stated
+   plainly and coloured by whether it fits. */
+.capacity{margin:10px 0;font-size:13px}
+.capacity .fits{color:#1f6848}
+.capacity .over,.picker-total .over{color:#a8322d}
+.app.dark .capacity .fits{color:#6fcf9a}
+.app.dark .capacity .over,.app.dark .picker-total .over{color:#ee8a82}
+.too-big{display:grid;gap:8px;margin:12px 0;padding:12px;border-left:4px solid #a26d00;background:#fff0c9;color:#604400}
+.app.dark .too-big{background:#443718;color:#f5ca68}
+.too-big-actions{display:flex;flex-wrap:wrap;gap:8px}
+.link-button{padding:0;border:0;border-bottom:1px solid currentColor;background:transparent;color:inherit;font:inherit;cursor:pointer}
+
+/* The picker: a folder tree with a tick against everything, and a total that
+   moves as the ticks do. */
+.modal.picker-modal{width:min(760px,100%)}
+.picker{display:grid;gap:12px}
+.picker-total{margin:0;font-size:13px}
+.picker-total .fits{color:#1f6848}
+.app.dark .picker-total .fits{color:#6fcf9a}
+.picker-steps{margin:6px 0 0;padding-left:18px;font-size:11px}
+.picker-tree{max-height:min(420px,46vh);overflow-y:auto;overflow-x:hidden;border:1px solid var(--a11y-border);border-radius:7px}
+/* A fixed three-column row: the tick, the name, the size. Laid out as a grid so
+   a deeply nested name can never push the size off the end, and so the middle
+   column is the only thing that has to give. */
+.picker-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--a11y-border);font-size:12px;text-align:left}
+.picker-row:last-child{border-bottom:0}
+.picker-row>input{width:16px;height:16px;margin:0}
+.picker-name{display:flex;align-items:center;gap:6px;min-width:0;border:0;background:transparent;color:var(--a11y-text);font:inherit;text-align:left;cursor:pointer}
+.picker-name.file{cursor:default;font-family:'DM Mono',monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.picker-name svg{width:14px;height:14px;flex:none;color:var(--a11y-accent)}
+.picker-name b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-name small{flex:none;color:var(--a11y-muted);font-size:10px}
+.picker-size{color:var(--a11y-muted);font-size:11px;white-space:nowrap}
+.picker-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.picker-actions .button:last-child{margin-left:auto}
+
+/* Devices, compactly. Somebody with half a dozen sticks plugged in should be
+   able to see them all at once: identity on one line, detail on a second, and
+   the partition list only on the device actually being written to. */
+.device-row{padding:8px 12px;align-items:center}
+.device-row+.device-row{margin-top:4px}
+.device-row>span{gap:1px}
+.device-row b{font-size:12px}
+.device-row small{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.device-row .device-partitions{display:none}
+.device-row.selected .device-partitions{display:block;white-space:normal}

@@ -47,6 +47,8 @@ pub fn run() {
             media::inspect_target,
             media::list_directory,
             media::list_image_directory,
+            image::image_capacity,
+            media::read_destination,
             media::scan_folder,
             convert::supported_conversions,
             firmware::firmware_config_state,

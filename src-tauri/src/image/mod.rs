@@ -212,15 +212,18 @@ pub fn write_files(path: &Path, files: &[ImageFile]) -> Result<u64> {
         if let Some((parent, _)) = file.relative_path.rsplit_once('/') {
             ensure_directory(&filesystem, parent)?;
         }
-        let mut source = fs::File::open(&file.source)
-            .with_context(|| format!("Unable to read {}", file.source.display()))?;
         let mut target = filesystem
             .root_dir()
             .create_file(&file.relative_path)
             .with_context(|| format!("Unable to create {} in the image", file.relative_path))?;
         target.truncate().map_err(|error| Error::new(error.to_string()))?;
-        let copied = std::io::copy(&mut source, &mut target)
-            .with_context(|| format!("Unable to write {} into the image", file.relative_path))?;
+        // Read through the source resolver rather than opened as a file: a
+        // title can live in a folder, inside a ZIP, or inside another image,
+        // and opening the path directly worked for only the first of those.
+        let copied = crate::source::read_with(&file.source, |reader| {
+            std::io::copy(reader, &mut target)
+                .with_context(|| format!("Unable to write {} into the image", file.relative_path))
+        })?;
         if copied != file.size {
             return Err(Error::new(format!(
                 "Short write for {}: the source changed while it was being copied.",
@@ -290,6 +293,94 @@ pub fn list_files(path: &Path) -> Result<Vec<FileEntry>> {
     Ok(found)
 }
 
+/// What a stick of this size will actually hold.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageCapacity {
+    /// Bytes left for files once the filesystem has taken its own.
+    pub usable_bytes: u64,
+    /// The allocation unit. Every file costs a whole number of these.
+    pub cluster_bytes: u64,
+}
+
+/// Measures a stick by building one and asking it.
+///
+/// The cluster size is chosen by the formatter from the volume's size, and it is
+/// the number that decides whether a collection fits: an 881 KB disk image on a
+/// 32 KB cluster occupies 896 KB, and ten thousand of them turn a comfortable
+/// byte total into an overflowing one. Estimating it would mean reimplementing
+/// the formatter's judgement and being wrong occasionally, so a volume is laid
+/// out in a sparse temporary file and asked directly. Formatting writes only the
+/// structures, so this costs little more than the directory it creates.
+pub fn capacity(options: &ImageOptions) -> Result<ImageCapacity> {
+    let probe = std::env::temp_dir().join(format!(
+        "gotek-capacity-{}.img",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_nanos())
+            .unwrap_or_default()
+    ));
+    let measured = (|| -> Result<ImageCapacity> {
+        create(&probe, options)?;
+        let filesystem = open_read(&probe)?;
+        let stats = filesystem
+            .stats()
+            .map_err(|error| Error::new(format!("Unable to measure the volume: {error}")))?;
+        let cluster_bytes = u64::from(stats.cluster_size());
+        Ok(ImageCapacity {
+            usable_bytes: u64::from(stats.free_clusters()) * cluster_bytes,
+            cluster_bytes,
+        })
+    })();
+    let _ = fs::remove_file(&probe);
+    measured
+}
+
+/// The size of one file inside an image, or `None` when it is not there.
+///
+/// Read from the filesystem's own directory rather than by reading the file, so
+/// asking about a few thousand entries costs a few thousand lookups rather than
+/// a few thousand decompressions.
+pub fn entry_size(image: &Path, inner: &str) -> Result<Option<u64>> {
+    let Ok(filesystem) = open_read(image) else {
+        return Ok(None);
+    };
+    let Some(inner) = normalised_inner(inner) else {
+        return Ok(None);
+    };
+    let Ok(mut file) = filesystem.root_dir().open_file(&inner) else {
+        return Ok(None);
+    };
+    // The length is the seek end, which the filesystem answers from its own
+    // directory rather than by reading anything.
+    Ok(std::io::Seek::seek(&mut file, std::io::SeekFrom::End(0)).ok())
+}
+
+/// Hands the contents of one file inside an image to the caller.
+///
+/// Nothing is unpacked on the way: the bytes are read straight out of the image,
+/// exactly as an entry inside an archive is.
+pub fn read_entry<T>(
+    image: &Path,
+    inner: &str,
+    read: impl FnOnce(&mut dyn std::io::Read) -> Result<T>,
+) -> Result<T> {
+    let filesystem = open_read(image)?;
+    let path = normalised_inner(inner)
+        .ok_or_else(|| Error::new(format!("{inner} does not name a file in the image.")))?;
+    let mut file = filesystem
+        .root_dir()
+        .open_file(&path)
+        .with_context(|| format!("Unable to read {inner} from {}", image.display()))?;
+    read(&mut file)
+}
+
+/// An inner path in the form the filesystem expects, or nothing when it is empty.
+fn normalised_inner(inner: &str) -> Option<String> {
+    let trimmed = inner.trim_matches('/');
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 /// Unpacks an image into a folder.
 ///
 /// Nothing is overwritten: an existing destination file is reported rather than
@@ -328,10 +419,117 @@ pub fn extract(image: &Path, destination: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        create, extract, list_files, read_directory, volume_label, write_files, FatKind,
-        ImageFile, ImageOptions,
+        create, entry_size, extract, list_files, read_directory, read_entry, volume_label,
+        write_files, FatKind, ImageFile, ImageOptions,
     };
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn a_stick_is_measured_in_clusters_rather_than_bytes() {
+        // The number that decides whether a collection fits. A byte total says
+        // an 881 KB image costs 881 KB; the volume charges a whole cluster for
+        // it, and across thousands of titles that difference is the difference
+        // between fitting and not.
+        let measured = super::capacity(&ImageOptions {
+            size_bytes: 64 * 1024 * 1024,
+            label: "GOTEK".into(),
+            fat: FatKind::Fat16,
+            partitioned: false,
+        })
+        .unwrap();
+
+        assert!(measured.cluster_bytes >= 512, "a cluster is at least a sector");
+        assert!(measured.cluster_bytes.is_power_of_two());
+        assert!(measured.usable_bytes > 0);
+        // The filesystem's own structures are not available for files.
+        assert!(measured.usable_bytes < 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn a_stick_can_be_built_from_a_folder_an_archive_or_another_image() {
+        // A profile's destination is wherever somebody chose to keep it: a
+        // folder, a stick, or a FAT image kept as a backup. Populating an image
+        // opened its sources as files, so only the first of those worked.
+        let root = fixture("mixed-sources");
+        let options = ImageOptions {
+            size_bytes: 16 * 1024 * 1024,
+            label: "GOTEK".into(),
+            fat: FatKind::Fat16,
+            partitioned: false,
+        };
+
+        // A plain file, an entry in a ZIP, and an entry in another image.
+        let loose = root.join("Loose.adf");
+        fs::write(&loose, b"loose title").unwrap();
+
+        let archive = root.join("library.zip");
+        {
+            let mut writer = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+            writer
+                .start_file("Zipped.adf", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut writer, b"zipped title").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let held = root.join("held.img");
+        create(&held, &options).unwrap();
+        write_files(
+            &held,
+            &[ImageFile {
+                source: loose.clone(),
+                relative_path: "Games/Inside.adf".into(),
+                size: "loose title".len() as u64,
+            }],
+        )
+        .unwrap();
+
+        // What the image holds can be measured and read without unpacking it.
+        assert_eq!(
+            entry_size(&held, "Games/Inside.adf").unwrap(),
+            Some("loose title".len() as u64),
+        );
+        let read_back =
+            read_entry(&held, "Games/Inside.adf", |reader| {
+                let mut buffer = Vec::new();
+                std::io::Read::read_to_end(reader, &mut buffer).unwrap();
+                Ok(buffer)
+            })
+            .unwrap();
+        assert_eq!(read_back, b"loose title");
+
+        // And all three can be written into a stick in one pass.
+        let stick = root.join("stick.img");
+        create(&stick, &options).unwrap();
+        write_files(
+            &stick,
+            &[
+                ImageFile {
+                    source: loose,
+                    relative_path: "Games/A.adf".into(),
+                    size: "loose title".len() as u64,
+                },
+                ImageFile {
+                    source: PathBuf::from(crate::source::entry_path(&archive, "Zipped.adf")),
+                    relative_path: "Games/B.adf".into(),
+                    size: "zipped title".len() as u64,
+                },
+                ImageFile {
+                    source: PathBuf::from(crate::source::entry_path(&held, "Games/Inside.adf")),
+                    relative_path: "Games/C.adf".into(),
+                    size: "loose title".len() as u64,
+                },
+            ],
+        )
+        .unwrap();
+
+        let written = list_files(&stick).unwrap();
+        let mut names: Vec<_> = written.iter().map(|entry| entry.path.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["Games/A.adf", "Games/B.adf", "Games/C.adf"]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn fixture(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -508,6 +706,12 @@ pub struct ImageSummary {
     pub filesystem_bytes: u64,
     pub file_count: usize,
     pub used_bytes: u64,
+}
+
+/// What a stick of this size would hold, before anything is written to it.
+#[tauri::command]
+pub async fn image_capacity(options: ImageOptions) -> crate::error::Result<ImageCapacity> {
+    crate::task::blocking(move || capacity(&options)).await
 }
 
 #[tauri::command]

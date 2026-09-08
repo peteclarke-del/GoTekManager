@@ -144,6 +144,7 @@ export const REASONS = {
   category: 'not one of the chosen categories',
   onTarget: 'already on the target',
   staged: 'already in this profile',
+  duplicate: 'another copy of this disc is already in this profile',
   incomplete: 'part of a set that is missing a disc',
   superseded: 'a better copy of this title was chosen',
 } as const
@@ -246,18 +247,40 @@ function discSets(items: readonly MediaItem[]): DiscSet[] {
   }
 
   for (const group of groups.values()) {
-    // A set that says it has three discs has three, however many turned up.
-    const stated = Math.max(
-      0,
-      ...group.members.map((member) => member.tags.disk?.of ?? 0),
-    )
-    // Filled the way this set labels itself. A set of sides A and B that says
-    // it has two must look for B, not for a `D2` that can never arrive.
-    const lettered = group.positions.some((position) => /^[A-Z]$/.test(position))
+    const held = group.positions.filter(Boolean)
+    const lettered = held.some((position) => /^[A-Z]$/.test(position))
     const label = (disc: number) =>
       lettered ? String.fromCharCode('A'.charCodeAt(0) + disc - 1) : `D${disc}`
-    for (let disc = 1; disc <= stated; disc += 1) {
-      if (!group.positions.includes(label(disc))) group.positions.push(label(disc))
+
+    // How many discs the set has, taken from the claim the collection itself
+    // bears out. A title often carries editions of different lengths — a four
+    // disc release and a five disc one whose last disc nobody kept — and
+    // believing the largest claim invented a disc that was never coming,
+    // while believing only what is in hand would quietly write a game that is
+    // genuinely short of one. So each claimed size is scored by how much of
+    // it is actually here, and the smallest size that covers the most wins.
+    const claims = [
+      ...new Set(
+        group.members
+          .map((member) => member.tags.disk?.of ?? 0)
+          .filter((size) => size > 0),
+      ),
+    ].sort((left, right) => left - right)
+
+    const best = claims.reduce<{ size: number; covered: number } | undefined>(
+      (chosen, size) => {
+        const covered = Array.from({ length: size }, (_, index) => label(index + 1)).filter(
+          (position) => held.includes(position),
+        ).length
+        return !chosen || covered > chosen.covered ? { size, covered } : chosen
+      },
+      undefined,
+    )
+
+    if (best) {
+      for (let disc = 1; disc <= best.size; disc += 1) {
+        if (!group.positions.includes(label(disc))) group.positions.push(label(disc))
+      }
     }
     // A single unnamed position alongside real discs is not a position of its
     // own: it is a member the collection never labelled.
@@ -268,6 +291,27 @@ function discSets(items: readonly MediaItem[]): DiscSet[] {
     group.positions.sort()
   }
   return [...groups.values()]
+}
+
+/**
+ * The discs one release is expected to have.
+ *
+ * A release says how many it has, and that is a fact about the release rather
+ * than about the title: two editions of a game can hold a different number of
+ * discs, and a point release is often a single patched disc. So a release is
+ * measured against its own claim, falling back to the discs it actually
+ * carries when it makes none.
+ */
+function wanted(members: Candidate[], fallback: string[]): string[] {
+  const stated = Math.max(0, ...members.map((member) => member.tags.disk?.of ?? 0))
+  const held = members.map((member) => positionOf(member.tags))
+  if (!stated) return [...new Set(held)].sort()
+  const lettered = held.some((position) => /^[A-Z]$/.test(position))
+  const labels = Array.from({ length: stated }, (_, index) =>
+    lettered ? String.fromCharCode('A'.charCodeAt(0) + index) : `D${index + 1}`,
+  )
+  // A claim nothing here corroborates is not believed over what is in hand.
+  return labels.some((label) => held.includes(label)) ? labels : fallback
 }
 
 /** Best first: the original, then the fixed dump, then the alternates. */
@@ -286,8 +330,19 @@ function byPreference(left: Candidate, right: Candidate): number {
 type SetOutcome = {
   key: string
   chosen: MediaItem[]
-  /** Discs no surviving copy could fill. */
+  /** Discs no copy exists for at all, at any quality. */
   missing: string[]
+  /**
+   * Discs that only exist in a form the filter rejects, taken anyway.
+   *
+   * Whole swathes of a collection survive only as cracked releases — that is
+   * simply how Amiga software circulated — and it is common for disc 2 of a
+   * game to have a clean dump while every copy of disc 1 is cracked. Refusing
+   * the set then loses a game that is entirely playable, over a preference
+   * about one of its discs. So the cascade keeps walking past the filter when
+   * that is the only way to finish a set, and says which discs it did that for.
+   */
+  compromised: string[]
   /** True when the set had to be built from more than one release. */
   mixed: boolean
 }
@@ -304,36 +359,55 @@ function assembleSet(set: DiscSet, passed: Set<string>): SetOutcome {
   const survivors = set.members
     .filter((member) => passed.has(member.item.id))
     .sort(byPreference)
+  // Everything, in the same order, for the discs the filter left nothing for.
+  const anyCopy = [...set.members].sort(byPreference)
 
   const releases = new Map<string, Candidate[]>()
   for (const member of survivors) {
     const signature = releaseSignature(member.tags)
-    releases.set(signature, [...(releases.get(signature) ?? []), member])
+    const held = releases.get(signature)
+    if (held) held.push(member)
+    else releases.set(signature, [member])
   }
 
   for (const members of releases.values()) {
     const covered = new Set(members.map((member) => positionOf(member.tags)))
-    if (set.positions.every((position) => covered.has(position))) {
-      const chosen = set.positions.map(
+    // Judged against the size *this release* claims, not against every disc
+    // anybody ever numbered under this title. A title often carries two
+    // editions — a five disc release and a six disc one whose other discs
+    // nobody kept — and measuring the complete five against the six left a
+    // whole game out over a disc that belongs to a different edition.
+    if (wanted(members, set.positions).every((position) => covered.has(position))) {
+      const chosen = wanted(members, set.positions).map(
         (position) => members.find((member) => positionOf(member.tags) === position)!.item,
       )
-      return { key: set.key, chosen, missing: [], mixed: false }
+      return { key: set.key, chosen, missing: [], compromised: [], mixed: false }
     }
   }
 
   const chosen: MediaItem[] = []
   const missing: string[] = []
+  const compromised: string[] = []
   const used = new Set<string>()
   for (const position of set.positions) {
     const best = survivors.find((member) => positionOf(member.tags) === position)
-    if (!best) {
+    if (best) {
+      chosen.push(best.item)
+      used.add(releaseSignature(best.tags))
+      continue
+    }
+    // Nothing the filter allows fills this disc. Rather than lose the set, the
+    // cascade carries on down to whatever copy does exist.
+    const fallback = anyCopy.find((member) => positionOf(member.tags) === position)
+    if (!fallback) {
       missing.push(position || 'the only disc')
       continue
     }
-    chosen.push(best.item)
-    used.add(releaseSignature(best.tags))
+    chosen.push(fallback.item)
+    compromised.push(position || 'the only disc')
+    used.add(releaseSignature(fallback.tags))
   }
-  return { key: set.key, chosen, missing, mixed: used.size > 1 }
+  return { key: set.key, chosen, missing, compromised, mixed: used.size > 1 }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,8 +432,15 @@ export type BulkAddPlan = {
   byFolder: FolderGroup[]
   /** Included titles nothing has categorised, which a category layout buckets. */
   unsorted: MediaItem[]
-  /** Sets that could not be completed, and are therefore left out. */
+  /** Sets no copy exists for, at any quality, and are therefore left out. */
   incomplete: Array<{ title: string; missing: string[] }>
+  /**
+   * Sets finished with a disc the filter would otherwise have rejected.
+   *
+   * Not a problem to be fixed so much as a fact to be told: the alternative was
+   * losing a playable game over a preference about one of its discs.
+   */
+  compromised: Array<{ title: string; discs: string[] }>
   /** Sets built from more than one release because no single one was whole. */
   mixed: string[]
   /** Titles renamed to keep two stripped names apart, with the name used. */
@@ -384,8 +465,16 @@ export function planBulkAdd(
   options: {
     /** What the destination already holds, by source path. */
     presence?: Record<string, TargetFileStatus>
-    /** Titles already staged against this profile. */
-    staged?: ReadonlySet<string>
+    /**
+     * Titles already staged against this profile.
+     *
+     * The titles themselves rather than their ids, because "already staged" is
+     * a question about the disc, not about the row. Two different releases of
+     * disc four are two different library entries, and comparing ids let the
+     * second one straight in beside the first — a profile that had been added
+     * to twice ended up holding several copies of the same disc.
+     */
+    staged?: readonly MediaItem[]
   } = {},
 ): BulkAddPlan {
   const accepted = acceptedFormats(platformId, profile.firmwareId)
@@ -394,14 +483,33 @@ export function planBulkAdd(
   // and compared as something it is not.
   const candidates = items.map((item) => forProfile(item, platformId))
 
+  // Which disc of which set this profile already holds, so a second copy of one
+  // is refused however it is labelled.
+  const heldIds = new Set<string>()
+  const heldDiscs = new Set<string>()
+  for (const item of options.staged ?? []) {
+    const committed = forProfile(item, platformId)
+    heldIds.add(committed.id)
+    heldDiscs.add(`${setKeyOf(committed)}\u0000${positionOf(tagsOf(committed))}`)
+  }
+
   const excluded = new Map<string, MediaItem[]>()
-  const drop = (item: MediaItem, why: string) =>
-    excluded.set(why, [...(excluded.get(why) ?? []), item])
+  // Appended to in place. Rebuilding the list on every drop is quadratic, and
+  // one reason can easily hold twenty thousand titles.
+  const drop = (item: MediaItem, why: string) => {
+    const held = excluded.get(why)
+    if (held) held.push(item)
+    else excluded.set(why, [item])
+  }
 
   const passed = new Set<string>()
   for (const item of candidates) {
-    if (options.staged?.has(item.id)) {
+    if (heldIds.has(item.id)) {
       drop(item, REASONS.staged)
+      continue
+    }
+    if (heldDiscs.has(`${setKeyOf(item)}\u0000${positionOf(tagsOf(item))}`)) {
+      drop(item, REASONS.duplicate)
       continue
     }
     if (filter.onlyMissingFromTarget) {
@@ -418,6 +526,7 @@ export function planBulkAdd(
 
   const included: MediaItem[] = []
   const incomplete: BulkAddPlan['incomplete'] = []
+  const compromised: BulkAddPlan['compromised'] = []
   const mixed: string[] = []
 
   if (!filter.onePerTitle && !filter.keepDiskSetsWhole) {
@@ -447,6 +556,9 @@ export function planBulkAdd(
         }
       }
       if (outcome.mixed && chosen.length) mixed.push(title)
+      if (outcome.compromised.length && filter.onePerTitle) {
+        compromised.push({ title, discs: outcome.compromised })
+      }
       included.push(...chosen)
     }
   }
@@ -491,6 +603,7 @@ export function planBulkAdd(
     ),
     unsorted: included.filter((item) => !item.category),
     incomplete,
+    compromised,
     mixed,
     renamed,
     totalBytes: included.reduce((total, item) => total + item.size, 0),

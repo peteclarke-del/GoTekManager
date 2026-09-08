@@ -137,7 +137,7 @@ const DEV_STATUS: Record<string, DevStatus> = {
  * letter codes have to be tried before the one letter ones or every
  * translation would be read as a trainer.
  */
-const DUMP_FLAGS: Array<[string, DumpFlag]> = [
+const DUMP_FLAG_CODES: Array<[string, DumpFlag]> = [
   ['tr', 'translated'],
   ['cr', 'cracked'],
   ['!', 'verified'],
@@ -152,6 +152,21 @@ const DUMP_FLAGS: Array<[string, DumpFlag]> = [
   ['u', 'underdump'],
   ['v', 'virus'],
 ]
+
+/**
+ * The same codes as patterns, compiled once.
+ *
+ * A flag can be numbered and annotated — `[a2]`, `[cr PDX]`, `[b2 corrupt]` —
+ * so each code needs a pattern rather than an equality test. Building those
+ * patterns per call meant compiling thirteen regular expressions for every
+ * bracket of every title, which was the single most expensive thing the
+ * library did: some ninety microseconds a name, minutes over a large
+ * collection.
+ */
+const DUMP_FLAGS: Array<[RegExp, DumpFlag]> = DUMP_FLAG_CODES.map(([code, flag]) => [
+  new RegExp(`^${code.replace('!', '\\!')}\\d*(\\s.*)?$`),
+  flag,
+])
 
 const DISTRIBUTION: Record<string, Distribution> = {
   pd: 'pd',
@@ -198,18 +213,50 @@ const VERSION = /^(v[\d.]+[a-z]?|rev\s*[\w.]+|alt)$/i
 const MULTI_LANGUAGE = /^m[2-9]$/i
 /** `(en-fr)`, `(en-de-fr)`. */
 const LANGUAGE_LIST = /^[a-z]{2}(-[a-z]{2})+$/i
-const DISK_GROUP = /^(disk|disc|side|part|file|tape)\s*([0-9]{1,2}|[a-z])(\s*(of|\/)\s*([0-9]{1,2}))?$/i
+const DISK_GROUP = /^(disk|disc|side|part|file|tape)\s*#?\s*([0-9]{1,2}|[a-z])(\s*(of|\/)\s*([0-9]{1,2}))?$/i
 /**
- * `Elite Disk 2`, `Lemmings side b` — the marker written without brackets.
+ * The marker written without brackets, wherever it sits in the name.
  *
- * Also matches a name that is *only* the marker, which is what an archive entry
- * usually is: a ZIP called `Dungeon Master (1987)(FTL).zip` holding `disk1.adf`
- * and `disk2.adf`. Reading those leaves no title at all, which is exactly the
- * signal that the archive's own name is the one worth having.
+ * Three shapes, all common: at the end (`Elite Disk 2`, `Lemmings side b`); as
+ * the whole name, which is what an archive entry usually is (a ZIP called
+ * `Dungeon Master (1987)(FTL).zip` holding `disk1.adf`, where reading it leaves
+ * no title at all and the archive's own name is the one worth having); and in
+ * the middle, before a dash — `Strip Poker Three Data Disk #6 - Suzi &
+ * Melissa`, where the number is the only thing telling the discs apart.
+ *
+ * The lookahead is what keeps it honest: the marker has to end the name or be
+ * followed by a separator, so `Amiga Format Coverdisk 42 Extra` keeps its
+ * number and only a real marker is taken.
  */
-const TRAILING_DISK = /(?:^|\s)(?:disk|disc|side|part)\s*([0-9]{1,2}|[a-z])\s*$/i
+const TRAILING_DISK =
+  /(?:^|\s)(?:disk|disc|side|part)\s*#?\s*([0-9]{1,2}|[a-z])(?:\s*(?:of|\/)\s*([0-9]{1,2}))?(?=\s*(?:[-–—:]|$))/i
+/**
+ * The marker this application writes itself: `Elite D2`.
+ *
+ * Read back for the same reason it is written: a stick built by this
+ * application is a collection like any other, and re-reading one — or deciding
+ * which of its files belong to one game — has to recognise its own hand.
+ */
+const WRITTEN_DISK = /\sD([0-9]{1,2})\s*$/
+
 /** A lone letter at the end, which is how most Amiga sets number their discs. */
 const TRAILING_LETTER = /\s([a-z])\s*$/i
+
+/**
+ * A version written into the title rather than bracketed: `Ambermoon v1.04`,
+ * `3D Construction Kit II r2.01`, `AmigaVision v1.70 rev H`.
+ *
+ * It has to come off the title for the same reason the year does — it says
+ * which release this is, not what the software is — and taking it off is what
+ * lets the discs of one game find each other. Collections ship a point release
+ * as a patched first disc only, so keeping the version in the title made
+ * `Ambermoon v1.04` look like a nine-disc set with eight discs missing, while
+ * the complete `v1.01` set sat right beside it.
+ *
+ * Deliberately narrow: a `v` or `r` followed by digits, or `rev` followed by
+ * anything. `Elite II`, `Zool 2` and `SWIV` are titles, not versions.
+ */
+const TRAILING_VERSION = /\s+(v\d[\w.]*|r\d[\w.]*|rev\s*[\w.]+)\s*$/i
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -236,13 +283,7 @@ export function extensionPart(name: string): string {
 
 function readDumpFlag(content: string): DumpFlag | undefined {
   const code = content.trim().toLowerCase()
-  const match = DUMP_FLAGS.find(
-    ([letters]) =>
-      code === letters ||
-      // `[a2]`, `[cr PDX]`, `[b2 corrupt]`: a number, an annotation, or both.
-      new RegExp(`^${letters.replace('!', '\\!')}\\d*(\\s.*)?$`).test(code),
-  )
-  return match?.[1]
+  return DUMP_FLAGS.find(([pattern]) => pattern.test(code))?.[1]
 }
 
 /**
@@ -279,11 +320,17 @@ function readOne(name: string): ReleaseTags {
       const disk = value.match(DISK_GROUP)
       if (disk) {
         const [, , position, , , total] = disk
-        tags.disk = {
+        const found: DiskMarker = {
           label: diskLabel(position),
           index: /^\d+$/.test(position) ? Number(position) : undefined,
           of: total ? Number(total) : undefined,
         }
+        // Collections write a media *label* after the disc tag —
+        // `(Disk 2 of 3)(Disk1)` — and letting the label win renumbered the
+        // set: disc 2 became disc 1 and the last disc disappeared entirely.
+        // The tag that says how many discs there are is the one that means it,
+        // and otherwise the first one wins.
+        if (!tags.disk || (found.of && !tags.disk.of)) tags.disk = found
         return ' '
       }
       if (YEAR.test(value)) {
@@ -337,12 +384,23 @@ function readOne(name: string): ReleaseTags {
     .trim()
 
   tags.bareTitle = bare
+  // Taken off until none is left. A release can carry two — `AmigaVision v1.71
+  // rev I` — and stripping once left the number behind, which put every point
+  // release in a set of its own again.
+  for (;;) {
+    const version = tags.bareTitle.match(TRAILING_VERSION)
+    if (!version) break
+    tags.version ??= version[1]
+    tags.bareTitle = tags.bareTitle.slice(0, version.index).trim()
+  }
   if (tags.disk) return tags
 
-  // Nothing bracketed said which disc this is, so the end of the name is asked.
-  const trailing = bare.match(TRAILING_DISK)
+  // Nothing bracketed said which disc this is, so the end of the name is asked,
+  // with the version already taken off it.
+  const titled = tags.bareTitle
+  const trailing = titled.match(TRAILING_DISK)
   if (trailing) {
-    tags.bareTitle = bare.slice(0, trailing.index).trim()
+    tags.bareTitle = titled.slice(0, trailing.index).trim()
 
     tags.disk = {
       label: diskLabel(trailing[1]),
@@ -350,9 +408,15 @@ function readOne(name: string): ReleaseTags {
     }
     return tags
   }
-  const letter = bare.match(TRAILING_LETTER)
+  const written = titled.match(WRITTEN_DISK)
+  if (written) {
+    tags.bareTitle = titled.slice(0, written.index).trim()
+    tags.disk = { label: diskLabel(written[1]), index: Number(written[1]) }
+    return tags
+  }
+  const letter = titled.match(TRAILING_LETTER)
   if (letter) {
-    tags.bareTitle = bare.slice(0, letter.index).trim()
+    tags.bareTitle = titled.slice(0, letter.index).trim()
     tags.disk = { label: letter[1].toUpperCase() }
   }
   return tags
