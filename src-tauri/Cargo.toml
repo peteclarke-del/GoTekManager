@@ -47,6 +47,12 @@ zip = { version = "4", default-features = false, features = ["deflate"] }
 # when they change, are given the lot.
 [profile.dev]
 opt-level = 1
+# Optimising turns on rustc's own cross-unit inlining, which emits internal
+# symbols that the lld this toolchain links with refuses ("undefined hidden
+# symbol: anon.<hash>.llvm.<hash>"). Nothing here needs that inlining — the
+# gain above came from optimising each unit at all, not from merging them — so
+# it is switched off rather than the optimisation given up.
+lto = "off"
 
 [profile.dev.package."*"]
 opt-level = 3

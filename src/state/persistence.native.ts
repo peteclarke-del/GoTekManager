@@ -17,12 +17,19 @@ import { isDesktop } from '../native/commands'
 import {
   loadNativeWorkspace,
   saveNativeWorkspace,
+  upsertItems,
+  type StoredItem,
   type StoredWorkspace,
 } from '../native/store'
-import { LIBRARY_KEY, loadWorkspace, splitWorkspace, WORKSPACE_KEY } from './migrations'
+import {
+  legacyLibraryItems,
+  LIBRARY_KEY,
+  loadWorkspace,
+  splitWorkspace,
+  WORKSPACE_KEY,
+} from './migrations'
 import { writeStored } from './persistence'
 import { groupDownloads } from '../domain/downloads'
-import { withCategories } from '../domain/media'
 import { emptyWorkspace, type Workspace } from './workspace'
 
 function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
@@ -43,34 +50,10 @@ function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
 }
 
 function fromNative(stored: StoredWorkspace): Workspace {
-  // A scanned title is identified and named by its file, so the store leaves
-  // both out and they are restored here rather than carried across twice.
-  const stored_items: MediaItem[] = stored.items.map((item) => ({
-    ...item,
-    id: item.id ?? item.path,
-    canonicalTitle: item.canonicalTitle ?? item.name,
-    directory: false,
-    likelyPlatformIds: item.likelyPlatformIds ?? [],
-  }))
   // A library built up before downloads were grouped carries one source per
   // cached title. They are gathered here rather than left for the user to
-  // remove by hand, and the staged collections follow because they are built
-  // from these titles below.
-  const grouped = groupDownloads(stored.sources ?? [], stored_items)
-  const sources = grouped.sources
-  // A library indexed before the source folder's own name was read is mostly
-  // unsorted; re-reading the rules costs a moment, re-reading the share costs
-  // minutes.
-  const items = withCategories(grouped.items, sources)
-  const byId = new Map(items.map((item) => [item.id, item]))
-
-  const collections: Record<string, MediaItem[]> = {}
-  for (const [profileId, itemIds] of Object.entries(stored.collections ?? {})) {
-    // A staged id whose title has since left the library is dropped rather
-    // than resurrected as a placeholder that no longer points at a file.
-    const staged = itemIds.map((id) => byId.get(id)).filter((item): item is MediaItem => !!item)
-    if (staged.length) collections[profileId] = staged
-  }
+  // remove by hand; the library's own rows follow when it is next indexed.
+  const grouped = groupDownloads(stored.sources ?? [], [])
 
   const removalPolicies: Record<string, RemovalPolicy> = {}
   for (const [profileId, policy] of Object.entries(stored.removalPolicies ?? {})) {
@@ -81,10 +64,41 @@ function fromNative(stored: StoredWorkspace): Workspace {
     version: 2,
     profiles: (stored.profiles ?? []).map(toProfile),
     activeProfileId: stored.activeProfileId ?? '',
-    collections,
+    // Staging is fetched for whichever profile becomes active, not up front.
+    collections: {},
     removalPolicies,
-    sources,
-    items,
+    sources: grouped.sources,
+  }
+}
+
+/** Turns stored rows into library items, restoring what the store folds away. */
+export function itemsFromStored(stored: readonly StoredItem[]): MediaItem[] {
+  return stored.map((item) => ({
+    ...item,
+    id: item.id ?? item.path,
+    canonicalTitle: item.canonicalTitle ?? item.name,
+    directory: false,
+    likelyPlatformIds: item.likelyPlatformIds ?? [],
+  }))
+}
+
+/** Turns a library item back into the row the store keeps. */
+export function itemToStored(item: MediaItem): StoredItem {
+  return {
+    // Left out when they say nothing the path and the name do not.
+    id: item.id === item.path ? undefined : item.id,
+    source: item.source,
+    path: item.path,
+    name: item.name,
+    extension: item.extension,
+    size: item.size,
+    modified: item.modified,
+    canonicalTitle: item.canonicalTitle === item.name ? undefined : item.canonicalTitle,
+    displayTitle: item.displayTitle,
+    assignedPlatformId: item.assignedPlatformId,
+    category: item.category,
+    likelyPlatformIds: item.likelyPlatformIds,
+    provenance: item.provenance,
   }
 }
 
@@ -105,40 +119,13 @@ function toNative(workspace: Workspace): StoredWorkspace {
       display: profile.display,
     })),
     activeProfileId: workspace.activeProfileId,
-    // Collections are stored as references, so a title staged for three
-    // profiles is one row in the library rather than three copies of it.
-    collections: Object.fromEntries(
-      Object.entries(workspace.collections).map(([profileId, items]) => [
-        profileId,
-        items.map((item) => item.id),
-      ]),
-    ),
     removalPolicies: workspace.removalPolicies,
     sources: workspace.sources,
-    items: workspace.items.map((item) => ({
-      // Left out when they say nothing the path and the name do not. See
-      // {@link StoredItem}.
-      id: item.id === item.path ? undefined : item.id,
-      source: item.source,
-      path: item.path,
-      name: item.name,
-      extension: item.extension,
-      size: item.size,
-      modified: item.modified,
-      canonicalTitle: item.canonicalTitle === item.name ? undefined : item.canonicalTitle,
-      displayTitle: item.displayTitle,
-      assignedPlatformId: item.assignedPlatformId,
-      category: item.category,
-      likelyPlatformIds: item.likelyPlatformIds,
-      provenance: item.provenance,
-    })),
   }
 }
 
 function isEmpty(workspace: Workspace): boolean {
-  return (
-    !workspace.profiles.length && !workspace.items.length && !workspace.sources.length
-  )
+  return !workspace.profiles.length && !workspace.sources.length
 }
 
 /**
@@ -155,10 +142,14 @@ export async function loadPersistedWorkspace(): Promise<Workspace> {
     if (!isEmpty(native)) return native
 
     // Nothing in the database yet: adopt whatever the previous versions left
-    // behind, including the pre-2.0 layout, and write it across.
+    // behind, including the pre-2.0 layout, and write it across. The library
+    // goes with it — it no longer travels inside the workspace, so it has to be
+    // written on its own or an older install would open to an empty table.
     const previous = loadWorkspace()
-    if (!isEmpty(previous)) {
+    const legacy = legacyLibraryItems()
+    if (!isEmpty(previous) || legacy.length) {
       await saveNativeWorkspace(toNative(previous))
+      if (legacy.length) await upsertItems(legacy.map(itemToStored))
       return previous
     }
     return emptyWorkspace

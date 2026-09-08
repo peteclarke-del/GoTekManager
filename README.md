@@ -6,8 +6,8 @@ Raspberry Pi.
 
 ## What it does
 
-A **profile** is the unit you work with. It holds one destination — a folder, a
-mounted volume, or a FAT image — together with the platform, firmware, folder
+A **profile** is the unit you work with. It holds one destination (a folder, a
+mounted volume, or a FAT image) together with the platform, firmware, folder
 layout, and naming rules used to write to it. Each profile keeps its own
 collection of staged titles.
 
@@ -20,15 +20,15 @@ profile's exact name.
 - Tauri + React desktop application with system, light, and dark themes.
 - Recursive local indexing, including supported images inside ZIP archives,
   with explicit platform assignment for formats shared by several machines.
-- Optional conversion of images a GoTek cannot present into ones it can —
-  `.msa` to `.st` and `.scl` to `.trd` — written into the cache during indexing,
+- Optional conversion of images a GoTek cannot present into ones it can,
+  `.msa` to `.st` and `.scl` to `.trd`, written into the cache during indexing,
   leaving the original file untouched. Anything that cannot be converted
   cleanly is left out rather than guessed at.
 - Persistent named source locations that can be re-indexed, renamed, or removed.
 - Read-only browsing of folders, mounted volumes, Linux GVFS desktop mounts such
   as SMB shares, and FAT `.img`/`.ima` images.
-- Categories — games, applications, demos, magazines, utilities, music,
-  education, system — worked out from the folders an organised collection already
+- Categories (games, applications, demos, magazines, utilities, music,
+  education, system) worked out from the folders an organised collection already
   uses, including the compound names collections take from their own catalogues
   such as `Commodore Amiga - Games - [ADF]`, from the name of the archive a title
   sits in, from the sections a site sorts its own downloads into, and failing
@@ -50,11 +50,11 @@ profile's exact name.
   a bulk add and an online download all go through the same rule, so a stick is
   never a mixture of two conventions. Naming for a small panel is a separate
   choice, and the disc marker is never what gives up the room.
-- Filling a stick from a whole collection in one pass — **Scan all sources**,
-  below **Add location** on the Sources step — with a filter built from
-  what the collection itself records — language, prototypes and playable demos,
-  dumps marked cracked, alternate or bad, how the software was published, region,
-  and category — each choice showing how many titles carry it. A multi-disc set is
+- Filling a stick from a whole collection in one pass, using **Scan all
+  sources** below **Add location** on the Sources step. The filter is built from
+  what the collection itself records: language, prototypes and playable demos,
+  dumps marked cracked, alternate or bad, how the software was published,
+  region, and category, each choice showing how many titles carry it. A multi-disc set is
   taken whole from one release where one is whole and filled disc by disc where
   none is, and a set missing a disc is left out and named rather than half
   written. Where several copies of a title survive, one is chosen: the original
@@ -81,8 +81,9 @@ profile's exact name.
   profile can name the panel fitted to its drive, including the rotated variants
   that put an upside-down OLED the right way up. A configuration already on the
   drive is updated rather than overwritten: the settings this application is
-  responsible for change in place, and everything else in the file — interface,
-  display order, font, contrast, comments, line endings — is kept. It goes
+  responsible for change in place, and everything else in the file is kept,
+  including interface, display order, font, contrast, comments and line
+  endings. It goes
   wherever the firmware actually reads it from, and one already on the stick is
   never replaced without being asked for.
 - FlashFloppy, HxC, and factory firmware profiles, with conservative detection
@@ -114,23 +115,43 @@ profile's exact name.
   table draws a page at a time.
 - Physical device inventory with vendor, model, serial, size, and the full
   partition graph, and refusal of any device carrying the running system.
+  Devices can be filtered by kind, and each carries an icon for the medium it
+  is.
+- **Devices** is where a stick is written. Pick a profile by name and its
+  destination is copied to the media, whether that destination is a folder, a
+  mounted volume or a FAT image. The running total is counted in clusters
+  rather than bytes, because an 881 KB disk image on a 32 KB cluster costs
+  896 KB and across ten thousand titles that difference decides whether a write
+  fits.
+- When a collection does not fit, the difference is settled before anything is
+  written rather than after a failure. Cancel, choose what to leave out by hand
+  in a tree with a tick against everything, or let the application choose. It
+  proposes rather than decides: the same tree opens with its choices already
+  made, each one saying how much it saved, and every one can be put back. It
+  gives up formats the drive cannot load first, then setup and system disks,
+  then whole categories, with games last. Whole titles go rather than single
+  discs, because a game missing a disc is dead weight. What is left out applies
+  to that one write, and the profile's own folder is never touched.
 - Guarded device provisioning: the media is built as an image first, then written
   in one pass and read back to verify.
 - FAT image creation, population, and unpacking, for partitioned and bare layouts.
-- Three naming rules — the title alone, the title shortened to the drive's
-  display width, or the collection's original filename — plus custom folder
+- Three naming rules (the title alone, the title shortened to the drive's
+  display width, or the collection's original filename) plus custom folder
   templates, per-title display names, and optional checksum verification on
   every copy.
 - A managed download cache with size limits, least-recently-used eviction, and
   digests re-checked on reuse.
-- A transactional SQLite library, so a few thousand titles is no longer near a
-  storage limit.
+- A SQLite library that is queried rather than loaded. The library page asks
+  for the page it is drawing, with the filtering, ordering and paging done by
+  the database, and a change writes only the rows it names. A collection of
+  forty-five thousand titles opens in about two seconds and staging a title is
+  immediate, so several large profiles cost no more to open than one.
 - In-app help covering the guided flow, illustrated with screenshots captured
   from the running application in both light and dark palettes.
 
 Writing a whole device is **not** implemented on Windows: it needs volume
 locking through the Win32 API, and shipping that untested could corrupt a disk.
-`.hfe` conversion is not implemented either — that needs an MFM encoder and real
+`.hfe` conversion is not implemented either. That needs an MFM encoder and real
 fixtures, and a blind implementation would produce unreadable media. Online
 access is provider- and policy-dependent: the application does not bypass
 authentication, payment, licensing restrictions, `robots.txt`, or prohibited

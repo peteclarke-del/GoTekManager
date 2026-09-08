@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
   FolderOpen,
@@ -46,7 +46,8 @@ import {
 import type { MediaItem, Profile, SourceLocation } from '../../domain/types'
 import { useFingerprintProgress } from '../../hooks/useFingerprintProgress'
 import { useRowSelection } from '../../hooks/useRowSelection'
-import { PAGE_SIZE, usePagedRows } from '../../hooks/usePagedRows'
+import { PAGE_SIZE } from '../../hooks/usePagedRows'
+import { useLibraryPage } from '../../hooks/useLibraryPage'
 import { useTargetPresence } from '../../hooks/useTargetPresence'
 import { useTitleRoom } from '../../hooks/useTitleRoom'
 import type { TablePreferences } from '../../state/useWorkspace'
@@ -92,7 +93,6 @@ type Row = {
 export function LocalLibrary({
   profile,
   platform,
-  items,
   sources,
   collection,
   addLocation,
@@ -112,7 +112,6 @@ export function LocalLibrary({
 }: {
   profile: Profile
   platform: Platform
-  items: MediaItem[]
   sources: SourceLocation[]
   collection: MediaItem[]
   addLocation: () => void
@@ -152,30 +151,35 @@ export function LocalLibrary({
   // Formats the machine uses that this firmware cannot read from the stick.
   const convertible = platform.formats.filter((format) => !accepted.includes(format))
 
-  const matching = useMemo(
-    () =>
-      items.filter(
-        (item) =>
-          belongsToPlatform(item, platform.id) &&
-          item.name.toLowerCase().includes(query.trim().toLowerCase()) &&
-          (!selectedSources.length || selectedSources.includes(item.source)),
-      ),
-    [items, platform.id, query, selectedSources],
-  )
+  // How many rows have been asked for. "Show more" asks for more of them
+  // rather than drawing more of a list already in hand.
+  const [shown, setShown] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setShown(PAGE_SIZE)
+  }, [platform.id, query, selectedSources, preferences.sort])
+
+  // The library is not in the window, so the filter, the order and the page are
+  // the database's work. What comes back is what the table draws, plus the
+  // counts that describe everything it does not.
+  const page = useLibraryPage({
+    platformId: platform.id,
+    sources: selectedSources,
+    search: query,
+    sort: preferences.sort.key,
+    descending: preferences.sort.direction === 'desc',
+    limit: shown,
+  })
+  const matching = page.rows
 
   /** How many titles each source contributes for this platform. */
-  const countBySource = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const item of items) {
-      if (!belongsToPlatform(item, platform.id)) continue
-      counts.set(item.source, (counts.get(item.source) || 0) + 1)
-    }
-    return counts
-  }, [items, platform.id])
+  const countBySource = useMemo(
+    () => new Map(Object.entries(page.bySource)),
+    [page.bySource],
+  )
 
   const { statuses, checking, checked, comparable, askForCheck } = useTargetPresence(
     profile,
-    items,
+    matching,
     platform.id,
   )
 
@@ -188,24 +192,6 @@ export function LocalLibrary({
 
   const rows = useMemo<Row[]>(() => {
     const { key, direction } = preferences.sort
-    const value = (row: Row): string | number => {
-      switch (key) {
-        case 'presence':
-          return PRESENCE_ORDER.indexOf(row.presence)
-        case 'title':
-          return row.item.canonicalTitle.toLowerCase()
-        case 'platform':
-          return row.item.assignedPlatformId || ''
-        case 'category':
-          return row.item.category || ''
-        case 'format':
-          return row.item.extension
-        case 'size':
-          return row.item.size
-        default:
-          return row.location.toLowerCase()
-      }
-    }
     return matching
       .map<Row>((item) => ({
         item,
@@ -228,15 +214,17 @@ export function LocalLibrary({
       .filter((row) =>
         profileFilter === 'all' ? true : (profileFilter === 'staged') === row.staged,
       )
-      .sort((left, right) => {
-        const a = value(left)
-        const b = value(right)
-        const ordered =
-          typeof a === 'number' && typeof b === 'number'
-            ? a - b
-            : String(a).localeCompare(String(b))
-        return direction === 'asc' ? ordered : -ordered
-      })
+      // Every other order is the database's, applied to the whole library
+      // before this page of it was taken. Presence is not something the
+      // database knows — it is the answer to a scan of the drive — so sorting
+      // by it orders the rows on screen.
+      .sort((left, right) =>
+        key === 'presence'
+          ? (PRESENCE_ORDER.indexOf(left.presence) -
+              PRESENCE_ORDER.indexOf(right.presence)) *
+            (direction === 'asc' ? 1 : -1)
+          : 0,
+      )
   }, [
     matching,
     staged,
@@ -251,7 +239,9 @@ export function LocalLibrary({
 
   // The selection follows the table: filtering a ticked title away unticks it,
   // so a bulk action can only ever reach what is on screen.
-  const { visible, remaining, showMore } = usePagedRows(rows)
+  const visible = rows
+  const remaining = Math.max(0, page.total - page.rows.length)
+  const showMore = () => setShown((count) => count + PAGE_SIZE)
   const rowIds = useMemo(() => visible.map((row) => row.item.id), [visible])
   const selection = useRowSelection(rowIds)
   const picked = selection.chosen(visible, (row) => row.item.id)
@@ -271,7 +261,7 @@ export function LocalLibrary({
     // row keeps none. Collections are stored as ids, so the assignment is lost
     // on the next read and every staged title comes back a format this drive
     // cannot load — a full stick that plans as nothing to add.
-    const held = new Map(items.map((item) => [item.id, item]))
+    const held = new Map(matching.map((item) => [item.id, item]))
     const unassigned = chosen
       .filter((item) => !held.get(item.id)?.assignedPlatformId)
       .map((item) => item.id)
@@ -287,7 +277,7 @@ export function LocalLibrary({
     selection.clear()
   }
 
-  const total = items.filter((item) => belongsToPlatform(item, platform.id)).length
+  const total = page.total
   const elsewhereCount = rows.filter((row) => row.presence === 'Elsewhere').length
   const sampleFoundAt = rows.find((row) => row.foundAt)?.foundAt
   const profileFolder = rows.length ? outputFolder(rows[0].item, profile) : ''
@@ -752,7 +742,7 @@ export function LocalLibrary({
           {!rows.length && (
             <Empty
               title={
-                !items.length
+                !total
                   ? 'No titles indexed yet'
                   : profileFilter !== 'all'
                     ? `No ${platform.name} titles are ${profileFilter === 'staged' ? `in ${profile.name}` : `outside ${profile.name}`}`
@@ -762,8 +752,8 @@ export function LocalLibrary({
                         ? 'No titles from the selected sources'
                         : 'No matching titles'
               }
-              action={items.length ? undefined : 'Add location'}
-              run={items.length ? undefined : addLocation}
+              action={total ? undefined : 'Add location'}
+              run={total ? undefined : addLocation}
             />
           )}
         </div>
@@ -773,7 +763,6 @@ export function LocalLibrary({
         <BulkAddDialog
           profile={profile}
           platform={platform}
-          items={items}
           sources={sources}
           staged={collection}
           presence={statuses}

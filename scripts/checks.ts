@@ -17,7 +17,7 @@ import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 
 import { App } from '../src/App'
-import { forTesting } from '../src/state/persistence.native'
+import { forTesting, itemsFromStored, itemToStored } from '../src/state/persistence.native'
 import { ALL_HELP_SCREENS, HELP_THEMES } from '../src/pages/helpScreens'
 
 import {
@@ -129,6 +129,7 @@ import {
   loadSettings,
   loadWorkspace,
   reviveSettings,
+  legacyLibraryItems,
   splitWorkspace,
 } from '../src/state/migrations'
 import {
@@ -1902,10 +1903,10 @@ check('a download adds to its site rather than replacing what it holds', () => {
     { type: 'itemsImported', source, items: [second] },
   )
 
-  // Indexing a folder stands for everything in it; a download does not, and
-  // replacing would empty the site every time a title arrived.
-  assert.deepEqual(after.items.map((item) => item.name), ['First.adf', 'Second.adf'])
+  // Indexing a folder stands for everything in it; a download does not, so the
+  // site is kept as one source rather than one appearing per cached title.
   assert.equal(after.sources.length, 1)
+  assert.equal(after.sources[0].path, site)
 })
 
 // ---------------------------------------------------------------------------
@@ -2039,18 +2040,24 @@ check('the header tick box reports none, some, or all of what is shown', () => {
 // Workspace reducer
 // ---------------------------------------------------------------------------
 
+/**
+ * A workspace holding these titles as the profile's staged selection.
+ *
+ * The library itself is not here any more — it lives in the database and is
+ * asked for a page at a time — so what the reducer owns, and what these checks
+ * are about, is the staged copies.
+ */
 function workspaceWith(profile: Profile, items: MediaItem[]): Workspace {
   return {
     ...emptyWorkspace,
     profiles: [profile],
     activeProfileId: profile.id,
-    items,
     sources: [{ id: 'source:/library', name: 'library', path: '/library' }],
     collections: { [profile.id]: items },
   }
 }
 
-check('setting and clearing an alias reaches the library and every collection', () => {
+check('setting and clearing an alias reaches every staged copy', () => {
   const item = classifyMedia(entry('Elite.ssd'), '/library')
   const before = workspaceWith(bbcProfile, [item])
 
@@ -2059,7 +2066,6 @@ check('setting and clearing an alias reaches the library and every collection', 
     itemId: item.id,
     displayTitle: 'ELITE',
   })
-  assert.equal(named.items[0].displayTitle, 'ELITE')
   assert.equal(named.collections[bbcProfile.id][0].displayTitle, 'ELITE')
 
   const cleared = workspaceReducer(named, {
@@ -2067,7 +2073,7 @@ check('setting and clearing an alias reaches the library and every collection', 
     itemId: item.id,
     displayTitle: '',
   })
-  assert.equal(cleared.items[0].displayTitle, undefined)
+  assert.equal(cleared.collections[bbcProfile.id][0].displayTitle, undefined)
 })
 
 check('a selection of titles leaves a collection in one pass', () => {
@@ -2082,9 +2088,9 @@ check('a selection of titles leaves a collection in one pass', () => {
     itemIds: [elite.id, chuckie.id],
   })
 
-  // Taken out of the profile, but still in the library to be added again.
+  // Taken out of the profile. The library keeps them, ready to be added again,
+  // which is the database's business rather than this reducer's.
   assert.deepEqual(after.collections[bbcProfile.id].map((item) => item.name), ['Repton.ssd'])
-  assert.equal(after.items.length, 3)
 })
 
 check('a platform is assigned to a whole selection at once', () => {
@@ -2098,10 +2104,6 @@ check('a platform is assigned to a whole selection at once', () => {
     platformId: 'cpc464',
   })
 
-  assert.deepEqual(
-    after.items.map((item) => item.assignedPlatformId),
-    ['cpc464', 'cpc464'],
-  )
   assert.deepEqual(
     after.collections[bbcProfile.id].map((item) => item.assignedPlatformId),
     ['cpc464', 'cpc464'],
@@ -2134,7 +2136,7 @@ check('firmware found on the media beats the configured default', () => {
   assert.equal(created.firmwareId, 'hxc')
 })
 
-check('assigning a platform updates the library and every collection', () => {
+check('assigning a platform updates every staged copy', () => {
   const item = classifyMedia(entry('Sorcery.dsk'), '/library')
   const before = workspaceWith(bbcProfile, [item])
 
@@ -2144,7 +2146,6 @@ check('assigning a platform updates the library and every collection', () => {
     platformId: 'cpc464',
   })
 
-  assert.equal(after.items[0].assignedPlatformId, 'cpc464')
   assert.equal(after.collections[bbcProfile.id][0].assignedPlatformId, 'cpc464')
 })
 
@@ -2158,8 +2159,6 @@ check('a category is set for a whole selection and can be cleared again', () => 
     itemIds: [first.id, second.id],
     categoryId: 'games',
   })
-  assert.deepEqual(sorted.items.map((item) => item.category), ['games', 'games'])
-  // The staged copies are the same titles and must not disagree with the library.
   assert.deepEqual(
     sorted.collections[bbcProfile.id].map((item) => item.category),
     ['games', 'games'],
@@ -2170,10 +2169,13 @@ check('a category is set for a whole selection and can be cleared again', () => 
     itemIds: [first.id],
     categoryId: '',
   })
-  assert.deepEqual(cleared.items.map((item) => item.category), [undefined, 'games'])
+  assert.deepEqual(
+    cleared.collections[bbcProfile.id].map((item) => item.category),
+    [undefined, 'games'],
+  )
 })
 
-check('removing a source purges its titles from the library and collections', () => {
+check('removing a source unstages the titles that came from it', () => {
   const mine = classifyMedia(entry('Elite.ssd'), '/library')
   const other: MediaItem = { ...classifyMedia(entry('Repton.ssd'), '/other'), source: '/other' }
   const before = workspaceWith(bbcProfile, [mine, other])
@@ -2183,7 +2185,6 @@ check('removing a source purges its titles from the library and collections', ()
     source: { id: 'source:/library', name: 'library', path: '/library' },
   })
 
-  assert.deepEqual(after.items.map((item) => item.name), ['Repton.ssd'])
   assert.deepEqual(after.collections[bbcProfile.id].map((item) => item.name), ['Repton.ssd'])
   assert.equal(after.sources.length, 0)
 })
@@ -2199,7 +2200,6 @@ check('re-indexing a source drops titles whose files have gone', () => {
     items: [kept],
   })
 
-  assert.deepEqual(after.items.map((item) => item.name), ['Elite.ssd'])
   assert.deepEqual(after.collections[bbcProfile.id].map((item) => item.name), ['Elite.ssd'])
 })
 
@@ -2652,12 +2652,10 @@ check('a corrupt or empty store still yields a usable workspace', () => {
 
 check('an already-migrated workspace is loaded from its two slices', () => {
   storage.clear()
-  const item = classifyMedia(entry('Elite.ssd'), '/library')
   const split = splitWorkspace({
     ...emptyWorkspace,
     profiles: [bbcProfile],
     activeProfileId: bbcProfile.id,
-    items: [item],
     sources: [{ id: 'source:/library', name: 'library', path: '/library' }],
   })
   storage.setItem('gm.workspace.v2', JSON.stringify(split.workspace))
@@ -2667,29 +2665,36 @@ check('an already-migrated workspace is loaded from its two slices', () => {
 
   assert.equal(workspace.profiles.length, 1)
   assert.equal(workspace.activeProfileId, bbcProfile.id)
-  assert.equal(workspace.items.length, 1)
   assert.equal(workspace.sources.length, 1)
-  // The large slice is stored apart from the small one.
-  assert.equal(JSON.parse(storage.getItem('gm.workspace.v2')!).items, undefined)
 })
 
-check('changing the selection leaves the library slice untouched', () => {
+/// A library left behind by a version that kept it in local storage has to be
+/// written into the database, or upgrading would open on an empty table.
+check('a library left in local storage is carried across on the first open', () => {
+  storage.clear()
+  const item = classifyMedia(entry('Elite.ssd'), '/library')
+  storage.setItem('gm.library.v2', JSON.stringify({ sources: [], items: [item] }))
+
+  assert.deepEqual(
+    legacyLibraryItems().map((entry) => entry.name),
+    ['Elite.ssd'],
+  )
+})
+
+check('changing the selection leaves the sources untouched', () => {
   const item = classifyMedia(entry('Elite.ssd'), '/library')
   const before: Workspace = {
     ...emptyWorkspace,
     profiles: [bbcProfile, { ...bbcProfile, id: 'profile:/media/two', name: 'Two' }],
     activeProfileId: bbcProfile.id,
-    items: [item],
     sources: [{ id: 'source:/library', name: 'library', path: '/library' }],
   }
 
-  // Reference equality is what stops the persistence effect from firing, and a
-  // few thousand indexed titles cost about a tenth of a second to rewrite.
+  // Reference equality is what stops the persistence effect from firing.
   const selected = workspaceReducer(before, {
     type: 'profileSelected',
     id: 'profile:/media/two',
   })
-  assert.equal(selected.items, before.items)
   assert.equal(selected.sources, before.sources)
 
   const staged = workspaceReducer(before, {
@@ -2697,16 +2702,16 @@ check('changing the selection leaves the library slice untouched', () => {
     profileId: bbcProfile.id,
     items: [item],
   })
-  assert.equal(staged.items, before.items)
   assert.equal(staged.sources, before.sources)
 
-  // Re-indexing genuinely changes the library, so that slice must be rewritten.
+  // Re-indexing genuinely changes the source, so that much is rewritten. The
+  // titles themselves are written by the command paired with this action.
   const indexed = workspaceReducer(before, {
     type: 'sourceIndexed',
     source: { id: 'source:/library', name: 'library', path: '/library' },
     items: [],
   })
-  assert.notEqual(indexed.items, before.items)
+  assert.notEqual(indexed.sources, before.sources)
 })
 
 check('a title too long to show has its middle taken out, never its ends', () => {
@@ -2809,11 +2814,6 @@ check('every screen is reachable from the navigation', () => {
 // ---------------------------------------------------------------------------
 
 check('a workspace survives the trip to the native store and back', () => {
-  const item: MediaItem = {
-    ...classifyMedia(entry('Elite.ssd'), '/library'),
-    assignedPlatformId: 'bbc',
-    displayTitle: 'ELITE',
-  }
   const before: Workspace = {
     ...emptyWorkspace,
     profiles: [
@@ -2828,10 +2828,8 @@ check('a workspace survives the trip to the native store and back', () => {
       },
     ],
     activeProfileId: bbcProfile.id,
-    collections: { [bbcProfile.id]: [item] },
     removalPolicies: { [bbcProfile.id]: 'remove' },
     sources: [{ id: 'source:/library', name: 'library', path: '/library' }],
-    items: [item],
   }
 
   const after = forTesting.fromNative(forTesting.toNative(before))
@@ -2841,42 +2839,39 @@ check('a workspace survives the trip to the native store and back', () => {
   assert.equal(after.profiles[0].display, 'oled-128x64-rotate')
   assert.equal(after.activeProfileId, before.activeProfileId)
   assert.deepEqual(after.sources, before.sources)
-  assert.equal(after.items.length, 1)
-  assert.equal(after.items[0].displayTitle, 'ELITE')
-  assert.equal(after.collections[bbcProfile.id].length, 1)
   assert.equal(after.removalPolicies[bbcProfile.id], 'remove')
 })
 
-check('collections are stored as references, not copies of the title', () => {
-  const item = classifyMedia(entry('Elite.ssd'), '/library')
-  const stored = forTesting.toNative({
-    ...emptyWorkspace,
-    profiles: [bbcProfile, { ...bbcProfile, id: 'profile:/media/two' }],
-    collections: { [bbcProfile.id]: [item], 'profile:/media/two': [item] },
-    items: [item],
-  })
-
-  // One row in the library, referenced twice, rather than three copies of it.
-  assert.equal(stored.items.length, 1)
-  assert.deepEqual(stored.collections[bbcProfile.id], [item.id])
-  assert.deepEqual(stored.collections['profile:/media/two'], [item.id])
-})
-
-check('a staged title whose file has left the library is dropped on load', () => {
-  const item = classifyMedia(entry('Elite.ssd'), '/library')
+/// The workspace is small and constant; the library is neither, and carrying it
+/// here is what made every start and every save cost the size of the collection.
+check('the workspace carries the profiles and sources but never the library', () => {
   const stored = forTesting.toNative({
     ...emptyWorkspace,
     profiles: [bbcProfile],
-    collections: { [bbcProfile.id]: [item] },
-    items: [item],
+    sources: [{ id: 'source:/library', name: 'library', path: '/library' }],
+    collections: { [bbcProfile.id]: [classifyMedia(entry('Elite.ssd'), '/library')] },
   })
-  // Simulate the title being removed from the library but its id lingering.
-  stored.items = []
 
-  const loaded = forTesting.fromNative(stored)
+  assert.equal(stored.sources.length, 1)
+  assert.equal('items' in stored, false)
+  assert.equal('collections' in stored, false)
+})
 
-  // A placeholder pointing at no file would plan a copy that cannot happen.
-  assert.equal(loaded.collections[bbcProfile.id], undefined)
+/// A scanned title is identified and named by its file, so the store folds both
+/// away; a downloaded one is named by its catalogue and keeps them.
+check('an item folds away the identity and title its file already gives it', () => {
+  const scanned = classifyMedia(entry('Elite.ssd'), '/library')
+  const stored = itemToStored(scanned)
+  assert.equal(stored.id, undefined)
+  assert.equal(stored.canonicalTitle, undefined)
+
+  const download: MediaItem = { ...scanned, canonicalTitle: 'Elite (Disk 1)' }
+  assert.equal(itemToStored(download).canonicalTitle, 'Elite (Disk 1)')
+
+  // And they come back, so nothing downstream can tell the difference.
+  const [restored] = itemsFromStored([stored])
+  assert.equal(restored.id, scanned.path)
+  assert.equal(restored.canonicalTitle, scanned.name)
 })
 
 check('an empty store is recognised so a migration can run', () => {

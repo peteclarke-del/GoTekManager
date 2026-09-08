@@ -27,6 +27,7 @@ mod image;
 mod error;
 mod fingerprint;
 mod firmware;
+mod library;
 mod media;
 mod online;
 mod paths;
@@ -72,6 +73,17 @@ pub fn run() {
             // Persistent store.
             store::load_workspace,
             store::save_workspace,
+            store::query_items,
+            library::replace_source_items,
+            library::upsert_items,
+            library::forget_source,
+            library::update_items,
+            library::clear_library,
+            library::held_titles,
+            library::staged_items,
+            library::stage_items,
+            library::unstage_items,
+            library::clear_collection,
             store::read_document,
             store::read_config_file,
             // Which version this is, and whether a newer one is published.
