@@ -52,6 +52,14 @@ export function useWorkspace() {
   const [workspace, dispatch] = useReducer(workspaceReducer, emptyWorkspace)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  /**
+   * Counts changes to the library itself, so what reads it knows to read again.
+   *
+   * The library is queried rather than held, and a query only re-runs when the
+   * question changes. Writing rows does not change the question, so this stands
+   * in for "and the answer would be different now".
+   */
+  const [libraryRevision, setLibraryRevision] = useState(0)
   // Nothing is written back until the stored workspace has been read, or the
   // first render's empty state would overwrite the real library. The workspace
   // that was read is kept as well: settling it into state is a change like any
@@ -143,45 +151,60 @@ export function useWorkspace() {
     dispatch(action)
     if (!isDesktop()) return
     const failed = (reason: unknown) => setError(String(reason))
+    /**
+     * Says the library has changed, once the change is actually in it.
+     *
+     * The table and the counts beside it are answers the database gave to a
+     * question, and nothing about that question changes when a scan writes four
+     * thousand rows behind it. Without this the sidebar reports a source it has
+     * just indexed as holding no titles, and goes on saying so until something
+     * else happens to ask again.
+     *
+     * Counted after the write rather than before it: these writes are not
+     * awaited, and asking again while the rows are still going in would answer
+     * the same way and stop.
+     */
+    const wrote = (change: Promise<unknown>) =>
+      void change.then(() => setLibraryRevision((count) => count + 1)).catch(failed)
     switch (action.type) {
       case 'sourceIndexed':
-        void replaceSourceItems(action.source.path, action.items.map(itemToStored)).catch(
-          failed,
-        )
+        wrote(replaceSourceItems(action.source.path, action.items.map(itemToStored)))
         break
       case 'itemsImported':
-        void upsertItems(action.items.map(itemToStored)).catch(failed)
+        wrote(upsertItems(action.items.map(itemToStored)))
         break
       case 'sourceRemoved':
-        void forgetSource(action.source.path).catch(failed)
+        wrote(forgetSource(action.source.path))
         break
       case 'platformAssigned':
-        void updateItems(action.itemIds, {
-          assignedPlatformId: action.platformId || null,
-        }).catch(failed)
+        wrote(updateItems(action.itemIds, { assignedPlatformId: action.platformId || null }))
         break
       case 'categoryAssigned':
-        void updateItems(action.itemIds, { category: action.categoryId || null }).catch(failed)
+        wrote(updateItems(action.itemIds, { category: action.categoryId || null }))
         break
       case 'displayTitleSet':
-        void updateItems([action.itemId], {
-          displayTitle: action.displayTitle.trim() || null,
-        }).catch(failed)
+        wrote(
+          updateItems([action.itemId], { displayTitle: action.displayTitle.trim() || null }),
+        )
         break
       case 'collectionAdded':
-        void stageItems(
-          action.profileId,
-          action.items.map((item) => item.id),
-        ).catch(failed)
+        // Staging settles which machine a title is for, which is part of what
+        // the library page filters on.
+        wrote(
+          stageItems(
+            action.profileId,
+            action.items.map((item) => item.id),
+          ),
+        )
         break
       case 'collectionRemoved':
-        void unstageItems(action.profileId, action.itemIds).catch(failed)
+        wrote(unstageItems(action.profileId, action.itemIds))
         break
       case 'collectionCleared':
         void clearCollection(action.profileId).catch(failed)
         break
       case 'libraryCleared':
-        void clearLibrary().catch(failed)
+        wrote(clearLibrary())
         break
       default:
         break
@@ -220,6 +243,7 @@ export function useWorkspace() {
   return {
     workspace,
     dispatch: record,
+    libraryRevision,
     activeProfile,
     collection,
     removalPolicy,
