@@ -1,6 +1,6 @@
 [package]
 name = "gotek-manager"
-version = "0.5.0"
+version = "0.5.1"
 description = "Organise, provision, and manage GoTek media"
 authors = ["GoTek Manager"]
 edition = "2021"
