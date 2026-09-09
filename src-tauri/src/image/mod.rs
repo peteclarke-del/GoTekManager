@@ -527,20 +527,12 @@ mod tests {
         let mut names: Vec<_> = written.iter().map(|entry| entry.path.clone()).collect();
         names.sort();
         assert_eq!(names, vec!["Games/A.adf", "Games/B.adf", "Games/C.adf"]);
-
-        fs::remove_dir_all(root).unwrap();
     }
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-image-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("image-{name}"))
     }
 
     fn options(size: u64, partitioned: bool) -> ImageOptions {
@@ -562,7 +554,6 @@ mod tests {
         assert_eq!(fs::metadata(&image).unwrap().len(), 64 * 1024 * 1024);
         // Freshly formatted, so it opens and is empty.
         assert!(read_directory(&image, "").unwrap().is_empty());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -596,9 +587,6 @@ mod tests {
         let extracted = extract(&image, &out).unwrap();
         assert_eq!(extracted, vec!["BBC/Elite.ssd".to_string()]);
         assert_eq!(fs::read(out.join("BBC/Elite.ssd")).unwrap(), content);
-
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(out).unwrap();
     }
 
     #[test]
@@ -622,7 +610,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(list_files(&image).unwrap()[0].path, "Game.ssd");
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -643,7 +630,6 @@ mod tests {
         );
 
         assert!(result.is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -670,8 +656,6 @@ mod tests {
 
         assert!(error.to_string().contains("already exists"));
         assert_eq!(fs::read(out.join("Elite.ssd")).unwrap(), b"existing");
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(out).unwrap();
     }
 
     #[test]
@@ -681,7 +665,6 @@ mod tests {
 
         assert!(create(&image, &options(1024, true)).is_err());
         assert!(create(&image, &options(u64::MAX, true)).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -696,43 +679,10 @@ mod tests {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// What an image holds, without opening every file in it.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageSummary {
-    pub path: String,
-    pub size_bytes: u64,
-    pub partitioned: bool,
-    pub filesystem_bytes: u64,
-    pub file_count: usize,
-    pub used_bytes: u64,
-}
-
 /// What a stick of this size would hold, before anything is written to it.
 #[tauri::command]
 pub async fn image_capacity(options: ImageOptions) -> crate::error::Result<ImageCapacity> {
     crate::task::blocking(move || capacity(&options)).await
-}
-
-#[tauri::command]
-pub async fn image_summary(path: String) -> crate::error::Result<ImageSummary> {
-    crate::task::blocking(move || {
-        let target = PathBuf::from(&path);
-        let mut file = fs::File::open(&target)
-            .with_context(|| format!("Unable to open {path}"))?;
-        let total = file.metadata()?.len();
-        let region = locate(&mut file)?;
-        let files = list_files(&target)?;
-        Ok(ImageSummary {
-            partitioned: region.offset > 0,
-            filesystem_bytes: region.length,
-            used_bytes: files.iter().map(|entry| entry.size).sum(),
-            file_count: files.len(),
-            size_bytes: total,
-            path,
-        })
-    })
-    .await
 }
 
 /// Creates an empty image, optionally filling it from staged files.

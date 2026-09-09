@@ -285,6 +285,32 @@ pub struct HeldFile {
 /// to keep it — a folder, a mounted stick, or a FAT image kept as a backup — so
 /// all three answer here, and each file comes back with the address its bytes
 /// can be read from.
+/// What a directory entry is, for the purposes of walking a tree.
+///
+/// Both walks in this module ask the same three questions of every entry, and
+/// the middle one is a safety rule rather than a convenience: a symbolic link is
+/// never followed, so a link pointing out of the tree cannot be read as though
+/// it were inside it, and a link pointing back into the tree cannot make the
+/// walk go round for ever. An entry whose kind cannot even be established is
+/// passed over, for the same reason an unreadable folder is: one of them turns
+/// up in any large library, and losing thirty thousand titles to it helps
+/// nobody.
+enum Walked {
+    Folder,
+    File,
+}
+
+fn walked(entry: &fs::DirEntry) -> Option<Walked> {
+    let file_type = entry.file_type().ok()?;
+    if file_type.is_symlink() {
+        return None;
+    }
+    if file_type.is_dir() {
+        return Some(Walked::Folder);
+    }
+    file_type.is_file().then_some(Walked::File)
+}
+
 #[tauri::command]
 pub async fn read_destination(path: String) -> Result<Vec<HeldFile>> {
     blocking(move || {
@@ -310,27 +336,23 @@ pub async fn read_destination(path: String) -> Result<Vec<HeldFile>> {
                 continue;
             };
             for entry in entries.flatten() {
-                let Ok(file_type) = entry.file_type() else {
-                    continue;
-                };
-                if file_type.is_symlink() {
-                    continue;
-                }
-                if file_type.is_dir() {
-                    pending.push(entry.path());
-                } else if file_type.is_file() {
-                    let Ok(metadata) = entry.metadata() else {
-                        continue;
-                    };
-                    let path = entry.path();
-                    let Ok(relative) = path.strip_prefix(&root) else {
-                        continue;
-                    };
-                    held.push(HeldFile {
-                        source: path.to_string_lossy().into_owned(),
-                        relative_path: crate::paths::to_posix(&relative.to_string_lossy()),
-                        size: metadata.len(),
-                    });
+                match walked(&entry) {
+                    None => continue,
+                    Some(Walked::Folder) => pending.push(entry.path()),
+                    Some(Walked::File) => {
+                        let Ok(metadata) = entry.metadata() else {
+                            continue;
+                        };
+                        let path = entry.path();
+                        let Ok(relative) = path.strip_prefix(&root) else {
+                            continue;
+                        };
+                        held.push(HeldFile {
+                            source: path.to_string_lossy().into_owned(),
+                            relative_path: crate::paths::to_posix(&relative.to_string_lossy()),
+                            size: metadata.len(),
+                        });
+                    }
                 }
             }
         }
@@ -380,26 +402,22 @@ pub async fn scan_folder(
                         // thirty thousand titles to one of them helps nobody.
                         if let Ok(entries) = fs::read_dir(&folder) {
                             for entry in entries.flatten() {
-                                let Ok(file_type) = entry.file_type() else {
-                                    continue;
-                                };
-                                if file_type.is_symlink() {
-                                    continue;
-                                }
-                                if file_type.is_dir() {
-                                    folders.push(entry.path());
-                                } else if file_type.is_file() {
-                                    let before = found.len();
-                                    // One bad file is skipped for the same
-                                    // reason one bad folder is.
-                                    let _ = collect_file(
-                                        &app,
-                                        &entry,
-                                        &extensions,
-                                        convert,
-                                        &mut found,
-                                    );
-                                    work.note_found(found.len() - before);
+                                match walked(&entry) {
+                                    None => continue,
+                                    Some(Walked::Folder) => folders.push(entry.path()),
+                                    Some(Walked::File) => {
+                                        let before = found.len();
+                                        // One bad file is skipped for the same
+                                        // reason one bad folder is.
+                                        let _ = collect_file(
+                                            &app,
+                                            &entry,
+                                            &extensions,
+                                            convert,
+                                            &mut found,
+                                        );
+                                        work.note_found(found.len() - before);
+                                    }
                                 }
                             }
                         }
@@ -577,7 +595,10 @@ mod tests {
 #[cfg(test)]
 mod walk_tests {
     use super::Walk;
-    use std::{path::PathBuf, thread};
+    use std::{
+        path::{Path, PathBuf},
+        thread,
+    };
 
     #[test]
     fn a_parallel_walk_finishes_when_the_queue_drains() {
@@ -593,7 +614,7 @@ mod walk_tests {
                     while let Some(folder) = work.take() {
                         taken.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         // The root yields two children; they yield none.
-                        let children = if folder == PathBuf::from("/root") {
+                        let children = if folder.as_path() == Path::new("/root") {
                             vec![PathBuf::from("/root/a"), PathBuf::from("/root/b")]
                         } else {
                             Vec::new()

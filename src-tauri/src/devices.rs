@@ -392,18 +392,12 @@ mod tests {
         classify_mount, detected_firmware, gvfs_label, is_protected_location, mount_label,
         probe_writable,
     };
-    use std::{fs, path::PathBuf};
+    use std::{fs};
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-devices-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("devices-{name}"))
     }
 
     #[test]
@@ -508,8 +502,6 @@ mod tests {
 
         fs::write(root.join("ff.cfg"), b"host = acorn").unwrap();
         assert_eq!(detected_firmware(&root), Some("flashfloppy".into()));
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -528,7 +520,6 @@ mod tests {
         assert_eq!(mounts[0].label, "games on nas");
         assert_eq!(mounts[0].kind, "network");
         assert!(!mounts[0].removable);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -539,6 +530,5 @@ mod tests {
 
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         assert!(probe_writable(&root.join("missing")).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 }

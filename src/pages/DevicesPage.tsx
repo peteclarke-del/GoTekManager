@@ -34,6 +34,7 @@ import {
   type HeldFile,
 } from '../domain/deviceBuild'
 import { acceptedFormats } from '../domain/catalog'
+import { Options } from '../components/Choices'
 import { ContentsPicker } from './ContentsPicker'
 import type {
   ImageOptions,
@@ -98,7 +99,7 @@ const KIND_FILTERS: Array<[string, string]> = [
 ]
 
 /** Leaves room for the partition table and a little slack at the end. */
-function imageSizeFor(device: PhysicalDevice): number {
+function imageSizeForDevice(device: PhysicalDevice): number {
   return Math.max(2 * 1024 * 1024, device.sizeBytes - 4 * 1024 * 1024)
 }
 
@@ -276,7 +277,7 @@ export function DevicesPage({
       const [files, measured, stick] = await Promise.all([
         readDestination(profile.destination.path),
         imageCapacity({
-          sizeBytes: imageSizeFor(selected),
+          sizeBytes: imageSizeForDevice(selected),
           label: profile.name,
           fat: 'auto',
           partitioned: true,
@@ -298,7 +299,7 @@ export function DevicesPage({
     }
     if (!selected || !profile || !operations.length || !fits) return null
     const options: ImageOptions = {
-      sizeBytes: imageSizeFor(selected),
+      sizeBytes: imageSizeForDevice(selected),
       label: profile.name,
       fat: 'auto',
       partitioned: true,
@@ -462,11 +463,7 @@ export function DevicesPage({
                 }}
               >
                 {!profiles.length && <option value="">No profiles yet</option>}
-                {profiles.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </option>
-                ))}
+                <Options items={profiles} />
               </select>
               <button
                 type="button"

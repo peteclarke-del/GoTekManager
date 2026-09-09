@@ -189,74 +189,95 @@ pub fn emitter(app: &tauri::AppHandle) -> impl FnMut(Progress) + '_ {
     }
 }
 
-#[tauri::command]
-pub async fn fingerprint_paths(
-    app: tauri::AppHandle,
-    paths: Vec<String>,
-) -> Result<Vec<Fingerprint>> {
-    crate::task::blocking(move || {
-        let connection = store::connection(&app)?;
-        let mut cache = DigestCache::load(&connection)?;
-        let files = paths
-            .into_iter()
-            .filter_map(|path| {
-                let metadata = fs::metadata(&path).ok()?;
-                metadata.is_file().then(|| (path, Stat::of(&metadata)))
-            })
-            .collect::<Vec<_>>();
-        let mut report = emitter(&app);
-        fingerprint_all(&connection, &mut cache, &files, &mut report)
-    })
-    .await
+/// Forgets cached digests for files that have gone.
+///
+/// Worth doing because the cache is not consulted a row at a time: every
+/// comparison of a destination reads the whole table into memory, so a digest
+/// for a file that no longer exists is paid for on every comparison from now
+/// on. A library that is reorganised a few times would carry more dead rows
+/// than live ones.
+///
+/// A file is only forgotten when the folder that held it is still there. An
+/// unplugged stick or an unmounted share reports everything on it as missing,
+/// and taking that at face value would throw away the digests for the whole
+/// library, which then has to be read again in full the next time it is
+/// connected: hours of work to reclaim a few kilobytes of rows.
+pub fn prune_digests(app: &tauri::AppHandle) -> Result<usize> {
+    let connection = store::connection(app)?;
+    let paths: Vec<String> = connection
+        .prepare("SELECT path FROM digests")?
+        .query_map([], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut removed = 0;
+    for path in paths {
+        if !is_gone(Path::new(&path)) {
+            continue;
+        }
+        connection.execute("DELETE FROM digests WHERE path = ?1", params![path])?;
+        removed += 1;
+    }
+    Ok(removed)
 }
 
-/// Forgets cached digests for files that no longer exist.
-#[tauri::command]
-pub async fn prune_digests(app: tauri::AppHandle) -> Result<usize> {
-    crate::task::blocking(move || {
-        let connection = store::connection(&app)?;
-        let paths: Vec<String> = connection
-            .prepare("SELECT path FROM digests")?
-            .query_map([], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let mut removed = 0;
-        for path in paths {
-            if !Path::new(&path).is_file() {
-                connection.execute("DELETE FROM digests WHERE path = ?1", params![path])?;
-                removed += 1;
-            }
-        }
-        Ok(removed)
-    })
-    .await
+/// Whether a file is genuinely gone, as opposed to merely out of reach.
+fn is_gone(file: &Path) -> bool {
+    match file.parent() {
+        Some(folder) => folder.is_dir() && !file.is_file(),
+        // No parent to ask about, so the file's own answer is all there is.
+        None => !file.is_file(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{digest_of, DigestCache, Stat};
     use rusqlite::Connection;
-    use std::{fs, path::{Path, PathBuf}};
+    use std::{fs, path::Path};
 
     fn stat_of(path: &Path) -> Stat {
         Stat::of(&fs::metadata(path).unwrap())
     }
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-fingerprint-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("fingerprint-{name}"))
     }
 
     fn connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
         crate::store::prepare(&connection).unwrap();
         connection
+    }
+
+    /// The cache is read whole into memory on every comparison, so a digest for
+    /// a file that has gone is a cost paid for ever. Sweeping it is only safe
+    /// because of the rule below.
+    #[test]
+    fn a_digest_for_a_file_that_has_gone_is_forgotten() {
+        let root = fixture("pruned");
+        let present = root.join("Elite.ssd");
+        fs::write(&present, b"disk").unwrap();
+        let gone = root.join("Repton.ssd");
+
+        assert!(super::is_gone(&gone));
+        assert!(!super::is_gone(&present));
+    }
+
+    /// An unplugged stick reports everything on it as missing. Believing that
+    /// would throw away the digests for a whole library, which then has to be
+    /// read again in full when it is next connected.
+    #[test]
+    fn digests_on_a_drive_that_is_not_connected_are_kept() {
+        let root = fixture("offline");
+        let unmounted = root.join("stick");
+
+        // The folder itself is not there, so nothing inside it can be judged.
+        assert!(!super::is_gone(&unmounted.join("Elite.ssd")));
+
+        // Once it is back, a file that really has gone is forgotten as usual.
+        fs::create_dir_all(&unmounted).unwrap();
+        assert!(super::is_gone(&unmounted.join("Elite.ssd")));
     }
 
     #[test]
@@ -271,7 +292,6 @@ mod tests {
         // This is the whole point: renaming for a two-line display must not
         // change whether the application thinks it already has the title.
         assert_eq!(digest_of(&first).unwrap(), digest_of(&second).unwrap());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -283,7 +303,6 @@ mod tests {
         fs::write(&second, vec![1u8; 1024]).unwrap();
 
         assert_ne!(digest_of(&first).unwrap(), digest_of(&second).unwrap());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -306,7 +325,6 @@ mod tests {
         // And it survives a restart, because it is in the database.
         let mut reopened = DigestCache::load(&connection).unwrap();
         assert_eq!(reopened.digest(&connection, &file, stat).unwrap(), first);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -323,7 +341,6 @@ mod tests {
 
         // A different length invalidates the entry on its own.
         assert_ne!(before, after);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -342,7 +359,6 @@ mod tests {
         let after = cache.digest(&connection, &file, stat_of(&file)).unwrap();
 
         assert_ne!(before, after);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -361,6 +377,5 @@ mod tests {
         );
 
         assert!(outcome.is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 }

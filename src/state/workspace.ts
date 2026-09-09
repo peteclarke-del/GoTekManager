@@ -177,6 +177,22 @@ function acrossCollections(
   return mapValues(collections, transform)
 }
 
+/** What one profile has staged, which is nothing at all until it stages something. */
+function stagedBy(state: Workspace, profileId: string): MediaItem[] {
+  return state.collections[profileId] ?? []
+}
+
+/**
+ * The workspace with one profile's staged collection replaced.
+ *
+ * Four actions change a collection and each of them has to leave the other
+ * profiles' collections alone. Spelling that out four times is how one of them
+ * comes to be spelled slightly differently.
+ */
+function withCollection(state: Workspace, profileId: string, items: MediaItem[]): Workspace {
+  return { ...state, collections: { ...state.collections, [profileId]: items } }
+}
+
 /**
  * Edits chosen titles wherever they appear.
  *
@@ -306,33 +322,25 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
     }
 
     case 'collectionAdded':
-      return {
-        ...state,
-        collections: {
-          ...state.collections,
-          [action.profileId]: upsertById(
-            state.collections[action.profileId] || [],
-            ...action.items,
-          ),
-        },
-      }
+      return withCollection(
+        state,
+        action.profileId,
+        upsertById(stagedBy(state, action.profileId), ...action.items),
+      )
 
     case 'collectionRemoved':
-      return {
-        ...state,
-        collections: {
-          ...state.collections,
-          [action.profileId]: removeById(
-            state.collections[action.profileId] || [],
-            ...action.itemIds,
-          ),
-        },
-      }
+      return withCollection(
+        state,
+        action.profileId,
+        removeById(stagedBy(state, action.profileId), ...action.itemIds),
+      )
 
     case 'collectionCleared':
       return {
-        ...state,
-        collections: { ...state.collections, [action.profileId]: [] },
+        // Emptying a collection also puts its removal policy back: "remove what
+        // the collection does not contain" means something very different once
+        // the collection contains nothing.
+        ...withCollection(state, action.profileId, []),
         removalPolicies: { ...state.removalPolicies, [action.profileId]: 'keep' },
       }
 
@@ -351,14 +359,11 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       // staged while it was in flight is newer than the answer, and replacing
       // would throw it away moments after the user asked for it. The store has
       // both by this point, because staging wrote its row as it happened.
-      const held = state.collections[action.profileId] ?? []
+      const held = stagedBy(state, action.profileId)
       const loaded = action.items.filter(
         (item) => !held.some((entry) => entry.id === item.id),
       )
-      return {
-        ...state,
-        collections: { ...state.collections, [action.profileId]: [...loaded, ...held] },
-      }
+      return withCollection(state, action.profileId, [...loaded, ...held])
     }
 
     case 'libraryCleared':

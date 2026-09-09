@@ -255,19 +255,13 @@ mod cache_tests {
     use super::{entries, evict_to_fit, summarise};
     use std::{
         fs,
-        path::{Path, PathBuf},
+        path::Path,
     };
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-cachetest-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("cachetest-{name}"))
     }
 
     fn download(root: &Path, provider: &str, item: &str, bytes: usize, last_used: u64) {
@@ -295,7 +289,6 @@ mod cache_tests {
         assert_eq!(summary.catalogue_count, 1);
         // The metadata file counts too; the point is the total is real.
         assert!(summary.total_bytes > 3000);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -310,7 +303,6 @@ mod cache_tests {
         assert!(removed[0].ends_with("oldest"));
         assert!(root.join("downloads/archive/newest").exists());
         assert!(!root.join("downloads/archive/oldest").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -320,7 +312,6 @@ mod cache_tests {
 
         assert!(evict_to_fit(&root, 10_000_000).unwrap().is_empty());
         assert_eq!(entries(&root).len(), 1);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -335,6 +326,5 @@ mod cache_tests {
         assert!(entries(&root).is_empty());
         // Losing these would take coverage comparison offline for no gain.
         assert!(root.join("catalogues/a--bbc.json").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 }

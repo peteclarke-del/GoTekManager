@@ -140,12 +140,16 @@ export function categoryFolderFor(
 /**
  * The words of a piece of text, as one padded lower-case string.
  *
- * Matching against this is what makes every rule here whole-word: `Demolition`
- * never contains ` demo `, and `Gameshow` never contains ` game `. A wrong
- * category is silent and puts a title in the wrong folder on the drive, which
- * is far worse than leaving it unsorted where it can be seen and fixed.
+ * Matching against this is what makes every rule whole-word: `Demolition` never
+ * contains ` demo `, and `Gameshow` never contains ` game `. A wrong category is
+ * silent and puts a title in the wrong folder on the drive, which is far worse
+ * than leaving it unsorted where it can be seen and fixed.
+ *
+ * Exported because the same guarantee is wanted when a device build decides
+ * what a title is from its own name, and two copies of a rule this quiet is how
+ * they come to disagree.
  */
-function wordsOf(text: string): string {
+export function wordsOf(text: string): string {
   return ` ${text.toLowerCase().split(/[^a-z0-9+]+/i).filter(Boolean).join(' ')} `
 }
 
@@ -194,6 +198,31 @@ export function inferCategoryFromName(name: string): string | undefined {
 }
 
 /**
+ * The deepest folder in a path that names a category, if any names one.
+ *
+ * Deepest wins because a collection nests from the general to the particular:
+ * `Commodore/Amiga/Applications` ends with what the folder actually holds. Only
+ * whole segments are considered, so a folder is read as a word rather than as
+ * text a category name happens to appear in.
+ *
+ * Both questions asked of a path go through here. They differ only in how much
+ * of the path each is entitled to read, which is settled by the caller before
+ * it asks, so the walk itself cannot come to two different answers.
+ */
+function deepestCategoryIn(path: string): string | undefined {
+  const segments = toPosix(path)
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  for (const segment of [...segments].reverse()) {
+    const match = categoryIn(segment)
+    if (match) return match
+  }
+  return undefined
+}
+
+/**
  * The category the source folder itself names, if any.
  *
  * Weak evidence, and asked last, but it is right far more often than it is
@@ -208,16 +237,7 @@ export function inferCategoryFromName(name: string): string | undefined {
  * magazines.
  */
 export function categoryFromSource(source: string): string | undefined {
-  const segments = toPosix(source)
-    .split('/')
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-
-  for (const segment of [...segments].reverse()) {
-    const match = categoryIn(segment)
-    if (match) return match
-  }
-  return undefined
+  return deepestCategoryIn(source)
 }
 
 /**
@@ -279,18 +299,10 @@ export function inferCategoryFor(
  * title is visible and easy to set, while a wrong one is silent.
  */
 export function inferCategoryId(path: string, source: string): string | undefined {
+  // Everything between the source root and the file: the folders, never the
+  // file's own name, and never the root itself.
   const relative = toPosix(path).slice(toPosix(source).length)
-  const segments = relative
-    .split('/')
-    .slice(0, -1)
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-
-  for (const segment of [...segments].reverse()) {
-    const match = categoryIn(segment)
-    if (match) return match
-  }
-  return undefined
+  return deepestCategoryIn(relative.split('/').slice(0, -1).join('/'))
 }
 
 /**

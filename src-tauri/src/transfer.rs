@@ -679,6 +679,26 @@ pub fn build_transfer_plan(
     Ok(builder.finish(target, edits))
 }
 
+/// Reports how far a plan has got, to whatever is watching.
+///
+/// Both commands that build a plan report the same way, and the rules are the
+/// part worth keeping in one place. A short plan says nothing at all, so a
+/// dialog is never flashed up for work that was over before it could be drawn.
+/// The first and last words are never throttled away, because one of them opens
+/// that dialog and the other is what closes it.
+fn plan_reporter(app: &tauri::AppHandle) -> impl FnMut(usize, usize) + '_ {
+    let mut last = std::time::Instant::now();
+    move |done, total| {
+        if total < PLAN_PROGRESS_FLOOR {
+            return;
+        }
+        if done == 0 || done >= total || last.elapsed() >= PLAN_REPORT_EVERY {
+            last = std::time::Instant::now();
+            let _ = app.emit(PLAN_PROGRESS_EVENT, PlanProgress { done, total });
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn plan_transfer(
     app: tauri::AppHandle,
@@ -689,19 +709,7 @@ pub async fn plan_transfer(
     managed_extensions: Vec<String>,
 ) -> Result<TransferPlan> {
     blocking(move || {
-        let mut last = std::time::Instant::now();
-        let mut report = |done: usize, total: usize| {
-            // A short plan is instant and would only flash a dialog on screen.
-            if total < PLAN_PROGRESS_FLOOR {
-                return;
-            }
-            // The first and last are never throttled away: one opens the
-            // dialog, and the other is what closes it.
-            if done == 0 || done >= total || last.elapsed() >= PLAN_REPORT_EVERY {
-                last = std::time::Instant::now();
-                let _ = app.emit(PLAN_PROGRESS_EVENT, PlanProgress { done, total });
-            }
-        };
+        let mut report = plan_reporter(&app);
         build_transfer_plan(
             &target,
             operations,
@@ -1016,18 +1024,9 @@ pub async fn execute_transfer(
 ) -> Result<TransferPlan> {
     blocking(move || {
         // The re-plan before a write walks every source again, which on a
-        // network share is the slow half of applying. It reports itself for
+        // network share is the slow half of applying, so it reports itself for
         // the same reason planning does.
-        let mut last = std::time::Instant::now();
-        let mut report = |done: usize, total: usize| {
-            if total < PLAN_PROGRESS_FLOOR {
-                return;
-            }
-            if done == 0 || done >= total || last.elapsed() >= PLAN_REPORT_EVERY {
-                last = std::time::Instant::now();
-                let _ = app.emit(PLAN_PROGRESS_EVENT, PlanProgress { done, total });
-            }
-        };
+        let mut report = plan_reporter(&app);
         let plan = build_transfer_plan(
             &target,
             operations,
@@ -1165,16 +1164,10 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-transfer-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("transfer-{name}"))
     }
 
     fn operation(source: &PathBuf, relative_path: &str) -> TransferOperation {
@@ -1256,9 +1249,6 @@ mod tests {
             "the disc that did land was taken back off",
         );
         assert!(!target.join("BBC").join("Elite D2.ssd").exists());
-
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1314,9 +1304,6 @@ mod tests {
         assert_eq!(failures, vec!["BBC/Missing.ssd".to_string()]);
         assert!(!target.join("BBC").join("Missing.ssd").exists());
         assert!(!target.join("BBC").join("Missing.ssd.part").exists());
-
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1373,9 +1360,6 @@ mod tests {
         );
         assert!(!gone.ready);
         assert_eq!(gone.blockers[0].kind, "unavailable");
-
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1409,8 +1393,6 @@ mod tests {
         assert_eq!(fs::read(&destination).unwrap(), b"disk image");
         // The verification pass re-read the entry rather than a copy of it.
         assert!(!target.join("BBC").join("ELITE.SSD.part").exists());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1445,8 +1427,6 @@ mod tests {
         assert_eq!(result.total_bytes, 4);
         assert_eq!(result.result.len(), 1);
         assert_eq!(result.result[0].status, ResultStatus::Add);
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1469,8 +1449,6 @@ mod tests {
         assert!(!differs.ready);
         assert_eq!(differs.result[0].status, ResultStatus::Conflict);
         assert!(differs.warnings[0].contains("Different file already exists"));
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1485,8 +1463,6 @@ mod tests {
 
         assert!(!result.ready);
         assert_eq!(result.result[0].status, ResultStatus::Conflict);
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1523,8 +1499,6 @@ mod tests {
             collisions[0].source.as_deref(),
             Some(second.to_string_lossy().as_ref())
         );
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1547,8 +1521,6 @@ mod tests {
             .result
             .iter()
             .any(|entry| entry.path == "FF.CFG" && entry.status == ResultStatus::Unchanged));
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1566,7 +1538,6 @@ mod tests {
         assert!(!result.ready);
         assert!(result.operations.is_empty());
         assert_eq!(result.total_bytes, 0);
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1614,7 +1585,6 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("Overlapping destination edits")));
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1641,8 +1611,6 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("conflicts with a staged move")));
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1662,8 +1630,6 @@ mod tests {
         );
 
         assert!(result.is_err());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[cfg(unix)]
@@ -1688,9 +1654,6 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!outside.join("Elite.ssd").exists());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
-        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
@@ -1715,26 +1678,18 @@ mod tests {
 
         copy_verified(&source, &destination, 4, true).unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"disk");
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 }
 
 #[cfg(test)]
 mod checksum_tests {
     use super::copy_verified;
-    use std::{fs, path::PathBuf};
+    use std::{fs};
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-checksum-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("transfer-{name}"))
     }
 
     #[test]
@@ -1749,7 +1704,6 @@ mod checksum_tests {
 
         assert_eq!(fs::read(root.join("with.ssd")).unwrap(), content);
         assert_eq!(fs::read(root.join("without.ssd")).unwrap(), content);
-        fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -1758,19 +1712,13 @@ mod elsewhere_tests {
     use super::{FileStatus, TransferOperation};
     use std::{
         fs,
-        path::{Path, PathBuf},
+        path::Path,
     };
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-elsewhere-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("transfer-{name}"))
     }
 
     fn compare(
@@ -1818,8 +1766,6 @@ mod elsewhere_tests {
             result[0].found_at.as_deref(),
             Some("Z/Zynaps (1987)(Hewson Consultants).dsk")
         );
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1851,8 +1797,6 @@ mod elsewhere_tests {
             result[0].found_at.as_deref(),
             Some("CPC464/Zynaps (1987)(Hewson.dsk")
         );
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1878,8 +1822,6 @@ mod elsewhere_tests {
 
         assert_eq!(result[0].status, FileStatus::New);
         assert!(result[0].found_at.is_none());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1901,8 +1843,6 @@ mod elsewhere_tests {
 
         assert_eq!(result[0].status, FileStatus::New);
         assert!(result[0].found_at.is_none());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1929,8 +1869,6 @@ mod elsewhere_tests {
         // Present where it belongs, so the copy elsewhere is not the story.
         assert_eq!(result[0].status, FileStatus::Identical);
         assert!(result[0].found_at.is_none());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1954,7 +1892,5 @@ mod elsewhere_tests {
         );
 
         assert_eq!(result[0].status, FileStatus::New);
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 }

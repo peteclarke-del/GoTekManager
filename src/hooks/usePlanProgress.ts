@@ -11,21 +11,16 @@
  * up for work that was over before it was drawn.
  */
 
+import { percentageOf, whileRunning, type Counted } from './progress'
 import { useNativeEvent } from './useNativeEvent'
 
-export type PlanProgress = {
-  done: number
-  total: number
-}
+export type PlanProgress = Counted
 
 export function usePlanProgress(): PlanProgress | null {
-  return useNativeEvent<PlanProgress>('plan:progress', (progress) =>
-    progress.done >= progress.total ? null : progress,
-  )
+  return useNativeEvent<PlanProgress>('plan:progress', whileRunning)
 }
 
-/** How far along, as a percentage, never claiming to be finished. */
+/** How far along the plan is, by the count of sources it has looked at. */
 export function planPercentage(progress: PlanProgress): number {
-  if (!progress.total) return 0
-  return Math.min(99, Math.round((progress.done / progress.total) * 100))
+  return percentageOf(progress.done, progress.total)
 }

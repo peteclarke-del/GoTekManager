@@ -6,6 +6,7 @@
  * hang, so the backend reports where it has got to and this surfaces it.
  */
 
+import { whileRunning } from './progress'
 import { useNativeEvent } from './useNativeEvent'
 
 export type FingerprintProgress = {
@@ -15,8 +16,5 @@ export type FingerprintProgress = {
 }
 
 export function useFingerprintProgress(): FingerprintProgress | null {
-  return useNativeEvent<FingerprintProgress>('fingerprint:progress', (progress) =>
-    // A finished batch clears itself, so the indicator does not linger.
-    progress.done >= progress.total ? null : progress,
-  )
+  return useNativeEvent<FingerprintProgress>('fingerprint:progress', whileRunning)
 }

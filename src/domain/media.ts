@@ -182,37 +182,6 @@ export function classifyMedia(
   }
 }
 
-/**
- * Fills in the category of anything that has none.
- *
- * Applied when the library is read, for the same reason downloads are gathered
- * under their site there: a collection indexed before the rules improved should
- * tidy itself up rather than leave the user to re-read thirty thousand titles
- * over a network share to get the benefit. A category somebody set by hand is
- * never touched — only the ones nothing had answered.
- */
-export function withCategories(
-  items: readonly MediaItem[],
-  sources: ReadonlyArray<{ path: string; name: string }> = [],
-): MediaItem[] {
-  const named = new Map(sources.map((source) => [source.path, source.name]))
-  let changed = false
-  const next = items.map((item) => {
-    if (item.category) return item
-    const category = inferCategoryFor(
-      item.path,
-      { path: item.source, name: named.get(item.source) },
-      ...namesOf(item),
-    )
-    if (!category) return item
-    changed = true
-    return { ...item, category }
-  })
-  // Unchanged means the same array, so a library that needs nothing doing to it
-  // does not become a new object and re-render everything that reads it.
-  return changed ? next : (items as MediaItem[])
-}
-
 /** True when the item belongs to this platform, whether assigned or inferred. */
 export function belongsToPlatform(item: MediaItem, platformId: string): boolean {
   return item.assignedPlatformId
