@@ -41,7 +41,7 @@ export const defaultSettings: AppSettings = {
     firmwareId: 'flashfloppy',
     organise: true,
     folderLayout: 'platform',
-    naming: 'oled',
+    naming: 'title',
   },
 }
 
@@ -185,19 +185,31 @@ function migrateWorkspace(settings: AppSettings): Workspace {
     collections,
     removalPolicies,
     sources: migrateSources(readStored('gm.sources', [])),
-    items: migrateItems(readStored('gm.items', [])),
   }
 }
 
-export type StoredWorkspace = Omit<Workspace, 'sources' | 'items'>
-export type StoredLibrary = Pick<Workspace, 'sources' | 'items'>
+export type StoredWorkspace = Omit<Workspace, 'sources'>
+export type StoredLibrary = { sources: SourceLocation[]; items: MediaItem[] }
 
 export function splitWorkspace(workspace: Workspace): {
   workspace: StoredWorkspace
   library: StoredLibrary
 } {
-  const { sources, items, ...rest } = workspace
-  return { workspace: rest, library: { sources, items } }
+  const { sources, ...rest } = workspace
+  // The library itself lives in the database, not here; what remains in local
+  // storage is the browser preview's own copy of the small things.
+  return { workspace: rest, library: { sources, items: [] } }
+}
+
+/**
+ * The library a pre-database version left in local storage.
+ *
+ * Read only when adopting that older layout, so those titles are written into
+ * the database rather than quietly lost the first time the new version opens.
+ */
+export function legacyLibraryItems(): MediaItem[] {
+  const library = readStored<Partial<StoredLibrary>>(LIBRARY_KEY, {})
+  return library.items ?? migrateItems(readStored('gm.items', []))
 }
 
 /** Loads the workspace, migrating the previous layout the first time. */
@@ -210,7 +222,6 @@ export function loadWorkspace(): Workspace {
       ...emptyWorkspace,
       ...stored,
       sources: library.sources ?? stored.sources ?? [],
-      items: library.items ?? stored.items ?? [],
     }
   }
   return migrateWorkspace(loadSettings())

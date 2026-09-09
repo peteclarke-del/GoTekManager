@@ -4,12 +4,17 @@ import { ProgressDialog } from '../../components/Feedback'
 import { requirePlatform } from '../../domain/catalog'
 import {
   classifyMedia,
+  forProfile,
   formatBytes,
   isFirmwareCompatible,
   managedFormats,
   transferOperations,
 } from '../../domain/media'
-import { inferCategory } from '../../domain/categories'
+import {
+  categoryFolder,
+  destinationCategoryFolders,
+  inferCategory,
+} from '../../domain/categories'
 import { downloadSourceOf } from '../../domain/downloads'
 import { basename } from '../../domain/paths'
 import { upsertById } from '../../domain/records'
@@ -26,6 +31,9 @@ import type {
   TransferPlan,
 } from '../../domain/types'
 import { useDirectoryBrowser } from '../../hooks/useDirectoryBrowser'
+import { useScanProgress } from '../../hooks/useScanProgress'
+import { planPercentage, usePlanProgress } from '../../hooks/usePlanProgress'
+import { useWriteProgress, writePercentage } from '../../hooks/useWriteProgress'
 import { useTransferPlan } from '../../hooks/useTransferPlan'
 import {
   chooseFolder,
@@ -45,6 +53,18 @@ import { OnlineLibrary } from './OnlineLibrary'
 import { ProfileStep } from './ProfileStep'
 import { ResultTable, type ResultView } from './ResultTable'
 
+/**
+ * The reason out of a failure message, without the path that precedes it.
+ *
+ * A source on a network share runs to two hundred characters, and repeating it
+ * under a destination path that already names the title buries the one thing
+ * worth reading.
+ */
+function reasonOf(message: string): string {
+  const tail = message.slice(message.lastIndexOf(': ') + 2)
+  return tail.trim() || message
+}
+
 /** What each kind of blocker means, in the words the user needs. */
 const BLOCKER_EXPLANATIONS: Array<{
   kind: 'collision' | 'unavailable' | 'changed'
@@ -61,7 +81,7 @@ const BLOCKER_EXPLANATIONS: Array<{
     kind: 'unavailable',
     label: 'cannot be found:',
     detail:
-      'the file is no longer where the library indexed it — a download cleared from the cache, or a share no longer mounted.',
+      'the file is no longer where the library indexed it: a download cleared from the cache, or a share no longer mounted.',
   },
   {
     kind: 'changed',
@@ -86,6 +106,8 @@ export type FlowPageProps = {
   convertIncompatible: boolean
   notify: (notice: Notice) => void
   manageProfiles: () => void
+  /** Takes the user to where a filled profile is written to real media. */
+  writeToDevice: () => void
 }
 
 export function FlowPage({
@@ -100,6 +122,7 @@ export function FlowPage({
   convertIncompatible,
   notify,
   manageProfiles,
+  writeToDevice,
 }: FlowPageProps) {
   const profile = workspace.profiles.find((entry) => entry.id === workspace.activeProfileId)
   const [step, setStep] = useState<Step>(1)
@@ -114,12 +137,44 @@ export function FlowPage({
   const [configWrites, setConfigWrites] = useState(0)
   const [scanning, setScanning] = useState(false)
   const [busySourceId, setBusySourceId] = useState('')
-  const [sourceStatus, setSourceStatus] = useState<
-    { kind: 'success' | 'error' | 'info'; text: string } | null
-  >(null)
+  const [sourceStatus, setSourceStatus] = useState<{
+    kind: 'success' | 'error' | 'info'
+    text: string
+  } | null>(null)
 
   const platform = requirePlatform(profile?.platformId)
   const browser = useDirectoryBrowser(profile, true)
+  // Where the walk has got to, so a library that takes minutes to read is
+  // visibly working rather than apparently ignored.
+  const scanProgress = useScanProgress()
+  // How far the native planner has got through the staged titles. Only ever
+  // reported for a plan long enough that the wait is noticeable.
+  const planProgress = usePlanProgress()
+  // And how far the copying itself has got, which is the longer half.
+  const writeProgress = useWriteProgress()
+
+  /**
+   * The category folders this destination already uses, as it spells them.
+   *
+   * Only read at the root, where they are, and never applied on its own: a
+   * stick calling its applications folder `Applications` is a fact about the
+   * stick, but writing there instead of to `Apps` changes where this profile
+   * puts things, and that is the user's decision to make.
+   */
+  const usesCategories =
+    profile?.organise &&
+    (profile.folderLayout === 'category' ||
+      (profile.folderLayout === 'custom' &&
+        (profile.folderTemplate ?? '').includes('{category}')))
+
+  const unadopted = useMemo(() => {
+    if (!profile || !usesCategories) return []
+    const root = browser.isImage ? '' : profile.destination.path
+    if (browser.path !== root) return []
+    return Object.entries(destinationCategoryFolders(browser.entries)).filter(
+      ([id, folder]) => (profile.categoryFolders?.[id] ?? categoryFolder(id)) !== folder,
+    )
+  }, [profile, usesCategories, browser.entries, browser.path, browser.isImage])
 
   // Switching profile restarts the flow: a plan, a set of staged edits, and a
   // typed confirmation only ever mean something for one destination.
@@ -136,10 +191,26 @@ export function FlowPage({
     if (step === 4 || step === 5) setView('changes')
   }, [step])
 
+  /**
+   * The staged titles, read as belonging to the machine being prepared.
+   *
+   * A format several machines share stays unassigned until somebody commits to
+   * one, and staging is that commitment — but a collection read back from
+   * storage is a list of library ids, so the commitment does not survive the
+   * trip. Judging those titles as they come back says the drive cannot load a
+   * single one of them, which quietly leaves nothing to plan and no reason
+   * given. Everything below therefore works from this list rather than the raw
+   * one, exactly as the library table does.
+   */
+  const staged = useMemo(
+    () => (profile ? collection.map((item) => forProfile(item, profile.platformId)) : []),
+    [collection, profile?.platformId],
+  )
+
   const operations = useMemo(
-    () => (profile ? transferOperations(collection, profile) : []),
+    () => (profile ? transferOperations(staged, profile) : []),
     [
-      collection,
+      staged,
       profile?.firmwareId,
       profile?.organise,
       profile?.folderLayout,
@@ -149,10 +220,8 @@ export function FlowPage({
   )
   const incompatible = useMemo(
     () =>
-      profile
-        ? collection.filter((item) => !isFirmwareCompatible(item, profile.firmwareId))
-        : [],
-    [collection, profile?.firmwareId],
+      profile ? staged.filter((item) => !isFirmwareCompatible(item, profile.firmwareId)) : [],
+    [staged, profile?.firmwareId],
   )
 
   /**
@@ -192,12 +261,12 @@ export function FlowPage({
   // Staged titles by where their bytes are, which is how the plan names the
   // ones standing in the way of a write.
   const itemsBySource = useMemo(
-    () => new Map(collection.map((item) => [item.path, item])),
-    [collection],
+    () => new Map(staged.map((item) => [item.path, item])),
+    [staged],
   )
   const blocked = useMemo(
-    () => blockedTitles(plan, itemsBySource),
-    [plan, itemsBySource],
+    () => blockedTitles(plan, itemsBySource, operations),
+    [plan, itemsBySource, operations],
   )
 
   const itemsByPath = useMemo(
@@ -205,10 +274,10 @@ export function FlowPage({
       new Map(
         operations.map((operation, index) => [
           operation.relativePath.toLowerCase(),
-          collection[index],
+          staged[index],
         ]),
       ),
-    [operations, collection],
+    [operations, staged],
   )
 
   // -------------------------------------------------------------------------
@@ -217,7 +286,7 @@ export function FlowPage({
 
   const indexSource = async (source: SourceLocation) => {
     const entries = await scanFolder(source.path, undefined, convertIncompatible)
-    const items = entries.map((entry) => classifyMedia(entry, source.path))
+    const items = entries.map((entry) => classifyMedia(entry, source.path, source.name))
     dispatch({ type: 'sourceIndexed', source, items })
     return items.length
   }
@@ -245,21 +314,44 @@ export function FlowPage({
     }
   }
 
-  const refreshLocation = async (source: SourceLocation) => {
-    setBusySourceId(source.id)
-    setSourceStatus({ kind: 'info', text: `Re-indexing ${source.name}…` })
-    try {
-      const found = await indexSource(source)
-      setSourceStatus({
-        kind: 'success',
-        text: `Re-indexed ${source.name}: ${found} recognised file${found === 1 ? '' : 's'}.`,
-      })
-    } catch (reason) {
-      setSourceStatus({ kind: 'error', text: errorMessage(reason) })
-    } finally {
-      setBusySourceId('')
+  /**
+   * Re-indexes sources in turn, which is what re-reading one and scanning them
+   * all both amount to.
+   *
+   * One source that cannot be read does not abandon the rest: a share that is
+   * no longer mounted is worth reporting, not worth losing the other nine
+   * sources over.
+   */
+  const reindexSources = async (chosen: SourceLocation[]) => {
+    const failures: string[] = []
+    let found = 0
+    // The same modal the first scan shows: re-reading every source is the
+    // slowest thing here, and it should say so wherever it was started from.
+    setScanning(true)
+    for (const source of chosen) {
+      setBusySourceId(source.id)
+      setSourceStatus({ kind: 'info', text: `Re-indexing ${source.name}…` })
+      try {
+        found += await indexSource(source)
+      } catch (reason) {
+        failures.push(`${source.name}: ${errorMessage(reason)}`)
+      }
     }
+    setBusySourceId('')
+    setScanning(false)
+    const files = `${found} recognised file${found === 1 ? '' : 's'}`
+    const what =
+      chosen.length === 1
+        ? `Re-indexed ${chosen[0]?.name}: ${files}.`
+        : `Re-indexed ${chosen.length} sources: ${files}.`
+    setSourceStatus(
+      failures.length
+        ? { kind: 'error', text: `${what} Could not read ${failures.join('; ')}.` }
+        : { kind: 'success', text: what },
+    )
   }
+
+  const refreshLocation = (source: SourceLocation) => reindexSources([source])
 
   const importDownload = (
     download: CachedDownload,
@@ -326,7 +418,10 @@ export function FlowPage({
       if (state.exists) return
       const written = await writeFirmwareConfig(profile.destination.path, contents)
       setConfigWrites((count) => count + 1)
-      notify({ kind: 'info', text: `Wrote ${written} so the drive reads this stick correctly.` })
+      notify({
+        kind: 'info',
+        text: `Wrote ${written} so the drive reads this stick correctly.`,
+      })
     } catch (reason) {
       notify({
         kind: 'error',
@@ -344,7 +439,22 @@ export function FlowPage({
       setCompleted(result)
       setConfirmation('')
       setEdits([])
-      dispatch({ type: 'collectionCleared', profileId: profile.id })
+      // Only what actually landed is taken out of the profile. A title the
+      // write could not read is still waiting to be written, and clearing it
+      // would leave somebody with an empty profile, an empty drive and no way
+      // back to the list they had assembled.
+      const unwritten = new Set(
+        (result.failures ?? []).map((entry) => entry.source).filter(Boolean),
+      )
+      if (unwritten.size) {
+        dispatch({
+          type: 'collectionRemoved',
+          profileId: profile.id,
+          itemIds: staged.filter((item) => !unwritten.has(item.path)).map((item) => item.id),
+        })
+      } else {
+        dispatch({ type: 'collectionCleared', profileId: profile.id })
+      }
       await writeDriveConfiguration()
       void browser.refresh()
     } catch (reason) {
@@ -362,10 +472,19 @@ export function FlowPage({
 
   const stageHeading =
     step === 2
-      ? { eyebrow: '2 · Current contents', help: 'Browse the destination and stage moves, renames, or deletions.' }
+      ? {
+          eyebrow: '2 · Current contents',
+          help: 'Browse the destination and stage moves, renames, or deletions.',
+        }
       : step === 4
-        ? { eyebrow: '4 · Verify changes', help: 'Compare the current contents, the changes, and the result.' }
-        : { eyebrow: '5 · Confirm write', help: 'Resolve any conflict, then confirm with the exact profile name.' }
+        ? {
+            eyebrow: '4 · Verify changes',
+            help: 'Compare the current contents, the changes, and the result.',
+          }
+        : {
+            eyebrow: '5 · Confirm write',
+            help: 'Resolve any conflict, then confirm with the exact profile name.',
+          }
 
   return (
     <>
@@ -418,6 +537,23 @@ export function FlowPage({
                     ? stageHeading.help
                     : 'Image contents are available read-only.'}
               </p>
+              {collection.length > 0 && (
+                <p className="staged-count">
+                  {collection.length.toLocaleString()} title
+                  {collection.length === 1 ? '' : 's'} staged
+                  {/* Adding in bulk was possible; emptying was not, which left a
+                      collection built up over several passes with no way back
+                      short of writing it. */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      dispatch({ type: 'collectionCleared', profileId: profile.id })
+                    }
+                  >
+                    Take them all out
+                  </button>
+                </p>
+              )}
             </div>
             {step === 4 && (
               <fieldset className="write-mode build-write-mode">
@@ -487,11 +623,52 @@ export function FlowPage({
                 destination sit outside the {platform.name} profile
               </b>
               <span>
-                {mismatchFormats.join(', ')} files stay visible and are protected from
-                removal.
+                {mismatchFormats.join(', ')} files stay visible and are protected from removal.
               </span>
               <button type="button" onClick={manageProfiles}>
                 Edit profile platform
+              </button>
+            </div>
+          )}
+
+          {step === 2 && unadopted.length > 0 && profile && (
+            <div className="profile-mismatch">
+              <b>
+                This destination already sorts itself, and spells{' '}
+                {unadopted.length === 1 ? 'one folder' : `${unadopted.length} folders`}{' '}
+                differently
+              </b>
+              <span>
+                It has{' '}
+                {unadopted
+                  .map(([, folder]) => <code key={folder}>{folder}/</code>)
+                  .reduce<React.ReactNode[]>(
+                    (list, node, index) => (index ? [...list, ', ', node] : [node]),
+                    [],
+                  )}{' '}
+                where this profile would write{' '}
+                {unadopted.map(([id]) => (
+                  <code key={id}>{categoryFolder(id)}/</code>
+                ))}
+                . Writing to its own folders fills them; writing to ours makes a second set
+                beside them.
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  dispatch({
+                    type: 'profileUpdated',
+                    profile: {
+                      ...profile,
+                      categoryFolders: {
+                        ...profile.categoryFolders,
+                        ...Object.fromEntries(unadopted),
+                      },
+                    },
+                  })
+                }
+              >
+                Use the folders already here
               </button>
             </div>
           )}
@@ -538,9 +715,8 @@ export function FlowPage({
           {incompatible.length > 0 && (
             <p className="inline-error build-review-error">
               {incompatible.length} selected title
-              {incompatible.length === 1 ? ' is' : 's are'} incompatible with this
-              profile's firmware. Remove them or change the profile's firmware to
-              continue.
+              {incompatible.length === 1 ? ' is' : 's are'} incompatible with this profile's
+              firmware. Remove them or change the profile's firmware to continue.
             </p>
           )}
           {step === 4 && blocked.length > 0 && (
@@ -564,7 +740,19 @@ export function FlowPage({
               </span>
               <ul className="plan-files">
                 {blocked.slice(0, 6).map((title) => (
-                  <li key={title.item.id}>{title.item.canonicalTitle}</li>
+                  <li key={title.item.id}>
+                    {title.item.canonicalTitle}
+                    {title.path && (
+                      <small>
+                        would be written to <code>{title.path}</code>
+                        {title.against ? (
+                          <>
+                            , where <b>{title.against.canonicalTitle}</b> already goes
+                          </>
+                        ) : null}
+                      </small>
+                    )}
+                  </li>
                 ))}
                 {blocked.length > 6 && <li>…and {blocked.length - 6} more</li>}
               </ul>
@@ -587,9 +775,7 @@ export function FlowPage({
           {step === 4 &&
             plan?.warnings
               // Anything already listed above is not said twice.
-              .filter(
-                (warning) => !blocked.some((title) => title.message === warning),
-              )
+              .filter((warning) => !blocked.some((title) => title.message === warning))
               .map((warning) => (
                 <p className="inline-error build-review-error" key={warning}>
                   {warning}
@@ -643,10 +829,7 @@ export function FlowPage({
 
           {step !== 2 && (
             <div className="flow-actions">
-              <button
-                className="button secondary"
-                onClick={() => setStep(step === 4 ? 3 : 4)}
-              >
+              <button className="button secondary" onClick={() => setStep(step === 4 ? 3 : 4)}>
                 <ChevronLeft />
                 Back
               </button>
@@ -699,10 +882,10 @@ export function FlowPage({
             <LocalLibrary
               profile={profile}
               platform={platform}
-              items={workspace.items}
               sources={workspace.sources}
               collection={collection}
               addLocation={() => void addLocation()}
+              reindexSources={reindexSources}
               refreshLocation={(source) => void refreshLocation(source)}
               renameLocation={(source) => dispatch({ type: 'sourceRenamed', source })}
               removeLocation={(source) => dispatch({ type: 'sourceRemoved', source })}
@@ -729,7 +912,6 @@ export function FlowPage({
           ) : (
             <OnlineLibrary
               platform={platform}
-              items={workspace.items}
               providers={providers}
               saveProvider={(provider) =>
                 setCustomProviders((current) => upsertById(current, provider))
@@ -764,7 +946,11 @@ export function FlowPage({
         <section className="flow-summary panel">
           <Check />
           <p className="eyebrow">6 · Summary</p>
-          <h2>Write completed</h2>
+          <h2>
+            {completed.failures?.length
+              ? 'Write completed, with some titles left behind'
+              : 'Write completed'}
+          </h2>
           <p>Every copied file was flushed to the destination and size-verified.</p>
           <div className="profile-facts">
             <div>
@@ -788,8 +974,39 @@ export function FlowPage({
               <b>{formatBytes(completed.totalBytes)}</b>
             </div>
           </div>
+          {completed.failures && completed.failures.length > 0 && (
+            <div className="profile-mismatch">
+              <b>
+                {completed.failures.length} title
+                {completed.failures.length === 1 ? '' : 's'} could not be read and{' '}
+                {completed.failures.length === 1 ? 'was' : 'were'} not written
+              </b>
+              <span>
+                Everything else was written and verified. A source that cannot be read is almost
+                always a damaged archive; nothing was put on the drive for these, so re-running
+                after replacing them will fill the gaps.
+              </span>
+              <ul className="plan-files">
+                {completed.failures.map((entry) => (
+                  <li key={`${entry.relativePath}:${entry.source}`}>
+                    <code>{entry.relativePath}</code>
+                    {/* The reason, not the essay. A source path on a network
+                        share runs to two hundred characters and buries the one
+                        thing worth reading; the whole message is a hover away. */}
+                    <small title={entry.message}>{reasonOf(entry.message)}</small>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="flow-actions">
-            <button className="button" onClick={() => setStep(2)}>
+            {/* The folder is filled; the next thing anybody wants is it on a
+                stick, which is a different place in the application. */}
+            <button className="button" onClick={writeToDevice}>
+              <Upload />
+              Write this profile to a device
+            </button>
+            <button className="button secondary" onClick={() => setStep(2)}>
               Review destination
             </button>
             <button className="button secondary" onClick={() => setStep(1)}>
@@ -806,8 +1023,8 @@ export function FlowPage({
           <h2>Write failed</h2>
           <p>{failure}</p>
           <p>
-            No success has been recorded. Nothing was overwritten. Check the
-            destination and review the plan before trying again.
+            No success has been recorded. Nothing was overwritten. Check the destination and
+            review the plan before trying again.
           </p>
           <div className="flow-actions">
             <button className="button" onClick={() => setStep(5)}>
@@ -823,13 +1040,37 @@ export function FlowPage({
       {scanning && (
         <ProgressDialog
           title="Finding titles"
-          detail="Scanning this folder and its subfolders for supported disk images."
+          detail={
+            scanProgress
+              ? `${scanProgress.found.toLocaleString()} found so far, in ${scanProgress.folders.toLocaleString()} folder${scanProgress.folders === 1 ? '' : 's'}${scanProgress.pending ? ` with ${scanProgress.pending.toLocaleString()} still to read` : ''}. A large collection on a network share takes minutes.`
+              : 'Scanning this folder and its subfolders for supported disk images.'
+          }
+        />
+      )}
+      {planning && !writing && planProgress && (
+        <ProgressDialog
+          title="Working out the changes"
+          detail={`Finding ${planProgress.total.toLocaleString()} staged titles and comparing them with ${profile?.name ?? 'the destination'}. A collection held on a network share takes a while to check.`}
+          progress={planPercentage(planProgress)}
         />
       )}
       {writing && (
         <ProgressDialog
           title="Applying changes"
-          detail="Copying to the destination and verifying every write."
+          detail={
+            writeProgress
+              ? `Copying and verifying: ${formatBytes(writeProgress.written)} of ${formatBytes(writeProgress.bytes)}, ${writeProgress.done.toLocaleString()} of ${writeProgress.total.toLocaleString()} titles.`
+              : planProgress
+                ? `Checking ${planProgress.done.toLocaleString()} of ${planProgress.total.toLocaleString()} staged titles before anything is written.`
+                : 'Copying to the destination and verifying every write.'
+          }
+          progress={
+            writeProgress
+              ? writePercentage(writeProgress)
+              : planProgress
+                ? planPercentage(planProgress)
+                : undefined
+          }
         />
       )}
     </>

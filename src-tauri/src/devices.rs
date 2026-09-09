@@ -162,8 +162,19 @@ pub fn is_protected_location(os: &str, path: &str, system_root: Option<&str>) ->
 fn is_network_filesystem(filesystem: &str) -> bool {
     let filesystem = filesystem.to_ascii_lowercase();
     const NETWORK: [&str; 13] = [
-        "nfs", "nfs4", "cifs", "smbfs", "smb3", "smb-share", "sshfs", "davfs", "dav", "afpfs",
-        "ceph", "glusterfs", "9p",
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smbfs",
+        "smb3",
+        "smb-share",
+        "sshfs",
+        "davfs",
+        "dav",
+        "afpfs",
+        "ceph",
+        "glusterfs",
+        "9p",
     ];
     NETWORK.contains(&filesystem.as_str())
         || filesystem.starts_with("fuse.sshfs")
@@ -392,25 +403,23 @@ mod tests {
         classify_mount, detected_firmware, gvfs_label, is_protected_location, mount_label,
         probe_writable,
     };
-    use std::{fs, path::PathBuf};
+    use std::fs;
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-devices-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("devices-{name}"))
     }
 
     #[test]
     fn filesystem_roots_are_protected_on_every_platform() {
         assert!(is_protected_location("linux", "/", None));
         assert!(is_protected_location("macos", "/", None));
-        assert!(is_protected_location("windows", r"C:\", Some(r"C:\Windows")));
+        assert!(is_protected_location(
+            "windows",
+            r"C:\",
+            Some(r"C:\Windows")
+        ));
         assert!(is_protected_location("windows", "D:/", Some(r"C:\Windows")));
     }
 
@@ -448,7 +457,11 @@ mod tests {
         assert!(is_protected_location("linux", "/boot/efi", None));
         assert!(is_protected_location("linux", "/usr", None));
         assert!(is_protected_location("linux", "/media", None));
-        assert!(!is_protected_location("linux", "/media/pclarke/GOTEK", None));
+        assert!(!is_protected_location(
+            "linux",
+            "/media/pclarke/GOTEK",
+            None
+        ));
         // Prefix matching must be component-aware.
         assert!(!is_protected_location("linux", "/usrdata/library", None));
     }
@@ -456,7 +469,14 @@ mod tests {
     #[test]
     fn mounts_are_classified_per_platform() {
         assert_eq!(
-            classify_mount("linux", None, "/media/pclarke/GOTEK", "/dev/sdb1", "vfat", true),
+            classify_mount(
+                "linux",
+                None,
+                "/media/pclarke/GOTEK",
+                "/dev/sdb1",
+                "vfat",
+                true
+            ),
             "removable"
         );
         assert_eq!(
@@ -465,7 +485,14 @@ mod tests {
         );
         // Overlay and container mounts have no block device behind them.
         assert_eq!(
-            classify_mount("linux", None, "/var/lib/docker/overlay2/x", "overlay", "overlay", false),
+            classify_mount(
+                "linux",
+                None,
+                "/var/lib/docker/overlay2/x",
+                "overlay",
+                "overlay",
+                false
+            ),
             "system"
         );
         assert_eq!(
@@ -473,15 +500,36 @@ mod tests {
             "network"
         );
         assert_eq!(
-            classify_mount("windows", Some(r"C:\Windows"), r"C:\", r"C:\", "NTFS", false),
+            classify_mount(
+                "windows",
+                Some(r"C:\Windows"),
+                r"C:\",
+                r"C:\",
+                "NTFS",
+                false
+            ),
             "system"
         );
         assert_eq!(
-            classify_mount("windows", Some(r"C:\Windows"), r"E:\", r"E:\", "FAT32", true),
+            classify_mount(
+                "windows",
+                Some(r"C:\Windows"),
+                r"E:\",
+                r"E:\",
+                "FAT32",
+                true
+            ),
             "removable"
         );
         assert_eq!(
-            classify_mount("macos", None, "/Volumes/GOTEK", "/dev/disk4s1", "msdos", true),
+            classify_mount(
+                "macos",
+                None,
+                "/Volumes/GOTEK",
+                "/dev/disk4s1",
+                "msdos",
+                true
+            ),
             "removable"
         );
         assert_eq!(
@@ -492,7 +540,10 @@ mod tests {
 
     #[test]
     fn network_share_names_are_resolved_for_display() {
-        assert_eq!(gvfs_label("smb-share:server=nas,share=games"), "games on nas");
+        assert_eq!(
+            gvfs_label("smb-share:server=nas,share=games"),
+            "games on nas"
+        );
         assert_eq!(gvfs_label("mtp:host=phone"), "mtp");
         assert_eq!(
             mount_label("/media/pclarke/GOTEK", "/dev/sdb1", "vfat"),
@@ -508,8 +559,6 @@ mod tests {
 
         fs::write(root.join("ff.cfg"), b"host = acorn").unwrap();
         assert_eq!(detected_firmware(&root), Some("flashfloppy".into()));
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -528,7 +577,6 @@ mod tests {
         assert_eq!(mounts[0].label, "games on nas");
         assert_eq!(mounts[0].kind, "network");
         assert!(!mounts[0].removable);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -539,6 +587,5 @@ mod tests {
 
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         assert!(probe_writable(&root.join("missing")).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 }

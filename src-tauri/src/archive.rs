@@ -38,6 +38,27 @@ pub struct ArchiveEntry {
     pub size: u64,
 }
 
+/// The path of an entry this application is willing to read, if it is one.
+///
+/// Three questions, asked in the same order wherever an archive is walked: it
+/// has to be a file rather than a folder, it has to stay inside its own folder
+/// (`enclosed_name` answers `None` for an absolute path, or one climbing out
+/// with `..`), and it has to be a format the drive can actually load. They are
+/// kept together so that a second walk cannot quietly omit one of them, which
+/// in the case of the middle question would be a path traversal.
+fn wanted_entry<R: std::io::Read>(
+    item: &zip::read::ZipFile<'_, R>,
+    extensions: &HashSet<String>,
+) -> Option<PathBuf> {
+    if !item.is_file() {
+        return None;
+    }
+    let relative = item.enclosed_name()?;
+    extensions
+        .contains(&extension_of(&relative))
+        .then_some(relative)
+}
+
 /// The supported images an archive holds, without decompressing any of them.
 ///
 /// Only the central directory and each entry's header are read, so listing a
@@ -61,17 +82,9 @@ pub fn list_zip_images(
         let Ok(item) = archive.by_index(index) else {
             continue;
         };
-        if !item.is_file() {
-            continue;
-        }
-        // The same guard extraction uses: an entry that would escape its folder
-        // is not one this application will ever read.
-        let Some(relative) = item.enclosed_name() else {
+        let Some(relative) = wanted_entry(&item, extensions) else {
             continue;
         };
-        if !extensions.contains(&extension_of(&relative)) {
-            continue;
-        }
         entries.push(ArchiveEntry {
             name: to_posix(&relative.to_string_lossy()),
             size: item.size(),
@@ -141,17 +154,9 @@ pub fn extract_zip_images(
     let mut extracted_bytes = 0u64;
     for index in 0..archive.len().min(MAX_ENTRIES) {
         let item = archive.by_index(index)?;
-        if !item.is_file() {
-            continue;
-        }
-        // `enclosed_name` returns None for absolute paths and any entry that
-        // would escape the destination folder.
-        let Some(relative) = item.enclosed_name() else {
+        let Some(relative) = wanted_entry(&item, extensions) else {
             continue;
         };
-        if !extensions.contains(&extension_of(&relative)) {
-            continue;
-        }
         let remaining = byte_limit
             .checked_sub(extracted_bytes)
             .context("Extracted images exceed the cache limit.")?;
@@ -176,14 +181,8 @@ pub fn extract_zip_images(
 }
 
 fn relative_to(path: &Path, folder: &Path) -> String {
-    to_posix(
-        &path
-            .strip_prefix(folder)
-            .unwrap_or(path)
-            .to_string_lossy(),
-    )
+    to_posix(&path.strip_prefix(folder).unwrap_or(path).to_string_lossy())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -194,16 +193,10 @@ mod tests {
     use crate::paths::normalise_extensions;
     use std::{fs, io::Write, path::PathBuf};
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-archive-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("archive-{name}"))
     }
 
     fn write_archive(path: &PathBuf, entries: &[(&str, &[u8])]) {
@@ -233,7 +226,10 @@ mod tests {
         let entries = list_zip_images(&archive, &extensions).unwrap();
 
         assert_eq!(
-            entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["Games/Elite.SSD", "Repton.ssd"],
         );
         // The uncompressed size, which is what the file will occupy once written.
@@ -241,7 +237,6 @@ mod tests {
         // Nothing was written anywhere: that is the whole point of listing.
         assert!(!root.join("images").exists());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -251,12 +246,14 @@ mod tests {
         // cheap; unpacking them to find out was not.
         let root = fixture("preservation");
         let archive = root.join("game.zip");
-        write_archive(&archive, &[("Game (1988).ipf", b"flux"), ("kick.rom", b"rom")]);
+        write_archive(
+            &archive,
+            &[("Game (1988).ipf", b"flux"), ("kick.rom", b"rom")],
+        );
 
         let entries = list_zip_images(&archive, &normalise_extensions(vec!["adf".into()])).unwrap();
 
         assert!(entries.is_empty());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -268,7 +265,6 @@ mod tests {
         let entries = list_zip_images(&archive, &normalise_extensions(vec!["adf".into()])).unwrap();
 
         assert!(entries.is_empty());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -287,7 +283,6 @@ mod tests {
         assert_eq!(read, b"disk image");
         // An entry that has since left the archive is an error, not silence.
         assert!(read_zip_entry(&archive, "Games/Gone.ssd", |_| Ok(())).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -303,12 +298,10 @@ mod tests {
         );
         let extensions = normalise_extensions(vec!["ssd".into()]);
 
-        let files =
-            extract_zip_images(&archive, &root, &extensions, PLENTY).unwrap();
+        let files = extract_zip_images(&archive, &root, &extensions, PLENTY).unwrap();
 
         assert_eq!(files, vec!["images/Games/Elite.SSD".to_string()]);
         assert_eq!(fs::read(root.join(&files[0])).unwrap(), b"disk image");
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -326,7 +319,6 @@ mod tests {
         .unwrap();
 
         assert!(files.is_empty());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -343,8 +335,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.to_string(), "Extracted images exceed the cache limit.");
+        assert_eq!(
+            error.to_string(),
+            "Extracted images exceed the cache limit."
+        );
         assert!(!root.join("images").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 }

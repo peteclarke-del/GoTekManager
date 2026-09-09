@@ -46,7 +46,7 @@ export type FirmwareProfile = {
   id: string
   name: string
   family: string
-  /** Characters the drive's display can show, used for OLED naming. */
+  /** Characters the drive's display can show, used to shorten written names. */
   oledLength: number
   /** Formats the firmware loads directly from the USB stick. */
   formats: string[]
@@ -56,6 +56,8 @@ export type FirmwareProfile = {
 /** The universal container every modern GoTek firmware understands. */
 const HFE = '.hfe'
 
+// Each format list is grouped by the machines it serves, a group to a line.
+// prettier-ignore
 export const firmwareProfiles: FirmwareProfile[] = [
   {
     id: 'flashfloppy',
@@ -105,6 +107,8 @@ export const firmwareProfiles: FirmwareProfile[] = [
   },
 ]
 
+// A row to a line: this is a table, and reading it as one is the point.
+// prettier-ignore
 export const platforms: Platform[] = [
   // Acorn: DFS single/double-sided and ADFS large/medium images.
   { id: 'bbc', name: 'Acorn BBC Micro', family: 'Acorn', folderName: 'BBC', aliases: ['bbc micro', 'bbc model b', 'bbc master', 'acorn bbc', 'bbc b'], formats: ['.ssd', '.dsd', '.adf', '.adl', '.adm', '.img', HFE], firmwareIds: ['flashfloppy', 'hxc'] },

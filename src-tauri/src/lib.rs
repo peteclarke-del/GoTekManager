@@ -17,23 +17,26 @@
 //! stick never freezes the window.
 
 mod archive;
-mod source;
-mod update;
 mod cache;
 mod convert;
 mod devices;
-mod hardware;
-mod image;
 mod error;
 mod fingerprint;
 mod firmware;
+mod hardware;
+mod image;
+mod library;
 mod media;
 mod online;
 mod paths;
 mod provision;
+mod source;
 mod store;
 mod task;
+#[cfg(test)]
+mod testing;
 mod transfer;
+mod update;
 
 pub fn run() {
     tauri::Builder::default()
@@ -47,6 +50,8 @@ pub fn run() {
             media::inspect_target,
             media::list_directory,
             media::list_image_directory,
+            image::image_capacity,
+            media::read_destination,
             media::scan_folder,
             convert::supported_conversions,
             firmware::firmware_config_state,
@@ -56,7 +61,6 @@ pub fn run() {
             transfer::plan_transfer,
             transfer::execute_transfer,
             // Filesystem images.
-            image::image_summary,
             image::create_image,
             image::extract_image,
             // Destructive device provisioning.
@@ -70,18 +74,35 @@ pub fn run() {
             // Persistent store.
             store::load_workspace,
             store::save_workspace,
-            store::read_document,
+            store::query_items,
+            library::replace_source_items,
+            library::upsert_items,
+            library::forget_source,
+            library::update_items,
+            library::clear_library,
+            library::held_titles,
+            library::staged_items,
+            library::stage_items,
+            library::unstage_items,
+            library::clear_collection,
             store::read_config_file,
             // Which version this is, and whether a newer one is published.
             update::app_version,
             update::published_releases,
-            fingerprint::fingerprint_paths,
-            fingerprint::prune_digests,
-            store::write_document,
             cache::cache_summary,
             cache::evict_cache,
             cache::clear_download_cache,
         ])
+        .setup(|app| {
+            // Housekeeping rather than startup work, so it runs on a thread of
+            // its own and nothing on screen waits for it. See prune_digests for
+            // why the cache is swept at all.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let _ = fingerprint::prune_digests(&handle);
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running GoTek Manager");
 }

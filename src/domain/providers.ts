@@ -98,7 +98,7 @@ export function readProviderConfig(value: unknown): ProviderLoad {
       problems.push(fault)
       return
     }
-    const provider = entry as OnlineProvider
+    const provider = entry
     seen.add(provider.id)
     providers.push({ ...provider, builtIn: true })
   })

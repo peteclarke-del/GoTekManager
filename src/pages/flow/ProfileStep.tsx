@@ -1,6 +1,7 @@
-import { Check, ChevronRight, HardDrive, Pencil } from 'lucide-react'
+import { ChevronRight, Pencil } from 'lucide-react'
 import { requireFirmware, requirePlatform } from '../../domain/catalog'
-import { formatBytes } from '../../domain/media'
+import { formatBytes, namingChoice } from '../../domain/media'
+import { ProfileChoice } from '../../components/Choices'
 import { Empty } from '../../components/Feedback'
 import type { Profile } from '../../domain/types'
 import { isWritable } from '../../state/workspace'
@@ -30,36 +31,20 @@ export function ProfileStep({
       <div>
         <p className="eyebrow">1 · Select profile</p>
         <h2>What GoTek are you preparing?</h2>
-        <p>
-          A profile keeps the platform, firmware, drive layout, and destination
-          together.
-        </p>
+        <p>A profile keeps the platform, firmware, drive layout, and destination together.</p>
       </div>
 
       {profiles.length ? (
         <div className="profile-choice-list">
-          {profiles.map((profile) => {
-            const selected = profile.id === active?.id
-            return (
-              <button
-                key={profile.id}
-                className={selected ? 'selected' : ''}
-                aria-pressed={selected}
-                onClick={() => select(profile.id)}
-              >
-                <HardDrive />
-                <span>
-                  <b>{profile.name}</b>
-                  <small>
-                    {requirePlatform(profile.platformId).name} ·{' '}
-                    {requireFirmware(profile.firmwareId).name}
-                  </small>
-                  <small title={profile.destination.path}>{profile.destination.path}</small>
-                </span>
-                {selected && <Check />}
-              </button>
-            )
-          })}
+          {profiles.map((profile) => (
+            <ProfileChoice
+              key={profile.id}
+              profile={profile}
+              selected={profile.id === active?.id}
+              onSelect={() => select(profile.id)}
+              showDestination
+            />
+          ))}
         </div>
       ) : (
         <Empty title="No profiles yet" action="Create profile" run={manageProfiles} />
@@ -81,7 +66,7 @@ export function ProfileStep({
           </div>
           <div>
             <span>File naming</span>
-            <b>{active.naming === 'oled' ? 'OLED friendly' : 'Original'}</b>
+            <b>{namingChoice(active.naming).name}</b>
           </div>
           {active.destination.availableBytes !== undefined && (
             <div>
@@ -98,8 +83,8 @@ export function ProfileStep({
 
       {active && !isWritable(active) && (
         <div className="notice info">
-          This profile points at a FAT image. Its contents can be browsed, but nothing
-          can be written to it yet.
+          This profile points at a FAT image. Its contents can be browsed, but nothing can be
+          written to it yet.
         </div>
       )}
 

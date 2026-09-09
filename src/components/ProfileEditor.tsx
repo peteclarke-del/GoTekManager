@@ -1,9 +1,15 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
+import { Options } from './Choices'
 import { firmwareProfiles, platforms } from '../domain/catalog'
-import { UNCATEGORISED } from '../domain/categories'
+import { categories, categoryFolderFor, UNCATEGORISED } from '../domain/categories'
 import { configSupport, DISPLAY_CHOICES } from '../domain/firmwareConfig'
-import { FOLDER_TOKENS, renderFolderTemplate } from '../domain/media'
+import {
+  FOLDER_TOKENS,
+  NAMING_CHOICES,
+  namingChoice,
+  renderFolderTemplate,
+} from '../domain/media'
 import type { MediaItem, Profile } from '../domain/types'
 import { Modal } from './Modal'
 
@@ -65,10 +71,10 @@ export function ProfileEditor({
     >
       {isNew && (
         <p className="mode-note">
-          The platform is a guess from the destination's name. Correct it before
-          creating the profile: it decides which titles are offered and where they are
-          written.
-          {waiting > 0 && ` ${waiting} more destination${waiting === 1 ? '' : 's'} to name after this one.`}
+          The platform is a guess from the destination's name. Correct it before creating the
+          profile: it decides which titles are offered and where they are written.
+          {waiting > 0 &&
+            ` ${waiting} more destination${waiting === 1 ? '' : 's'} to name after this one.`}
         </p>
       )}
       <label>
@@ -86,11 +92,7 @@ export function ProfileEditor({
           value={draft.platformId}
           onChange={(event) => update('platformId', event.target.value)}
         >
-          {platforms.map((platform) => (
-            <option key={platform.id} value={platform.id}>
-              {platform.name}
-            </option>
-          ))}
+          <Options items={platforms} />
         </select>
       </label>
       <label>
@@ -99,11 +101,7 @@ export function ProfileEditor({
           value={draft.firmwareId}
           onChange={(event) => update('firmwareId', event.target.value)}
         >
-          {firmwareProfiles.map((firmware) => (
-            <option key={firmware.id} value={firmware.id}>
-              {firmware.name}
-            </option>
-          ))}
+          <Options items={firmwareProfiles} />
         </select>
       </label>
       {draft.destination.detectedFirmwareId &&
@@ -111,9 +109,11 @@ export function ProfileEditor({
           <p className="mode-note">
             Configuration files on this destination suggest{' '}
             <b>
-              {firmwareProfiles.find(
-                (firmware) => firmware.id === draft.destination.detectedFirmwareId,
-              )?.name}
+              {
+                firmwareProfiles.find(
+                  (firmware) => firmware.id === draft.destination.detectedFirmwareId,
+                )?.name
+              }
             </b>
             .
           </p>
@@ -163,12 +163,38 @@ export function ProfileEditor({
       </label>
       {draft.organise && draft.folderLayout === 'category' && (
         <p className="mode-note">
-          Titles are written under <code>Games/</code>, <code>Apps/</code>,{' '}
-          <code>Demos/</code> and the rest. A title with no category goes to{' '}
-          <code>{UNCATEGORISED}/</code>; set them in the library table, several at a
-          time. Use a custom layout to combine this with the platform, as in{' '}
-          <code>{'{platform}/{category}'}</code>.
+          Titles are written under <code>Games/</code>, <code>Apps/</code>, <code>Demos/</code>{' '}
+          and the rest. A title with no category goes to <code>{UNCATEGORISED}/</code>; set them
+          in the library table, several at a time. Use a custom layout to combine this with the
+          platform, as in <code>{'{platform}/{category}'}</code>.
         </p>
+      )}
+      {draft.organise && Object.keys(draft.categoryFolders ?? {}).length > 0 && (
+        <div className="category-folders">
+          <p className="feed-format">
+            This destination's own folder names, adopted from what is already on it. Clear one
+            to go back to the name this application would choose.
+          </p>
+          {categories
+            .filter((category) => draft.categoryFolders?.[category.id])
+            .map((category) => (
+              <label key={category.id}>
+                {category.name}
+                <input
+                  value={draft.categoryFolders?.[category.id] ?? ''}
+                  placeholder={categoryFolderFor(undefined, category.id)}
+                  onChange={(event) => {
+                    const { [category.id]: _replaced, ...rest } = draft.categoryFolders ?? {}
+                    const folder = event.target.value.trim()
+                    update(
+                      'categoryFolders',
+                      folder ? { ...rest, [category.id]: folder } : rest,
+                    )
+                  }}
+                />
+              </label>
+            ))}
+        </div>
       )}
       {draft.organise && draft.folderLayout === 'custom' && (
         <>
@@ -186,7 +212,12 @@ export function ProfileEditor({
             makes a few thousand titles navigable on a two-line display.
           </p>
           <p className="mode-note">
-            Preview: <code>{renderFolderTemplate(draft.folderTemplate ?? '{platform}', SAMPLE) || '(the root)'}/Elite.ssd</code>
+            Preview:{' '}
+            <code>
+              {renderFolderTemplate(draft.folderTemplate ?? '{platform}', SAMPLE, draft) ||
+                '(the root)'}
+              /Elite.ssd
+            </code>
           </p>
         </>
       )}
@@ -196,10 +227,10 @@ export function ProfileEditor({
           value={draft.naming}
           onChange={(event) => update('naming', event.target.value as Profile['naming'])}
         >
-          <option value="oled">OLED friendly</option>
-          <option value="original">Original</option>
+          <Options items={NAMING_CHOICES} />
         </select>
       </label>
+      <p className="mode-note">{namingChoice(draft.naming).summary}</p>
       <label className="check-label">
         <input
           type="checkbox"

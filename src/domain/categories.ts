@@ -13,6 +13,8 @@
  */
 
 import { toPosix } from './paths'
+import { readTags } from './tags'
+import type { FileEntry, Profile } from './types'
 
 export type Category = {
   id: string
@@ -45,13 +47,34 @@ export const categories: Category[] = [
     id: 'demos',
     name: 'Demos',
     folderName: 'Demos',
-    hints: ['demos', 'demo', 'demoscene', 'intros', 'cracktros'],
+    hints: [
+      'demos',
+      'demo',
+      'demoscene',
+      'intro',
+      'intros',
+      'cracktros',
+      'megademo',
+      'megademos',
+      'slideshow',
+      'slideshows',
+    ],
   },
   {
     id: 'magazines',
     name: 'Magazines',
     folderName: 'Mags',
-    hints: ['magazines', 'magazine', 'mags', 'diskmags', 'diskmag', 'coverdisks', 'coverdisk'],
+    hints: [
+      'magazines',
+      'magazine',
+      'mags',
+      'diskmags',
+      'diskmag',
+      'coverdisks',
+      'coverdisk',
+      'coverdiscs',
+      'coverdisc',
+    ],
   },
   {
     id: 'utilities',
@@ -63,7 +86,7 @@ export const categories: Category[] = [
     id: 'music',
     name: 'Music',
     folderName: 'Music',
-    hints: ['music', 'audio', 'mods', 'soundtracks'],
+    hints: ['music', 'audio', 'mods', 'soundtracks', 'musicdisk', 'musicdisks'],
   },
   {
     id: 'education',
@@ -86,9 +109,78 @@ function categoryOf(categoryId: string | undefined): Category | undefined {
   return categoryId ? categories.find((category) => category.id === categoryId) : undefined
 }
 
-/** The folder name for a category, or the bucket everything else shares. */
+/** The canonical folder name for a category, or the bucket everything else shares. */
 export function categoryFolder(categoryId: string | undefined): string {
   return categoryOf(categoryId)?.folderName || UNCATEGORISED
+}
+
+/**
+ * The folder this profile writes a category to.
+ *
+ * A stick that already sorts itself has already answered this, and answering it
+ * differently is how a destination ends up with both `Applications` and `Apps`:
+ * the titles are written beside the ones already there rather than into them,
+ * and every one of them reports as filed somewhere unexpected. So a folder
+ * discovered on the destination beats the canonical name, and nothing beats a
+ * name the user set for this profile by hand.
+ */
+export function categoryFolderFor(
+  profile: Pick<Profile, 'categoryFolders'> | undefined,
+  categoryId: string | undefined,
+): string {
+  const canonical = categoryFolder(categoryId)
+  const known = categoryId ? profile?.categoryFolders?.[categoryId] : undefined
+  return known?.trim() || canonical
+}
+
+// ---------------------------------------------------------------------------
+// Reading a category out of a name
+// ---------------------------------------------------------------------------
+
+/**
+ * The words of a piece of text, as one padded lower-case string.
+ *
+ * Matching against this is what makes every rule whole-word: `Demolition` never
+ * contains ` demo `, and `Gameshow` never contains ` game `. A wrong category is
+ * silent and puts a title in the wrong folder on the drive, which is far worse
+ * than leaving it unsorted where it can be seen and fixed.
+ *
+ * Exported because the same guarantee is wanted when a device build decides
+ * what a title is from its own name, and two copies of a rule this quiet is how
+ * they come to disagree.
+ */
+export function wordsOf(text: string): string {
+  return ` ${text
+    .toLowerCase()
+    .split(/[^a-z0-9+]+/i)
+    .filter(Boolean)
+    .join(' ')} `
+}
+
+/**
+ * Each category's hints in the form they are matched in, worked out once.
+ *
+ * Doing it per call meant splitting every hint of every category for every path
+ * segment of every title, which on a library of thirty thousand was seconds of
+ * pure repetition.
+ */
+const HINTS: Array<{ id: string; needles: string[] }> = categories.map((category) => ({
+  id: category.id,
+  needles: category.hints.map((hint) => wordsOf(hint)),
+}))
+
+/**
+ * The category a piece of free text names, if any.
+ *
+ * Deliberately reads *words* rather than whole labels, because collections name
+ * their folders after their own catalogue: `Commodore Amiga - Games - [ADF]`,
+ * `Acorn BBC Micro - Applications - [SSD]`, `Sinclair ZX Spectrum - Demos`.
+ * Requiring the segment to *be* the word left every one of those unsorted, and
+ * a whole TOSEC tree with it.
+ */
+export function categoryIn(text: string): string | undefined {
+  const words = wordsOf(text)
+  return HINTS.find((category) => category.needles.some((needle) => words.includes(needle)))?.id
 }
 
 /**
@@ -97,32 +189,105 @@ export function categoryFolder(categoryId: string | undefined): string {
  * The folders a file sits in are the better evidence and are asked first, but a
  * downloaded title has none: it lands in a cache folder named after the site
  * and the download, which says nothing about what it holds. Its name often
- * does — "Zool 1 (Gremlin) demo", "Amiga Format coverdisk", "SysInfo v4.4".
+ * does — "Amiga Format coverdisk", "SysInfo v4.4 utility".
  *
- * Only whole words count, so "Demolition" is not a demo and "Gameshow" is not
- * filed under games by accident.
+ * The name is read with its release tags taken off first, because in a
+ * collection's naming convention a bracketed `(demo)` is a *development
+ * status* — a playable demo of a commercial game — and not a demoscene
+ * production at all. Filing every game demo under Demos is exactly the sort of
+ * silent mistake that a few thousand titles turns into an afternoon's work.
  */
 export function inferCategoryFromName(name: string): string | undefined {
-  const words = new Set(
-    name
-      .toLowerCase()
-      .replace(/\.[a-z0-9]+$/, '')
-      .split(/[^a-z0-9+]+/)
-      .filter(Boolean),
-  )
-  return categories.find((category) => category.hints.some((hint) => words.has(hint)))?.id
+  return categoryIn(readTags(name).bareTitle)
 }
 
 /**
- * What a title is, from whatever evidence there is: the folders it sits in
- * first, then its own name.
+ * The deepest folder in a path that names a category, if any names one.
+ *
+ * Deepest wins because a collection nests from the general to the particular:
+ * `Commodore/Amiga/Applications` ends with what the folder actually holds. Only
+ * whole segments are considered, so a folder is read as a word rather than as
+ * text a category name happens to appear in.
+ *
+ * Both questions asked of a path go through here. They differ only in how much
+ * of the path each is entitled to read, which is settled by the caller before
+ * it asks, so the walk itself cannot come to two different answers.
+ */
+function deepestCategoryIn(path: string): string | undefined {
+  const segments = toPosix(path)
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  for (const segment of [...segments].reverse()) {
+    const match = categoryIn(segment)
+    if (match) return match
+  }
+  return undefined
+}
+
+/**
+ * The category the source folder itself names, if any.
+ *
+ * Weak evidence, and asked last, but it is right far more often than it is
+ * wrong: somebody who points this application at a folder called `Games` has
+ * told it what is in there. Ignoring it left ninety-four per cent of a real
+ * library unsorted — every title of a four thousand image set under
+ * `…/Commodore Amiga/Games`, and a TOSEC applications set with it — because
+ * the only folder that said anything was the one folder that was not read.
+ *
+ * It cannot be trusted over the folders *below* the root, which is why it is
+ * asked after them: a `Magazines` folder inside a `Games` library still holds
+ * magazines.
+ */
+export function categoryFromSource(source: string): string | undefined {
+  return deepestCategoryIn(source)
+}
+
+/**
+ * What a title is, from whatever evidence there is, strongest first: the
+ * folders it sits in below the source, then its own name and the name of the
+ * archive holding it, and failing those the source folder's own name.
  *
  * Nothing recognisable still means no category. An uncategorised title is
  * visible, filterable and easy to set in bulk; a wrongly categorised one is
  * silent, and ends up in the wrong folder on the drive.
  */
-export function inferCategory(path: string, source: string, name?: string): string | undefined {
-  return inferCategoryId(path, source) ?? inferCategoryFromName(name ?? path)
+export function inferCategory(
+  path: string,
+  source: string,
+  ...names: string[]
+): string | undefined {
+  const fromNames = names.length ? names : [path]
+  return (
+    inferCategoryId(path, source) ??
+    fromNames.reduce<string | undefined>(
+      (found, name) => found ?? inferCategoryFromName(name),
+      undefined,
+    ) ??
+    categoryFromSource(source)
+  )
+}
+
+/**
+ * What a title is, with the source it came from as the last word.
+ *
+ * A source carries two things that say what is in it: where it is, and what the
+ * user called it. The name is the better of the two and is often the only one —
+ * a collection kept at `…/Ghostware Collection/Commodore/Amiga` says nothing
+ * about what it holds, while the person who added it called it "Games
+ * (Ghostware)" and meant it. Both are weaker than anything about the title
+ * itself, so both are asked last.
+ */
+export function inferCategoryFor(
+  path: string,
+  source: { path: string; name?: string },
+  ...names: string[]
+): string | undefined {
+  return (
+    inferCategory(path, source.path, ...names) ??
+    (source.name ? categoryIn(source.name) : undefined)
+  )
 }
 
 /**
@@ -138,19 +303,30 @@ export function inferCategory(path: string, source: string, name?: string): stri
  * title is visible and easy to set, while a wrong one is silent.
  */
 export function inferCategoryId(path: string, source: string): string | undefined {
+  // Everything between the source root and the file: the folders, never the
+  // file's own name, and never the root itself.
   const relative = toPosix(path).slice(toPosix(source).length)
-  const segments = relative
-    .split('/')
-    .slice(0, -1)
-    .map((segment) => segment.trim().toLowerCase())
-    .filter(Boolean)
+  return deepestCategoryIn(relative.split('/').slice(0, -1).join('/'))
+}
 
-  for (const segment of [...segments].reverse()) {
-    // A TOSEC-style folder carries a qualifier, as in "Games [ADF]", so the
-    // bracketed part is dropped before the segment is read as a name.
-    const name = segment.replace(/[[(].*$/, '').trim()
-    const match = categories.find((category) => category.hints.includes(name))
-    if (match) return match.id
+/**
+ * The category folders a destination already uses, as it spells them.
+ *
+ * Read from the destination's own listing rather than assumed, so a stick that
+ * calls its applications folder `Applications` keeps calling it that. Only a
+ * folder that differs from the canonical name is recorded: an override that
+ * says the same thing as the default is noise, and would have to be maintained
+ * if the default ever changed.
+ */
+export function destinationCategoryFolders(
+  entries: readonly FileEntry[],
+): Record<string, string> {
+  const found: Record<string, string> = {}
+  for (const entry of entries) {
+    if (!entry.directory) continue
+    const id = categoryIn(entry.name)
+    if (!id || id in found || entry.name === categoryFolder(id)) continue
+    found[id] = entry.name
   }
-  return undefined
+  return found
 }

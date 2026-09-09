@@ -52,7 +52,7 @@ async function waitFor<T>(
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const value = probe()
-    if (value) return value as T
+    if (value) return value
     if (Date.now() > deadline) throw new Error(`Timed out waiting for ${describe}`)
     await sleep(100)
   }
@@ -81,6 +81,9 @@ async function click(label: string) {
  * used and an input event dispatched, which is what a real keystroke produces.
  */
 function type(input: HTMLInputElement, value: string) {
+  // Taken from a property descriptor deliberately, and called with its receiver
+  // on the next line, which is what the rule cannot see.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   setter?.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -159,6 +162,9 @@ async function walkTheFlow(controls: CaptureControls) {
   const profile = await seed(controls)
 
   // 1 · Profile
+  // The application opens on Profiles, so the guided flow has to be asked for
+  // rather than assumed; it is the Library page that holds it.
+  controls.setPage('Library')
   await waitFor('the profile step', () => document.querySelector('.flow-profile'))
   await capture('01-profile')
 
@@ -186,7 +192,9 @@ async function walkTheFlow(controls: CaptureControls) {
 
   // 4 · Verify
   await click('Verify changes')
-  await waitFor('the planned result', () => document.querySelector('.build-result-table tbody tr'))
+  await waitFor('the planned result', () =>
+    document.querySelector('.build-result-table tbody tr'),
+  )
   await capture('04-verify')
 
   // 5 · Confirm
@@ -208,11 +216,25 @@ async function walkTheFlow(controls: CaptureControls) {
   await waitFor('the profiles screen', () => document.querySelector('.target-view'))
   await capture('07-profiles')
 
+  // The devices screen, where a profile is written to real media. The drives it
+  // lists are invented for a capture rather than the machine's own; see
+  // {@link CAPTURE_DEVICES}. Selecting one shows what a write would involve,
+  // which is the point of the screen and is all read-only: nothing is written
+  // without a further click that this harness never makes.
+  controls.setPage('Devices')
+  await waitFor('the devices screen', () => document.querySelector('.targets-layout'))
+  await click('Generic USB Flash Drive')
+  // Selecting a device starts reading the profile's destination and measuring
+  // the stick, and the copy button counts nothing until both have finished.
+  // Waiting for it to become usable is waiting for a picture worth taking.
+  await waitFor('the stick to be read and measured', () => button('Copy'))
+  await capture('08-devices')
+
   if (import.meta.env.VITE_CAPTURE_HELP) {
     controls.setPage('Help')
     await waitFor('the help screen', () => document.querySelector('.help-shots img'))
     await sleep(1200)
-    await capture('08-help')
+    await capture('09-help')
   }
 
   await fetch(`${config.endpoint}/done`)
@@ -231,6 +253,5 @@ export function useCaptureHarness(controls: CaptureControls) {
       )
     })
     // The harness runs once for the lifetime of the window.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 }

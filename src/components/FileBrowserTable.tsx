@@ -1,8 +1,28 @@
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen, RefreshCw } from 'lucide-react'
 import { formatBytes } from '../domain/media'
 import type { FileEntry } from '../domain/types'
+import type { DirectoryBrowser } from '../hooks/useDirectoryBrowser'
 import type { RowSelection } from '../hooks/useRowSelection'
 import { SelectAllCell, SelectCell, SelectColumns } from './BulkSelection'
+
+/**
+ * Re-reads whatever a browser is showing.
+ *
+ * Offered by both screens that browse a destination, and the spin while it works
+ * is the part worth keeping together with it: an unchanged listing is the usual
+ * answer, and without the movement the button looks as though it did nothing.
+ */
+export function RefreshContents({ browser }: { browser: DirectoryBrowser }) {
+  return (
+    <button
+      className="icon-button"
+      title="Refresh contents"
+      onClick={() => void browser.refresh()}
+    >
+      <RefreshCw className={browser.busy ? 'spinning' : ''} />
+    </button>
+  )
+}
 
 /**
  * The destination listing, shared by the guided flow and the profiles screen.

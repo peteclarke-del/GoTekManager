@@ -4,15 +4,14 @@ import {
   Check,
   ChevronLeft,
   FolderOpen,
-  HardDrive,
   Pencil,
   RefreshCw,
   Trash2,
 } from 'lucide-react'
 import { Empty } from '../components/Feedback'
-import { FileBrowserTable } from '../components/FileBrowserTable'
+import { ProfileChoice } from '../components/Choices'
+import { FileBrowserTable, RefreshContents } from '../components/FileBrowserTable'
 import { ProfileEditor } from '../components/ProfileEditor'
-import { requireFirmware, requirePlatform } from '../domain/catalog'
 import { formatBytes, transferOperations } from '../domain/media'
 import { basename } from '../domain/paths'
 import type {
@@ -36,7 +35,7 @@ import {
 } from '../native/commands'
 
 /** Room for the files plus FAT's own structures, rounded up to a whole MB. */
-function imageSizeFor(totalBytes: number): number {
+function imageSizeForContents(totalBytes: number): number {
   const withSlack = totalBytes * 1.15 + 16 * 1024 * 1024
   const megabytes = Math.ceil(Math.max(withSlack, 32 * 1024 * 1024) / (1024 * 1024))
   return megabytes * 1024 * 1024
@@ -92,7 +91,9 @@ export function ProfilesPage({
       const written = await createImage(
         path,
         {
-          sizeBytes: imageSizeFor(operations.reduce((total, item) => total + item.size, 0)),
+          sizeBytes: imageSizeForContents(
+            operations.reduce((total, item) => total + item.size, 0),
+          ),
           label: active.name,
           fat: 'auto',
           partitioned: true,
@@ -202,11 +203,22 @@ export function ProfilesPage({
           </div>
         </div>
         <div className="target-actions">
-          <button className="button" onClick={() => void addProfile(() => chooseFolder('Choose a folder or mounted GoTek volume'), 'folder')}>
+          <button
+            className="button"
+            onClick={() =>
+              void addProfile(
+                () => chooseFolder('Choose a folder or mounted GoTek volume'),
+                'folder',
+              )
+            }
+          >
             <FolderOpen />
             Choose folder
           </button>
-          <button className="button secondary" onClick={() => void addProfile(chooseImageFile, 'image')}>
+          <button
+            className="button secondary"
+            onClick={() => void addProfile(chooseImageFile, 'image')}
+          >
             <Archive />
             Open image
           </button>
@@ -244,35 +256,22 @@ export function ProfilesPage({
         )}
         {imaging.error && <p className="inline-error">{imaging.error}</p>}
         <p className="target-picker-help">
-          “Choose folder” opens the system folder picker, where you can navigate to any
-          mounted drive or local directory before making it a profile's destination.
+          “Choose folder” opens the system folder picker, where you can navigate to any mounted
+          drive or local directory before making it a profile's destination.
         </p>
         <div
           className="managed-targets setup-scroll-list"
           tabIndex={0}
           aria-label="GoTek profiles"
         >
-          {profiles.map((profile) => {
-            const selected = profile.id === active?.id
-            return (
-              <button
-                key={profile.id}
-                className={selected ? 'selected' : ''}
-                aria-pressed={selected}
-                onClick={() => dispatch({ type: 'profileSelected', id: profile.id })}
-              >
-                <HardDrive />
-                <span>
-                  <b>{profile.name}</b>
-                  <small>
-                    {requirePlatform(profile.platformId).name} ·{' '}
-                    {requireFirmware(profile.firmwareId).name}
-                  </small>
-                </span>
-                {selected && <Check className="selection-check" />}
-              </button>
-            )
-          })}
+          {profiles.map((profile) => (
+            <ProfileChoice
+              key={profile.id}
+              profile={profile}
+              selected={profile.id === active?.id}
+              onSelect={() => dispatch({ type: 'profileSelected', id: profile.id })}
+            />
+          ))}
         </div>
         {!profiles.length && (
           <Empty
@@ -312,7 +311,11 @@ export function ProfilesPage({
               )}
             </div>
             <div className="inline-actions">
-              <button className="icon-button" title="Edit profile" onClick={() => setEditing(active)}>
+              <button
+                className="icon-button"
+                title="Edit profile"
+                onClick={() => setEditing(active)}
+              >
                 <Pencil />
               </button>
               <button
@@ -322,20 +325,14 @@ export function ProfilesPage({
               >
                 <Trash2 />
               </button>
-              <button
-                className="icon-button"
-                title="Refresh contents"
-                onClick={() => void browser.refresh()}
-              >
-                <RefreshCw className={browser.busy ? 'spinning' : ''} />
-              </button>
+              <RefreshContents browser={browser} />
             </div>
           </div>
 
           {summary && !summary.exists && (
             <div className="notice error">
-              This destination is not currently available. Reconnect the device or edit
-              the profile.
+              This destination is not currently available. Reconnect the device or edit the
+              profile.
             </div>
           )}
 
@@ -367,8 +364,8 @@ export function ProfilesPage({
             />
           </div>
           <p className="target-browser-help">
-            Double-click a folder, or focus it and press Enter, to browse into it. Use
-            “Parent” to go back.
+            Double-click a folder, or focus it and press Enter, to browse into it. Use “Parent”
+            to go back.
           </p>
         </section>
       ) : (

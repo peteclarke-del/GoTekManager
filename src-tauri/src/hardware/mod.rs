@@ -233,7 +233,10 @@ mod tests {
 
     #[test]
     fn device_names_fall_back_to_the_node() {
-        assert_eq!(device_name(Some("SanDisk "), Some("Cruzer"), "/dev/sdb"), "SanDisk Cruzer");
+        assert_eq!(
+            device_name(Some("SanDisk "), Some("Cruzer"), "/dev/sdb"),
+            "SanDisk Cruzer"
+        );
         assert_eq!(device_name(None, Some("Cruzer"), "/dev/sdb"), "Cruzer");
         assert_eq!(device_name(Some("  "), None, "/dev/sdb"), "/dev/sdb");
     }

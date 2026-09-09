@@ -6,12 +6,60 @@
  */
 
 import { acceptedFormats, platforms, requireFirmware } from './catalog'
-import { categoryFolder, inferCategory } from './categories'
-import { dottedExtensionOf, joinRelative, safeFileName } from './paths'
-import type { FileEntry, MediaItem, Profile, TransferOperation } from './types'
+import { categoryFolderFor, inferCategoryFor } from './categories'
+import { archiveOf, basename, dottedExtensionOf, joinRelative, safeFileName } from './paths'
+import { extensionPart, readTags, type ReleaseTags } from './tags'
+import type { FileEntry, MediaItem, NamingRule, Profile, TransferOperation } from './types'
 
 /** Tokens a custom folder template may use. */
 export const FOLDER_TOKENS = ['platform', 'category', 'family', 'initial', 'format'] as const
+
+/**
+ * What a file is called once it reaches the drive.
+ *
+ * Two separate questions used to be conflated in one setting: whether to keep
+ * everything the collection recorded about a release, and whether the name has
+ * to fit a small display. They are split here, so a stick prepared for a drive
+ * with no panel at all still gets titles rather than catalogue entries.
+ */
+export const NAMING_CHOICES: Array<{
+  id: NamingRule
+  name: string
+  /** The same thing named inside a sentence, lower case. */
+  short: string
+  summary: string
+}> = [
+  {
+    id: 'title',
+    name: 'Title only',
+    short: 'title only',
+    summary:
+      'The name of the game or application, and which disc it is when the set has more than one. Year, publisher, region, language and dump flags are all left behind.',
+  },
+  {
+    id: 'oled',
+    name: 'Title, shortened for the display',
+    short: 'shortened title',
+    summary:
+      "The same name, cut to what the drive's panel can show. The disc is never what gives up room.",
+  },
+  {
+    id: 'original',
+    name: 'Original filename',
+    short: 'original',
+    summary: 'Exactly what the collection called the file, tags and all.',
+  },
+]
+
+/** The naming rule in full, for a control that has room to explain itself. */
+export function namingChoice(naming: NamingRule) {
+  return NAMING_CHOICES.find((choice) => choice.id === naming) ?? NAMING_CHOICES[0]
+}
+
+/** The naming rule named inside a sentence. */
+export function namingLabel(naming: NamingRule): string {
+  return namingChoice(naming).short
+}
 
 /**
  * The alphabetical bucket a title belongs in.
@@ -38,12 +86,16 @@ export function initialBucket(title: string): string {
  * rather than silently dropped, so a typo is visible in the preview instead of
  * quietly reshaping the whole layout.
  */
-export function renderFolderTemplate(template: string, item: MediaItem): string {
+export function renderFolderTemplate(
+  template: string,
+  item: MediaItem,
+  profile?: Pick<Profile, 'categoryFolders'>,
+): string {
   const platform = mediaPlatform(item)
   const title = item.canonicalTitle || item.name
   const values: Record<string, string> = {
     platform: platform?.folderName || 'Unsorted',
-    category: categoryFolder(item.category),
+    category: categoryFolderFor(profile, item.category),
     family: platform?.family || 'Unsorted',
     initial: initialBucket(title),
     format: item.extension.toUpperCase(),
@@ -60,12 +112,52 @@ export function renderFolderTemplate(template: string, item: MediaItem): string 
 }
 
 /**
+ * Every name that describes one title: its own, and its archive's.
+ *
+ * A title held in a ZIP has two names and the tags are rarely on the one
+ * inside — a single-title archive is `Dungeon Master (1987)(FTL).zip` holding
+ * `disk1.adf`. Reading both is what stops such a title arriving with no year,
+ * no publisher and no idea which disc it is.
+ */
+export function namesOf(item: Pick<MediaItem, 'name' | 'path'>): string[] {
+  const archive = archiveOf(item.path)
+  return archive ? [item.name, basename(archive)] : [item.name]
+}
+
+/**
+ * The release tags for one title, read once.
+ *
+ * Reading tags is regular-expression work over every name in the library, and
+ * the bulk-add preview asks for them again on every change to a filter. The
+ * answer only depends on the names, so it is remembered against them; the cache
+ * is dropped wholesale rather than grown without limit, because a library that
+ * large has already been read once by then.
+ */
+const TAG_CACHE = new Map<string, ReleaseTags>()
+const TAG_CACHE_LIMIT = 200000
+
+export function tagsOf(item: Pick<MediaItem, 'name' | 'path'>): ReleaseTags {
+  const key = `${item.path}\u0000${item.name}`
+  const known = TAG_CACHE.get(key)
+  if (known) return known
+  const tags = readTags(...namesOf(item))
+  if (TAG_CACHE.size >= TAG_CACHE_LIMIT) TAG_CACHE.clear()
+  TAG_CACHE.set(key, tags)
+  return tags
+}
+
+/**
  * Recognises a file by extension.
  *
  * A format shared by several machines, such as `.dsk`, stays unassigned so the
  * user makes the choice explicitly rather than the application guessing.
  */
-export function classifyMedia(entry: FileEntry, source: string): MediaItem {
+export function classifyMedia(
+  entry: FileEntry,
+  source: string,
+  /** What the user called this source, which is often what says what is in it. */
+  sourceName?: string,
+): MediaItem {
   const extension = `.${entry.extension.toLowerCase()}`
   const likelyPlatformIds = platforms
     .filter((platform) => platform.formats.includes(extension))
@@ -78,8 +170,13 @@ export function classifyMedia(entry: FileEntry, source: string): MediaItem {
     assignedPlatformId: likelyPlatformIds.length === 1 ? likelyPlatformIds[0] : undefined,
     canonicalTitle: entry.name,
     // A collection that files its own titles by kind has already answered
-    // this; a download has no such folders, so its name is asked instead.
-    category: inferCategory(entry.path, source, entry.name),
+    // this; a download has no such folders, so its name is asked instead — and
+    // for a title inside an archive, the archive's name is a name too.
+    category: inferCategoryFor(
+      entry.path,
+      { path: source, name: sourceName },
+      ...namesOf(entry),
+    ),
   }
 }
 
@@ -135,50 +232,6 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Shortens a filename for a GoTek's small OLED display.
- *
- * Common release labels are dropped and the stem is truncated to the firmware's
- * display width. The extension is always preserved, and the library keeps the
- * canonical title so nothing is lost.
- */
-/**
- * Which disk of a set this is, and the title without it.
- *
- * A multi-disk game says so at the end of its name — `Elite (Disk 2)`,
- * `Another World ... A` — which is exactly where a trimmed name loses it. Two
- * disks that arrive at the same name are not a cosmetic problem: the write
- * refuses, because one would overwrite the other, and a set of four disks
- * becomes one file. So the marker is taken off before the title is cut and put
- * back afterwards, and it is the title that gives up room, never the disk.
- *
- * A number is written `D2` rather than `2`, which on a two-line display cannot
- * be mistaken for a year or a sequel.
- */
-function splitDiskMarker(stem: string): { title: string; marker: string } {
-  const bracketed = stem.match(/[([]\s*(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\b[^)\]]*[)\]]/i)
-  if (bracketed) {
-    return {
-      title: stem.replace(bracketed[0], ' '),
-      marker: ` ${markerOf(bracketed[1])}`,
-    }
-  }
-  const bare = stem.match(/\s(?:disk|disc|side)\s*([0-9]{1,2}|[a-z])\s*$/i)
-  if (bare) {
-    return { title: stem.slice(0, bare.index), marker: ` ${markerOf(bare[1])}` }
-  }
-  // A lone letter at the end is how most Amiga sets number their disks.
-  const letter = stem.match(/\s([a-z])\s*$/i)
-  if (letter) {
-    return { title: stem.slice(0, letter.index), marker: ` ${letter[1].toUpperCase()}` }
-  }
-  return { title: stem, marker: '' }
-}
-
-function markerOf(value: string): string {
-  return /^[0-9]+$/.test(value) ? `D${Number(value)}` : value.toUpperCase()
-}
-
-/**
  * A title with its middle taken out, for somewhere too narrow to show it all.
  *
  * What a retro title carries in the middle is almost always the publisher, and
@@ -186,8 +239,8 @@ function markerOf(value: string): string {
  * is at the back. Cutting the end therefore loses the useful half and leaves a
  * column of rows that read alike; cutting the middle keeps both.
  *
- * For display only. A name written to a drive keeps to plain characters and
- * drops the middle outright rather than marking it — see {@link oledName}.
+ * For display only. A name written to a drive has already had the publisher
+ * taken off by {@link releaseName}, so there is no middle left to lose.
  */
 export function elideMiddle(text: string, max = 44): string {
   if (text.length <= max) return text
@@ -198,97 +251,254 @@ export function elideMiddle(text: string, max = 44): string {
   return `${text.slice(0, head).trimEnd()}…${text.slice(text.length - tail).trimStart()}`
 }
 
-export function oledName(name: string, length = 24): string {
-  const dot = name.lastIndexOf('.')
-  const extension = dot > 0 ? name.slice(dot) : ''
-  const { title: stem, marker } = splitDiskMarker(
-    (dot > 0 ? name.slice(0, dot) : name).replace(/[_-]+/g, ' '),
-  )
-  const title = stem
-    // Release labels that say nothing about which file this is. `disk` is not
-    // among them any more: which disk it is has already been taken out, and
-    // anything left saying "disk" is part of the name.
-    .replace(/\s*\([^)]*(demo|rev|version)[^)]*\)\s*/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  const room = Math.max(1, length - extension.length - marker.length)
-  if (title.length <= room) return `${title}${marker}${extension}`
-
-  // Still too long, so the middle goes before the ends do. What sits in
-  // brackets is the publisher, the region, the dump — none of it says which
-  // file this is, while the name at the front and the disk at the back both do.
-  // Dropped outright rather than marked, because this becomes a filename on a
-  // FAT volume read by an 8-bit drive, and an ellipsis is three bytes there.
-  const withoutLabels = title.replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim()
-  if (withoutLabels && withoutLabels.length <= room) {
-    return `${withoutLabels}${marker}${extension}`
-  }
-  const kept = withoutLabels || title
-  return `${kept.slice(0, room).trimEnd()}${marker}${extension}`
+/**
+ * A normalised key for comparing one title with another.
+ *
+ * Built on the same reading of the name as everything else, so a library title
+ * and a catalogue entry are compared on what the software *is* rather than on
+ * how one collection chose to label it. Deliberately conservative: it is enough
+ * for grouping a disc set and for advisory "present" and "missing" marks, and
+ * it is not a reliable identity.
+ */
+export function softwareTitleKey(value: string): string {
+  return normaliseTitle(readTags(basename(value)).bareTitle)
 }
 
 /**
- * A normalised key for comparing a local filename with a catalogue title.
+ * A title reduced to the letters and digits that identify it.
  *
- * Deliberately conservative: it strips bracketed notes, leading articles, and
- * trailing disk numbers, which is enough for advisory "present" and "missing"
- * marks but is not a reliable identity.
+ * Kept apart from {@link softwareTitleKey} so a title that has already been
+ * read out of a filename is not parsed a second time to be compared.
  */
-export function softwareTitleKey(value: string): string {
-  const filename = value.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')
-  const title = filename
+export function normaliseTitle(title: string): string {
+  return title
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
     .replace(/,\s*the$/i, ' the')
     .toLowerCase()
     .replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
-  return title.replace(/\b(disk|disc|side)\s*[a-z0-9]+$/i, '').trim()
+}
+
+// ---------------------------------------------------------------------------
+// Disc sets
+// ---------------------------------------------------------------------------
+
+/**
+ * How many discs this title's set holds, and which one this is.
+ *
+ * Whether a disc marker is needed at all is a fact about the *set*, never about
+ * the file: a one-disc game is `Elite.adf`, and only a set of several needs to
+ * say which is which. That is why naming takes this alongside the title.
+ */
+export type SetPosition = { size: number; label?: string }
+
+/** The default for a title nothing has told us about: one disc, no marker. */
+export const SINGLE_DISC: SetPosition = { size: 1 }
+
+/**
+ * What makes two files discs of the same thing: the same software on the same
+ * machine. The disc marker is deliberately not part of it — that is what
+ * distinguishes members *within* a set.
+ */
+export function setKeyOf(item: MediaItem): string {
+  return `${normaliseTitle(tagsOf(item).bareTitle)}\u0000${item.assignedPlatformId ?? ''}`
 }
 
 /**
- * Turns the profile's collection into the copy operations the native planner
- * expects, applying the profile's own layout and naming rules.
+ * Groups titles into the sets they belong to.
+ *
+ * The size of a set is whichever is larger: how many discs the collection says
+ * there are — `(Disk 1 of 3)` says three even when only two were ever found —
+ * and how many distinct discs are actually here. Taking the larger of the two
+ * is what lets an incomplete set be recognised as incomplete rather than
+ * quietly renumbered.
  */
+export function setIndexOf(items: readonly MediaItem[]): Map<string, SetPosition> {
+  const groups = new Map<string, MediaItem[]>()
+  for (const item of items) {
+    const key = setKeyOf(item)
+    const group = groups.get(key)
+    if (group) group.push(item)
+    else groups.set(key, [item])
+  }
+
+  const positions = new Map<string, SetPosition>()
+  for (const group of groups.values()) {
+    const labels = new Set<string>()
+    let stated = 0
+    for (const item of group) {
+      const disk = tagsOf(item).disk
+      if (!disk) continue
+      labels.add(disk.label)
+      if (disk.of) stated = Math.max(stated, disk.of)
+    }
+    const size = Math.max(stated, labels.size, 1)
+    for (const item of group) {
+      positions.set(item.id, { size, label: tagsOf(item).disk?.label })
+    }
+  }
+  return positions
+}
+
+// ---------------------------------------------------------------------------
+// Naming
+// ---------------------------------------------------------------------------
+
+/**
+ * The name a title is written under: what it is, and which disc, and nothing
+ * else.
+ *
+ * `Dungeon Master (1987)(FTL)(GB)(Disk 1 of 2)[cr QTX].adf` becomes
+ * `Dungeon Master D1.adf`. The year, the publisher, the region, the language,
+ * the version and the dump flags are all things about *this copy* of the
+ * software; none of them helps somebody standing at a real machine reading a
+ * two-line display, and several of them are longer than the title.
+ *
+ * The disc marker only appears when the set actually has more than one disc,
+ * and when the name has to be cut to fit a panel it is the title that gives up
+ * room, never the disc — two discs arriving at one name is not a cosmetic
+ * problem, it is a write that refuses because one would overwrite the other.
+ */
+export function releaseName(
+  item: MediaItem,
+  set: SetPosition = SINGLE_DISC,
+  length?: number,
+  suffix = '',
+): string {
+  const tags = tagsOf(item)
+  const extension = extensionPart(item.name)
+  const marker = set.size > 1 && set.label ? ` ${set.label}` : ''
+  // A name that was nothing but tags still has to be called something, and the
+  // filename it arrived under is the only thing left to call it.
+  const stem = tags.bareTitle || item.name.slice(0, item.name.length - extension.length)
+  const tail = `${marker}${suffix}${extension}`
+  if (length === undefined) return safeFileName(`${stem}${tail}`)
+  const room = Math.max(1, length - tail.length)
+  return safeFileName(`${stem.length <= room ? stem : stem.slice(0, room).trimEnd()}${tail}`)
+}
+
+/** Puts a disambiguating suffix before the extension of an untouched name. */
+function withSuffix(name: string, suffix: string): string {
+  if (!suffix) return name
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? `${name.slice(0, dot)}${suffix}${name.slice(dot)}` : `${name}${suffix}`
+}
+
 /**
  * The filename a title will be written under.
  *
  * An explicit alias always wins: the user typed it for this drive's display and
- * nothing should second-guess it. Otherwise OLED naming shortens the original.
+ * nothing should second-guess it. Otherwise the profile's rule decides whether
+ * the collection's own name is kept, reduced to the title, or reduced and cut
+ * to the panel's width.
  */
-export function outputFileName(item: MediaItem, profile: Profile): string {
-  const firmware = requireFirmware(profile.firmwareId)
-  const extension = item.extension ? `.${item.extension}` : ''
+export function outputFileName(
+  item: MediaItem,
+  profile: Profile,
+  set: SetPosition = SINGLE_DISC,
+  suffix = '',
+): string {
+  const extension = extensionPart(item.name)
   if (item.displayTitle?.trim()) {
     const alias = item.displayTitle.trim()
-    return safeFileName(alias.toLowerCase().endsWith(extension) ? alias : `${alias}${extension}`)
+    return safeFileName(
+      withSuffix(
+        alias.toLowerCase().endsWith(extension.toLowerCase()) ? alias : `${alias}${extension}`,
+        suffix,
+      ),
+    )
   }
-  return safeFileName(
-    profile.naming === 'oled' ? oledName(item.name, firmware.oledLength) : item.name,
-  )
+  if (profile.naming === 'original') return safeFileName(withSuffix(item.name, suffix))
+  const length =
+    profile.naming === 'oled' ? requireFirmware(profile.firmwareId).oledLength : undefined
+  return releaseName(item, set, length, suffix)
 }
 
 /** The folder a title lands in, relative to the destination root. */
 export function outputFolder(item: MediaItem, profile: Profile): string {
   if (!profile.organise) return ''
   if (profile.folderLayout === 'platform') return mediaPlatform(item)?.folderName || ''
-  if (profile.folderLayout === 'category') return categoryFolder(item.category)
+  if (profile.folderLayout === 'category') return categoryFolderFor(profile, item.category)
   if (profile.folderLayout === 'custom') {
-    return renderFolderTemplate(profile.folderTemplate || '{platform}', item)
+    return renderFolderTemplate(profile.folderTemplate || '{platform}', item, profile)
   }
   return ''
 }
 
-export function transferOperations(
-  items: MediaItem[],
-  profile: Profile,
-): TransferOperation[] {
-  return items.map((item) => ({
+/**
+ * What can be added to two identical names to tell them apart, best first.
+ *
+ * Reducing a name to its title is exactly what makes two files collide:
+ * `Elite (1984)` and `Elite (1987)[a]` are both `Elite.adf`. Where they differ
+ * by something the collection recorded, that difference is the honest way to
+ * separate them; a bare number is the last resort.
+ */
+function disambiguators(item: MediaItem): string[] {
+  const tags = tagsOf(item)
+  const stated = [tags.year, tags.publisher, tags.version, ...tags.unknown]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+  return [...new Set([...stated, '2', '3', '4', '5', '6', '7', '8', '9'])]
+}
+
+/** A title, where it will be written, and whether its name had to be changed. */
+export type PlannedName = {
+  item: MediaItem
+  /** The set this title belongs to; see {@link TransferOperation.group}. */
+  group: string
+  /** Always `/`-separated and relative to the destination root. */
+  relativePath: string
+  /**
+   * True when a suffix had to be added to keep this title apart from another
+   * that reduced to the same name.
+   */
+  disambiguated: boolean
+}
+
+/**
+ * Where every title in a collection will be written.
+ *
+ * The whole collection is in hand here and nowhere else, which is why this is
+ * where a set's size is worked out and where two titles that would land on one
+ * path are separated. Leaving it to the planner would only get the write
+ * refused, and leaving it to the user would mean explaining a collision they
+ * did not cause.
+ */
+export function plannedNames(items: readonly MediaItem[], profile: Profile): PlannedName[] {
+  const sets = setIndexOf(items)
+  const taken = new Set<string>()
+
+  return items.map((item) => {
+    const folder = outputFolder(item, profile)
+    const set = sets.get(item.id) ?? SINGLE_DISC
+    // Built one at a time: a name is only ever contested by a handful of
+    // titles, and computing every alternative for every title regardless cost
+    // thirteen times what naming the library actually needs.
+    const preferred = outputFileName(item, profile, set)
+    let name = preferred
+    if (taken.has(joinRelative(folder, name).toLowerCase())) {
+      for (const value of disambiguators(item)) {
+        name = outputFileName(item, profile, set, ` (${value})`)
+        if (!taken.has(joinRelative(folder, name).toLowerCase())) break
+      }
+    }
+    const relativePath = joinRelative(folder, name)
+    taken.add(relativePath.toLowerCase())
+    return { item, relativePath, disambiguated: name !== preferred, group: setKeyOf(item) }
+  })
+}
+
+/**
+ * Turns a collection into the copy operations the native planner expects.
+ */
+export function transferOperations(items: MediaItem[], profile: Profile): TransferOperation[] {
+  return plannedNames(items, profile).map(({ item, relativePath, group }) => ({
     source: item.path,
-    relativePath: joinRelative(outputFolder(item, profile), outputFileName(item, profile)),
+    relativePath,
     size: item.size,
+    group,
   }))
 }
 

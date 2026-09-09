@@ -19,10 +19,11 @@ import {
   SelectCell,
   SelectColumns,
 } from '../../components/BulkSelection'
+import { Options } from '../../components/Choices'
 import { Empty, InlineStatus, ProgressDialog } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
 import { namesAnotherPlatform, platforms, type Platform } from '../../domain/catalog'
-import { belongsToPlatform, formatBytes, softwareTitleKey } from '../../domain/media'
+import { formatBytes, softwareTitleKey } from '../../domain/media'
 import {
   adapterLabel,
   faultIn,
@@ -32,12 +33,13 @@ import {
 } from '../../domain/providers'
 import type {
   CachedDownload,
-  MediaItem,
   OnlineProvider,
   OnlineTitle,
   ProviderAdapter,
   ProviderCatalog,
 } from '../../domain/types'
+import { isDesktop } from '../../native/commands'
+import { heldTitles } from '../../native/store'
 import { useBusyItem } from '../../hooks/useAsyncAction'
 import { useRowSelection } from '../../hooks/useRowSelection'
 import {
@@ -55,14 +57,12 @@ const titleKey = (title: OnlineTitle) => title.downloadUrl || title.remoteId
 
 export function OnlineLibrary({
   platform,
-  items,
   providers,
   saveProvider,
   removeProvider,
   imported,
 }: {
   platform: Platform
-  items: MediaItem[]
   providers: OnlineProvider[]
   /** Adds a site, or records a change to one — including a shipped one. */
   saveProvider: (provider: OnlineProvider) => void
@@ -115,19 +115,23 @@ export function OnlineLibrary({
   }, [visible, platform.id, setError])
 
   /** Normalised titles already held locally for this platform. */
-  const localKeys = useMemo(
-    () =>
-      new Set(
-        items
-          .filter((item) => belongsToPlatform(item, platform.id))
-          .flatMap((item) => [
-            softwareTitleKey(item.canonicalTitle),
-            softwareTitleKey(item.name),
-          ])
-          .filter(Boolean),
-      ),
-    [items, platform.id],
-  )
+  // The names of what is already held, asked for rather than carried. Marking
+  // a catalogue entry as owned means comparing every name against every name,
+  // which is the one question here that wants the whole library — but it wants
+  // the names, not the rows, and only once this tab is open.
+  const [held, setHeld] = useState<string[]>([])
+  useEffect(() => {
+    if (!isDesktop()) return
+    let active = true
+    heldTitles(platform.id)
+      .then((names) => active && setHeld(names))
+      .catch(() => active && setHeld([]))
+    return () => {
+      active = false
+    }
+  }, [platform.id])
+
+  const localKeys = useMemo(() => new Set(held.map(softwareTitleKey).filter(Boolean)), [held])
 
   const knownKeys = useMemo(
     () =>
@@ -233,7 +237,8 @@ export function OnlineLibrary({
     imported(result, { ...title, platformId: title.platformId || platform.id }, provider)
   }
 
-  const download = (title: OnlineTitle) => provider && run(titleKey(title), () => fetchOne(title))
+  const download = (title: OnlineTitle) =>
+    provider && run(titleKey(title), () => fetchOne(title))
 
   /**
    * Fetches a whole selection, one after another.
@@ -259,9 +264,7 @@ export function OnlineLibrary({
     setBulk(null)
     done()
     if (failed.length) {
-      setError(
-        `${failed.length} of ${titles.length} downloads failed. First: ${failed[0]}`,
-      )
+      setError(`${failed.length} of ${titles.length} downloads failed. First: ${failed[0]}`)
     }
   }
 
@@ -321,8 +324,8 @@ export function OnlineLibrary({
         ))}
         {!visible.length && (
           <p className="mode-note">
-            No online sources are listed for {platform.name} yet. Add one below; every
-            source names the machine it is for.
+            No online sources are listed for {platform.name} yet. Add one below; every source
+            names the machine it is for.
           </p>
         )}
         <button className="button secondary add-site" onClick={() => setAdding(true)}>
@@ -333,12 +336,11 @@ export function OnlineLibrary({
         <div className="provider-note">
           <b>Policy-aware inspection</b>
           <p>
-            Website scans stay on the selected host, read at most 100 pages, make at
-            most 700 requests, and pace every one of them. A link is asked what it is
-            before it is read, so a download is never fetched merely to identify it,
-            and only supported images are recorded. They obey robots.txt unless you
-            have overridden it for a source. Open a source's settings to change that;
-            nothing ships with it set.
+            Website scans stay on the selected host, read at most 100 pages, make at most 700
+            requests, and pace every one of them. A link is asked what it is before it is read,
+            so a download is never fetched merely to identify it, and only supported images are
+            recorded. They obey robots.txt unless you have overridden it for a source. Open a
+            source's settings to change that; nothing ships with it set.
           </p>
         </div>
       </section>
@@ -475,7 +477,11 @@ export function OnlineLibrary({
                           onClick={() => browse(title)}
                         >
                           {expandable &&
-                            (expandedId === title.remoteId ? <ChevronDown /> : <ChevronRight />)}
+                            (expandedId === title.remoteId ? (
+                              <ChevronDown />
+                            ) : (
+                              <ChevronRight />
+                            ))}
                           <b>{title.title}</b>
                         </button>
                         <small>{title.license || title.remoteId}</small>
@@ -572,7 +578,11 @@ export function OnlineLibrary({
           </table>
           {!rows.length && (
             <Empty
-              title={catalog ? 'No matching online titles' : 'Refresh this site to load its catalogue'}
+              title={
+                catalog
+                  ? 'No matching online titles'
+                  : 'Refresh this site to load its catalogue'
+              }
               action="Refresh list"
               run={() => void refresh()}
             />
@@ -742,12 +752,15 @@ function SiteDialog({
   const adaptable = !existing || OWN_ADAPTERS.includes(existing.adapter)
 
   return (
-    <Modal title={existing ? `Settings for ${existing.name}` : 'Add online site'} onClose={close}>
+    <Modal
+      title={existing ? `Settings for ${existing.name}` : 'Add online site'}
+      onClose={close}
+    >
       {!existing && <p>Add a website to inspect, or a structured reference catalogue.</p>}
       {existing?.builtIn && (
         <p className="mode-note">
-          This site ships with the application. Anything you change here is kept
-          separately and can be put back.
+          This site ships with the application. Anything you change here is kept separately and
+          can be put back.
         </p>
       )}
       <label>
@@ -796,16 +809,12 @@ function SiteDialog({
       <label>
         For which machine
         <select value={draft.scope} onChange={(event) => set('scope', event.target.value)}>
-          {platforms.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
+          <Options items={platforms} />
         </select>
       </label>
       <p className="mode-note">
-        A source only appears when that machine is being prepared, and its titles are
-        only ever offered for that machine.
+        A source only appears when that machine is being prepared, and its titles are only ever
+        offered for that machine.
       </p>
       {draft.adapter === 'htmlSite' && (
         <>
@@ -830,30 +839,30 @@ function SiteDialog({
             />
           </label>
           <p className="mode-note">
-            Left empty, the scan names this application, which is what lets a site
-            recognise it and decide for itself.
+            Left empty, the scan names this application, which is what lets a site recognise it
+            and decide for itself.
           </p>
         </>
       )}
       <p className="feed-format">
         {draft.adapter === 'htmlSite' ? (
           <>
-            Inspection follows same-site catalogue pages to depth 2 and records direct
-            links in this platform&rsquo;s formats.{' '}
+            Inspection follows same-site catalogue pages to depth 2 and records direct links in
+            this platform&rsquo;s formats.{' '}
             {draft.ignoreRobots
               ? 'This source ignores the site\u2019s robots rules and is paced ten times slower.'
               : 'The site\u2019s robots rules are enforced.'}
           </>
         ) : draft.adapter === 'jsonFeed' ? (
           <>
-            Items require <b>remoteId</b> and <b>title</b>. Optional fields are
-            downloadUrl, platformId, extension, size, detailsUrl, license, and updated.
-            Lists without downloads are used for collection coverage.
+            Items require <b>remoteId</b> and <b>title</b>. Optional fields are downloadUrl,
+            platformId, extension, size, detailsUrl, license, and updated. Lists without
+            downloads are used for collection coverage.
           </>
         ) : (
           <>
-            This source reads a service API. Its query is what selects the machine, so
-            changing it changes which productions are listed.
+            This source reads a service API. Its query is what selects the machine, so changing
+            it changes which productions are listed.
           </>
         )}
       </p>
@@ -908,28 +917,26 @@ function RobotsOverrideWarning({
   return (
     <Modal title="Ignore this site's robots.txt?" onClose={cancel}>
       <p>
-        <code>{site}</code> publishes a <code>robots.txt</code> asking automated tools
-        not to read it. Turning this on scans it anyway.
+        <code>{site}</code> publishes a <code>robots.txt</code> asking automated tools not to
+        read it. Turning this on scans it anyway.
       </p>
-      <p className="mode-note">
-        Things worth knowing before you do:
-      </p>
+      <p className="mode-note">Things worth knowing before you do:</p>
       <ul className="plan-files">
         <li>
-          It may breach the site's terms of use. That is between you and them; this
-          application cannot judge it for you.
+          It may breach the site's terms of use. That is between you and them; this application
+          cannot judge it for you.
         </li>
         <li>
-          Your address may be rate-limited or blocked, and hobby archives are often run
-          by one person paying for the bandwidth.
+          Your address may be rate-limited or blocked, and hobby archives are often run by one
+          person paying for the bandwidth.
         </li>
         <li>
-          On a storefront, links found this way may point at paid content. Downloading
-          it without paying is not something the licence you were offered allows.
+          On a storefront, links found this way may point at paid content. Downloading it
+          without paying is not something the licence you were offered allows.
         </li>
         <li>
-          Scans with this on are paced ten times slower, and stay on the one site, at
-          most 100 pages deep.
+          Scans with this on are paced ten times slower, and stay on the one site, at most 100
+          pages deep.
         </li>
       </ul>
       <div className="flow-actions">

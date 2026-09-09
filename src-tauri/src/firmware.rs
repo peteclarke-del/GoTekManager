@@ -114,19 +114,12 @@ pub async fn write_firmware_config(
 #[cfg(test)]
 mod tests {
     use super::{config_location, read_state, write_config, CONFIG_FOLDER, CONFIG_NAME};
-    use std::{fs, path::PathBuf};
+    use crate::testing::Scratch;
+    use std::fs;
 
     /// A throwaway directory standing in for a mounted stick.
-    fn drive(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-firmware-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    fn drive(name: &str) -> Scratch {
+        Scratch::new(&format!("firmware-{name}"))
     }
 
     #[test]
@@ -144,7 +137,11 @@ mod tests {
     #[test]
     fn a_configuration_already_on_the_drive_is_not_overwritten_by_accident() {
         let root = drive("existing");
-        fs::write(root.join(CONFIG_NAME), b"# tuned by hand\nnav-mode = indexed\n").unwrap();
+        fs::write(
+            root.join(CONFIG_NAME),
+            b"# tuned by hand\nnav-mode = indexed\n",
+        )
+        .unwrap();
 
         let refused = write_config(&root, "nav-mode = native\n", false);
 
@@ -169,7 +166,10 @@ mod tests {
         let path = write_config(&root, contents, false).unwrap();
 
         assert_eq!(path, CONFIG_NAME);
-        assert_eq!(fs::read_to_string(root.join(CONFIG_NAME)).unwrap(), contents);
+        assert_eq!(
+            fs::read_to_string(root.join(CONFIG_NAME)).unwrap(),
+            contents
+        );
         // The temporary name used during the write is gone.
         assert!(!root.join("FF.part").exists());
     }

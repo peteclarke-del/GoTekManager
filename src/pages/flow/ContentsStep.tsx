@@ -1,8 +1,8 @@
-import { ChevronLeft, ChevronRight, Pencil, RefreshCw, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, Trash2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Check } from 'lucide-react'
 import { BulkBar } from '../../components/BulkSelection'
-import { FileBrowserTable } from '../../components/FileBrowserTable'
+import { FileBrowserTable, RefreshContents } from '../../components/FileBrowserTable'
 import { Modal } from '../../components/Modal'
 import { joinRelative, relativeTo, toPosix } from '../../domain/paths'
 import type { DestinationEdit, FileEntry, Profile } from '../../domain/types'
@@ -58,9 +58,7 @@ export function ContentsStep({
         <div>
           <b>Destination contents</b>
           <span title={browser.path}>
-            {browser.isImage
-              ? `${profile.destination.path} :: /${browser.path}`
-              : browser.path}
+            {browser.isImage ? `${profile.destination.path} :: /${browser.path}` : browser.path}
           </span>
         </div>
         <div className="inline-actions">
@@ -73,20 +71,14 @@ export function ContentsStep({
               <ChevronLeft />
             </button>
           )}
-          <button
-            className="icon-button"
-            title="Refresh contents"
-            onClick={() => void browser.refresh()}
-          >
-            <RefreshCw className={browser.busy ? 'spinning' : ''} />
-          </button>
+          <RefreshContents browser={browser} />
         </div>
       </div>
 
       {!editable && (
         <div className="source-status info">
-          FAT image contents are read-only. Move and delete are available for folder
-          and mounted volume profiles.
+          FAT image contents are read-only. Move and delete are available for folder and mounted
+          volume profiles.
         </div>
       )}
 
@@ -107,9 +99,7 @@ export function ContentsStep({
           <button
             className="button secondary compact danger"
             onClick={() =>
-              stage(
-                chosen.map((entry) => ({ kind: 'delete', path: relativePath(entry) })),
-              )
+              stage(chosen.map((entry) => ({ kind: 'delete', path: relativePath(entry) })))
             }
           >
             <Trash2 />
@@ -139,9 +129,7 @@ export function ContentsStep({
               <button
                 className="row-action"
                 title="Undo this staged edit"
-                onClick={() =>
-                  setEdits((current) => current.filter((entry) => entry !== edit))
-                }
+                onClick={() => setEdits((current) => current.filter((entry) => entry !== edit))}
               >
                 <X />
               </button>
@@ -226,10 +214,7 @@ function MoveDialog({
   const invalid = escapes || unchanged || (single ? !normalised : false)
 
   return (
-    <Modal
-      title={single ? 'Move or rename' : `Move ${entries.length} entries`}
-      onClose={close}
-    >
+    <Modal title={single ? 'Move or rename' : `Move ${entries.length} entries`} onClose={close}>
       <p>
         {single
           ? 'Enter the new path relative to the destination root.'

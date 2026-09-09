@@ -54,7 +54,9 @@ struct Node {
 
 impl Node {
     fn node_path(&self) -> String {
-        self.path.clone().unwrap_or_else(|| format!("/dev/{}", self.name))
+        self.path
+            .clone()
+            .unwrap_or_else(|| format!("/dev/{}", self.name))
     }
 
     /// Mount points of this node and everything layered on it.
@@ -87,7 +89,10 @@ impl Node {
                     // that is the container type, not the filesystem inside it,
                     // which is the honest thing to show for a partition.
                     filesystem: child.fstype.clone().or_else(|| {
-                        child.children.first().and_then(|inner| inner.fstype.clone())
+                        child
+                            .children
+                            .first()
+                            .and_then(|inner| inner.fstype.clone())
                     }),
                     label: child.label.clone(),
                     uuid: child.uuid.clone(),
@@ -194,7 +199,10 @@ mod tests {
         assert_eq!(partition.node, "/dev/sdb1");
         assert_eq!(partition.filesystem.as_deref(), Some("vfat"));
         assert_eq!(partition.label.as_deref(), Some("GOTEK"));
-        assert_eq!(partition.mount_points, vec!["/media/pclarke/GOTEK".to_string()]);
+        assert_eq!(
+            partition.mount_points,
+            vec!["/media/pclarke/GOTEK".to_string()]
+        );
     }
 
     #[test]
@@ -204,7 +212,10 @@ mod tests {
 
         // The root filesystem sits on a LUKS mapping two levels down. Missing
         // that would offer the system disk as a target for formatting.
-        assert!(disk.system, "the system disk must be recognised through LUKS");
+        assert!(
+            disk.system,
+            "the system disk must be recognised through LUKS"
+        );
         assert!(!disk.is_candidate());
 
         let encrypted = disk
