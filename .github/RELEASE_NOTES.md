@@ -3,6 +3,32 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.5.2
+
+**A source you have just indexed says how many titles it holds.** Since 0.5.0
+the library is queried rather than carried about, and a query is only asked
+again when the question changes: a different machine, a search, a sort, another
+page. Adding a source and scanning it writes thousands of rows behind that
+question without changing it, so nothing asked again and the source sat there
+reporting no titles at all, until something else happened to move the filter and
+the count appeared minutes later. The titles were never missing. A change to the
+library now says so, and the table and the counts beside it listen.
+
+**The bulk add sees what its own scan found.** It reads every candidate when it
+opens, which is what lets it choose between releases of a title, and its own
+**Scan all sources** could not reach that copy. Starting from an empty library
+meant watching a scan index thousands of titles and then be told there was
+nothing to add.
+
+**A workspace you deleted stays deleted.** An empty database is the signal to
+adopt whatever an older version left in local storage, and that adoption kept
+the copy rather than taking it. Anything that emptied the database brought the
+old profiles back, and nothing in the application could refuse them: clearing
+everything to start again handed you a profile you had deleted. The old copy is
+now forgotten once the database has taken it. Your theme, table layout and
+online providers are not affected; those are kept in the same place by the
+current version and stay where they are.
+
 ## What is new in 0.5.1
 
 **Titles the library was never able to sort are sorted.** A category is worked
