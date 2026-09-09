@@ -56,8 +56,8 @@ function DownloadCache() {
     <section className="settings-card">
       <h3>Download cache</h3>
       <p className="mode-note">
-        Downloads are kept so a title is never fetched twice. Cached catalogues are small
-        and are never evicted, so collection coverage keeps working offline.
+        Downloads are kept so a title is never fetched twice. Cached catalogues are small and
+        are never evicted, so collection coverage keeps working offline.
       </p>
       {summary && (
         <p className="mode-note">
@@ -85,7 +85,9 @@ function DownloadCache() {
           onClick={() =>
             void action.run(async () => {
               const removed = await clearDownloadCache()
-              setMessage(`Removed ${removed.length} cached download${removed.length === 1 ? '' : 's'}.`)
+              setMessage(
+                `Removed ${removed.length} cached download${removed.length === 1 ? '' : 's'}.`,
+              )
               await refresh()
             })
           }
@@ -122,10 +124,10 @@ function Conversions({
     <section className="settings-card">
       <h3>Converting images</h3>
       <p className="mode-note">
-        Some software is only distributed in formats a GoTek cannot present. When this is
-        on, indexing writes a converted copy into the cache and lists that instead. The
-        file it was made from is never changed, and anything that cannot be converted
-        cleanly is left out rather than guessed at.
+        Some software is only distributed in formats a GoTek cannot present. When this is on,
+        indexing writes a converted copy into the cache and lists that instead. The file it was
+        made from is never changed, and anything that cannot be converted cleanly is left out
+        rather than guessed at.
       </p>
       <label className="check-label">
         <input
@@ -266,9 +268,9 @@ export function SettingsDialog({
         <section className="settings-card">
           <h3>Online sources</h3>
           <p className="mode-note">
-            The list of sites is a JSON file. Put one at the path below to replace the
-            built-in list; it is read when the application starts, and anything unusable
-            in it is reported rather than ignored.
+            The list of sites is a JSON file. Put one at the path below to replace the built-in
+            list; it is read when the application starts, and anything unusable in it is
+            reported rather than ignored.
           </p>
           <label>
             Source list
@@ -281,8 +283,8 @@ export function SettingsDialog({
         <section className="settings-card">
           <h3>Library</h3>
           <p className="mode-note">
-            Removes the indexed titles and source locations. No file on disk is touched
-            and no profile is removed.
+            Removes the indexed titles and source locations. No file on disk is touched and no
+            profile is removed.
           </p>
           <button className="button secondary danger" onClick={clearLibrary}>
             <Trash2 />

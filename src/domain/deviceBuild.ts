@@ -68,7 +68,14 @@ export type TreeNode = {
 
 /** Builds the folder tree a picker draws, sorted folders first then by name. */
 export function treeOf(files: readonly HeldFile[]): TreeNode[] {
-  const root: TreeNode = { path: '', name: '', directory: true, size: 0, files: 0, children: [] }
+  const root: TreeNode = {
+    path: '',
+    name: '',
+    directory: true,
+    size: 0,
+    files: 0,
+    children: [],
+  }
 
   for (const file of files) {
     const parts = file.relativePath.split('/').filter(Boolean)
@@ -99,8 +106,7 @@ export function treeOf(files: readonly HeldFile[]): TreeNode[] {
   const order = (nodes: TreeNode[]) => {
     nodes.sort(
       (left, right) =>
-        Number(right.directory) - Number(left.directory) ||
-        left.name.localeCompare(right.name),
+        Number(right.directory) - Number(left.directory) || left.name.localeCompare(right.name),
     )
     for (const node of nodes) order(node.children)
   }
@@ -271,8 +277,7 @@ export function proposeExclusions(
     // write is not a step towards fitting, it is giving up with extra effort.
     const survivors = files.filter(
       (file) =>
-        !doomed.has(titleOf(file.relativePath)) &&
-        !isExcluded(file.relativePath, excluded),
+        !doomed.has(titleOf(file.relativePath)) && !isExcluded(file.relativePath, excluded),
     )
     if (!survivors.length) return
     const before = cost()

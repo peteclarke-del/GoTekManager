@@ -14,7 +14,7 @@ export function useAsyncAction() {
   const [error, setError] = useState('')
   const mounted = useRef(true)
 
-  const run = useCallback(async <T,>(work: () => Promise<T>): Promise<T | undefined> => {
+  const run = useCallback(async <T>(work: () => Promise<T>): Promise<T | undefined> => {
     setBusy(true)
     setError('')
     try {
@@ -38,7 +38,7 @@ export function useBusyItem() {
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState('')
 
-  const run = useCallback(async <T,>(id: string, work: () => Promise<T>) => {
+  const run = useCallback(async <T>(id: string, work: () => Promise<T>) => {
     setBusyId(id)
     setError('')
     try {

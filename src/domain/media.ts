@@ -9,13 +9,7 @@ import { acceptedFormats, platforms, requireFirmware } from './catalog'
 import { categoryFolderFor, inferCategoryFor } from './categories'
 import { archiveOf, basename, dottedExtensionOf, joinRelative, safeFileName } from './paths'
 import { extensionPart, readTags, type ReleaseTags } from './tags'
-import type {
-  FileEntry,
-  MediaItem,
-  NamingRule,
-  Profile,
-  TransferOperation,
-} from './types'
+import type { FileEntry, MediaItem, NamingRule, Profile, TransferOperation } from './types'
 
 /** Tokens a custom folder template may use. */
 export const FOLDER_TOKENS = ['platform', 'category', 'family', 'initial', 'format'] as const
@@ -178,7 +172,11 @@ export function classifyMedia(
     // A collection that files its own titles by kind has already answered
     // this; a download has no such folders, so its name is asked instead — and
     // for a title inside an archive, the archive's name is a name too.
-    category: inferCategoryFor(entry.path, { path: source, name: sourceName }, ...namesOf(entry)),
+    category: inferCategoryFor(
+      entry.path,
+      { path: source, name: sourceName },
+      ...namesOf(entry),
+    ),
   }
 }
 
@@ -495,10 +493,7 @@ export function plannedNames(items: readonly MediaItem[], profile: Profile): Pla
 /**
  * Turns a collection into the copy operations the native planner expects.
  */
-export function transferOperations(
-  items: MediaItem[],
-  profile: Profile,
-): TransferOperation[] {
+export function transferOperations(items: MediaItem[], profile: Profile): TransferOperation[] {
   return plannedNames(items, profile).map(({ item, relativePath, group }) => ({
     source: item.path,
     relativePath,

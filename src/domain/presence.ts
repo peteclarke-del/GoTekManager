@@ -10,13 +10,7 @@
 import type { FileStatus } from './types'
 
 export type Presence =
-  | 'Unchecked'
-  | 'Checking'
-  | 'New'
-  | 'Identical'
-  | 'Different'
-  | 'Elsewhere'
-  | 'Unavailable'
+  'Unchecked' | 'Checking' | 'New' | 'Identical' | 'Different' | 'Elsewhere' | 'Unavailable'
 
 export const PRESENCE_BY_STATUS: Record<FileStatus, Presence> = {
   new: 'New',
@@ -45,8 +39,9 @@ export const PRESENCE_ORDER: Presence[] = [
  * media.
  */
 export function isOnTarget(presence: Presence | FileStatus): boolean {
-  const state = presence in PRESENCE_BY_STATUS
-    ? PRESENCE_BY_STATUS[presence as FileStatus]
-    : (presence as Presence)
+  const state =
+    presence in PRESENCE_BY_STATUS
+      ? PRESENCE_BY_STATUS[presence as FileStatus]
+      : (presence as Presence)
   return state === 'Identical' || state === 'Elsewhere'
 }

@@ -98,15 +98,17 @@ function Row({
       </div>
       {node.directory &&
         open &&
-        node.children.slice(0, shown).map((child) => (
-          <Row
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            excluded={excluded}
-            toggle={toggle}
-          />
-        ))}
+        node.children
+          .slice(0, shown)
+          .map((child) => (
+            <Row
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              excluded={excluded}
+              toggle={toggle}
+            />
+          ))}
       {node.directory && open && node.children.length > shown && (
         <div className="picker-row picker-more">
           <span />
@@ -115,8 +117,8 @@ function Row({
             style={{ marginLeft: `${(depth + 1) * 16}px` }}
             onClick={() => setShown((count) => count + PER_FOLDER)}
           >
-            Show {Math.min(PER_FOLDER, node.children.length - shown).toLocaleString()} more
-            of {node.children.length.toLocaleString()}
+            Show {Math.min(PER_FOLDER, node.children.length - shown).toLocaleString()} more of{' '}
+            {node.children.length.toLocaleString()}
           </button>
           <span />
         </div>
@@ -186,11 +188,7 @@ export function ContentsPicker({
             {formatBytes(needed)} of {formatBytes(capacity.usableBytes)}
           </b>{' '}
           · {kept.length.toLocaleString()} file{kept.length === 1 ? '' : 's'}
-          {fits ? (
-            <> · {formatBytes(-over)} to spare</>
-          ) : (
-            <> · {formatBytes(over)} too much</>
-          )}
+          {fits ? <> · {formatBytes(-over)} to spare</> : <> · {formatBytes(over)} too much</>}
         </p>
 
         {steps.length > 0 && (
@@ -236,8 +234,8 @@ export function ContentsPicker({
           </button>
         </div>
         <p className="mode-note">
-          This only decides what goes on the stick. The profile's own folder is not
-          changed, and the next write starts from everything again.
+          This only decides what goes on the stick. The profile's own folder is not changed, and
+          the next write starts from everything again.
         </p>
       </div>
     </Modal>

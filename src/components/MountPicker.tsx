@@ -41,16 +41,14 @@ export function MountPicker({
 }) {
   const toggle = (path: string) =>
     setSelected((current) =>
-      current.includes(path)
-        ? current.filter((entry) => entry !== path)
-        : [...current, path],
+      current.includes(path) ? current.filter((entry) => entry !== path) : [...current, path],
     )
 
   return (
     <Modal title="Select mounted storage" onClose={close} className="mount-picker">
       <p>
-        Only the mounts you select become profiles. Removable volumes and network
-        shares are shown by default.
+        Only the mounts you select become profiles. Removable volumes and network shares are
+        shown by default.
       </p>
       <label className="mount-filter">
         <input

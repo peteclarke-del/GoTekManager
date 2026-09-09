@@ -71,10 +71,10 @@ export function ProfileEditor({
     >
       {isNew && (
         <p className="mode-note">
-          The platform is a guess from the destination's name. Correct it before
-          creating the profile: it decides which titles are offered and where they are
-          written.
-          {waiting > 0 && ` ${waiting} more destination${waiting === 1 ? '' : 's'} to name after this one.`}
+          The platform is a guess from the destination's name. Correct it before creating the
+          profile: it decides which titles are offered and where they are written.
+          {waiting > 0 &&
+            ` ${waiting} more destination${waiting === 1 ? '' : 's'} to name after this one.`}
         </p>
       )}
       <label>
@@ -109,9 +109,11 @@ export function ProfileEditor({
           <p className="mode-note">
             Configuration files on this destination suggest{' '}
             <b>
-              {firmwareProfiles.find(
-                (firmware) => firmware.id === draft.destination.detectedFirmwareId,
-              )?.name}
+              {
+                firmwareProfiles.find(
+                  (firmware) => firmware.id === draft.destination.detectedFirmwareId,
+                )?.name
+              }
             </b>
             .
           </p>
@@ -161,18 +163,17 @@ export function ProfileEditor({
       </label>
       {draft.organise && draft.folderLayout === 'category' && (
         <p className="mode-note">
-          Titles are written under <code>Games/</code>, <code>Apps/</code>,{' '}
-          <code>Demos/</code> and the rest. A title with no category goes to{' '}
-          <code>{UNCATEGORISED}/</code>; set them in the library table, several at a
-          time. Use a custom layout to combine this with the platform, as in{' '}
-          <code>{'{platform}/{category}'}</code>.
+          Titles are written under <code>Games/</code>, <code>Apps/</code>, <code>Demos/</code>{' '}
+          and the rest. A title with no category goes to <code>{UNCATEGORISED}/</code>; set them
+          in the library table, several at a time. Use a custom layout to combine this with the
+          platform, as in <code>{'{platform}/{category}'}</code>.
         </p>
       )}
       {draft.organise && Object.keys(draft.categoryFolders ?? {}).length > 0 && (
         <div className="category-folders">
           <p className="feed-format">
-            This destination's own folder names, adopted from what is already on it. Clear
-            one to go back to the name this application would choose.
+            This destination's own folder names, adopted from what is already on it. Clear one
+            to go back to the name this application would choose.
           </p>
           {categories
             .filter((category) => draft.categoryFolders?.[category.id])
@@ -211,7 +212,12 @@ export function ProfileEditor({
             makes a few thousand titles navigable on a two-line display.
           </p>
           <p className="mode-note">
-            Preview: <code>{renderFolderTemplate(draft.folderTemplate ?? '{platform}', SAMPLE, draft) || '(the root)'}/Elite.ssd</code>
+            Preview:{' '}
+            <code>
+              {renderFolderTemplate(draft.folderTemplate ?? '{platform}', SAMPLE, draft) ||
+                '(the root)'}
+              /Elite.ssd
+            </code>
           </p>
         </>
       )}

@@ -58,9 +58,7 @@ export function ContentsStep({
         <div>
           <b>Destination contents</b>
           <span title={browser.path}>
-            {browser.isImage
-              ? `${profile.destination.path} :: /${browser.path}`
-              : browser.path}
+            {browser.isImage ? `${profile.destination.path} :: /${browser.path}` : browser.path}
           </span>
         </div>
         <div className="inline-actions">
@@ -79,8 +77,8 @@ export function ContentsStep({
 
       {!editable && (
         <div className="source-status info">
-          FAT image contents are read-only. Move and delete are available for folder
-          and mounted volume profiles.
+          FAT image contents are read-only. Move and delete are available for folder and mounted
+          volume profiles.
         </div>
       )}
 
@@ -101,9 +99,7 @@ export function ContentsStep({
           <button
             className="button secondary compact danger"
             onClick={() =>
-              stage(
-                chosen.map((entry) => ({ kind: 'delete', path: relativePath(entry) })),
-              )
+              stage(chosen.map((entry) => ({ kind: 'delete', path: relativePath(entry) })))
             }
           >
             <Trash2 />
@@ -133,9 +129,7 @@ export function ContentsStep({
               <button
                 className="row-action"
                 title="Undo this staged edit"
-                onClick={() =>
-                  setEdits((current) => current.filter((entry) => entry !== edit))
-                }
+                onClick={() => setEdits((current) => current.filter((entry) => entry !== edit))}
               >
                 <X />
               </button>
@@ -220,10 +214,7 @@ function MoveDialog({
   const invalid = escapes || unchanged || (single ? !normalised : false)
 
   return (
-    <Modal
-      title={single ? 'Move or rename' : `Move ${entries.length} entries`}
-      onClose={close}
-    >
+    <Modal title={single ? 'Move or rename' : `Move ${entries.length} entries`} onClose={close}>
       <p>
         {single
           ? 'Enter the new path relative to the destination root.'

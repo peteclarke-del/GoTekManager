@@ -39,11 +39,7 @@ export function withAll(
  * clicks, say — leaves nothing to extend across, which is reported as an empty
  * run rather than a guess at what was meant.
  */
-export function rangeOf(
-  ids: readonly string[],
-  anchor: string,
-  id: string,
-): string[] {
+export function rangeOf(ids: readonly string[], anchor: string, id: string): string[] {
   const from = ids.indexOf(anchor)
   const to = ids.indexOf(id)
   if (from < 0 || to < 0) return []
@@ -68,10 +64,7 @@ export function retained(
   return kept.size === selected.size ? selected : kept
 }
 
-export function coverageOf(
-  selected: ReadonlySet<string>,
-  ids: readonly string[],
-): Coverage {
+export function coverageOf(selected: ReadonlySet<string>, ids: readonly string[]): Coverage {
   if (!ids.length) return 'none'
   const ticked = ids.filter((id) => selected.has(id)).length
   if (!ticked) return 'none'

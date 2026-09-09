@@ -149,10 +149,7 @@ function tally(values: Iterable<string>): Map<string, number> {
   return counts
 }
 
-function optionsFrom(
-  counts: Map<string, number>,
-  label: (value: string) => string,
-): Option[] {
+function optionsFrom(counts: Map<string, number>, label: (value: string) => string): Option[] {
   return [...counts.entries()]
     .map(([value, count]) => ({ value, label: label(value), count }))
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
@@ -312,8 +309,7 @@ export function BulkAddDialog({
           <h3>Sources</h3>
           <div className="scan-sources">
             {sources.map((source) => {
-              const on =
-                !filter.sourcePaths.length || filter.sourcePaths.includes(source.path)
+              const on = !filter.sourcePaths.length || filter.sourcePaths.includes(source.path)
               const held = mine.filter((item) => item.source === source.path).length
               return (
                 <label key={source.id} className="check-label">
@@ -332,7 +328,10 @@ export function BulkAddDialog({
                       })
                     }}
                   />
-                  {source.name} <small>{held} {platform.name} titles</small>
+                  {source.name}{' '}
+                  <small>
+                    {held} {platform.name} titles
+                  </small>
                 </label>
               )
             })}
@@ -360,8 +359,7 @@ export function BulkAddDialog({
               {progress
                 ? `Re-indexing: ${progress.found} found in ${progress.folders} folder${progress.folders === 1 ? '' : 's'} so far.`
                 : 'Re-indexing every chosen source.'}{' '}
-              A library on a network share takes minutes; nothing is staged until you
-              confirm.
+              A library on a network share takes minutes; nothing is staged until you confirm.
             </InlineStatus>
           )}
           {failure && <InlineStatus kind="error">{failure}</InlineStatus>}
@@ -493,8 +491,8 @@ export function BulkAddDialog({
           </p>
           {tooBig && (
             <InlineStatus kind="error">
-              That is more than the destination has room for. Narrow the filter, or write it
-              in more than one pass.
+              That is more than the destination has room for. Narrow the filter, or write it in
+              more than one pass.
             </InlineStatus>
           )}
 
@@ -529,7 +527,10 @@ export function BulkAddDialog({
               <b>
                 {plan.unsorted.length} of these have no category
                 {profile.folderLayout === 'category' && (
-                  <> and would go to <code>{categoryFolderFor(profile, undefined)}/</code></>
+                  <>
+                    {' '}
+                    and would go to <code>{categoryFolderFor(profile, undefined)}/</code>
+                  </>
                 )}
               </b>
               <label className="bulk-category">
@@ -549,14 +550,13 @@ export function BulkAddDialog({
           {plan.compromised.length > 0 && (
             <details className="scan-detail">
               <summary>
-                {plan.compromised.length} set{plan.compromised.length === 1 ? '' : 's'}{' '}
-                finished with a disc your filter would have refused
+                {plan.compromised.length} set{plan.compromised.length === 1 ? '' : 's'} finished
+                with a disc your filter would have refused
               </summary>
               <p className="mode-note">
-                Every copy of those discs carries something you asked to leave out, very
-                often a crack, which is simply how most of this software circulated. The
-                alternative was losing a game that plays perfectly well, so they were taken
-                anyway.
+                Every copy of those discs carries something you asked to leave out, very often a
+                crack, which is simply how most of this software circulated. The alternative was
+                losing a game that plays perfectly well, so they were taken anyway.
               </p>
               <ul>
                 {plan.compromised.slice(0, 20).map((set) => (
@@ -587,8 +587,8 @@ export function BulkAddDialog({
           {plan.mixed.length > 0 && (
             <details className="scan-detail">
               <summary>
-                {plan.mixed.length} set{plan.mixed.length === 1 ? '' : 's'} built from more
-                than one release
+                {plan.mixed.length} set{plan.mixed.length === 1 ? '' : 's'} built from more than
+                one release
               </summary>
               <p className="mode-note">
                 No single release held every disc, so each disc came from the best copy
@@ -606,12 +606,12 @@ export function BulkAddDialog({
           {plan.renamed.length > 0 && (
             <details className="scan-detail">
               <summary>
-                {plan.renamed.length} name{plan.renamed.length === 1 ? '' : 's'} kept apart
-                from another
+                {plan.renamed.length} name{plan.renamed.length === 1 ? '' : 's'} kept apart from
+                another
               </summary>
               <p className="mode-note">
-                Two titles reduced to the same name, so the later one keeps enough of what
-                the collection recorded to stay separate.
+                Two titles reduced to the same name, so the later one keeps enough of what the
+                collection recorded to stay separate.
               </p>
               <ul>
                 {plan.renamed.slice(0, 20).map((entry) => (
@@ -639,17 +639,13 @@ export function BulkAddDialog({
           )}
         </section>
 
-        <button
-          className="button"
-          disabled={!plan.included.length || scanning}
-          onClick={apply}
-        >
+        <button className="button" disabled={!plan.included.length || scanning} onClick={apply}>
           {scanning ? <RefreshCw className="spinning" /> : <ListPlus />}
           Add {plan.included.length} to {profile.name}
         </button>
         <p className="mode-note">
-          <Wand2 /> Nothing is written yet. These are staged against the profile, and the
-          Verify and Confirm steps still stand between them and the drive.
+          <Wand2 /> Nothing is written yet. These are staged against the profile, and the Verify
+          and Confirm steps still stand between them and the drive.
         </p>
       </div>
     </Modal>

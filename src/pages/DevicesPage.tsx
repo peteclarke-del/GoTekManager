@@ -259,7 +259,7 @@ export function DevicesPage({
    * already holds is not written again and so costs nothing.
    */
   const room: Capacity | null = measuredOnStick
-    ? { usableBytes: freeOnStick, clusterBytes: capacity!.clusterBytes }
+    ? { usableBytes: freeOnStick, clusterBytes: capacity.clusterBytes }
     : capacity
 
   const needed = room ? costOf(writing_files, room.clusterBytes) : 0
@@ -382,7 +382,11 @@ export function DevicesPage({
           </div>
         </div>
         <div className="target-actions">
-          <button className="button secondary" disabled={scan.busy} onClick={() => void refresh()}>
+          <button
+            className="button secondary"
+            disabled={scan.busy}
+            onClick={() => void refresh()}
+          >
             <RefreshCw className={scan.busy ? 'spinning' : ''} />
             {scan.busy ? 'Scanning' : 'Rescan devices'}
           </button>
@@ -418,14 +422,18 @@ export function DevicesPage({
           ))}
         </div>
         {!devices.length && !scan.busy && (
-          <Empty title="No devices reported" action="Rescan devices" run={() => void refresh()} />
+          <Empty
+            title="No devices reported"
+            action="Rescan devices"
+            run={() => void refresh()}
+          />
         )}
         <div className="provider-note">
           <b>Identity, not location</b>
           <p>
             A device is addressed by its node, model, serial, and size, never by where it
-            happens to be mounted. If you unplug it and plug in another, the plan stops
-            matching and is refused.
+            happens to be mounted. If you unplug it and plug in another, the plan stops matching
+            and is refused.
           </p>
         </div>
       </section>
@@ -438,7 +446,8 @@ export function DevicesPage({
             <div className="panel-title">
               <div>
                 <p className="eyebrow">
-                  {selected.removable ? 'Removable' : 'Fixed'} · {selected.transport || 'unknown bus'}
+                  {selected.removable ? 'Removable' : 'Fixed'} ·{' '}
+                  {selected.transport || 'unknown bus'}
                 </p>
                 <h2>{selected.name}</h2>
                 <p className="path">
@@ -494,15 +503,15 @@ export function DevicesPage({
                     <p className="mode-note">
                       {copying ? (
                         <>
-                          A copy of <code>{profile?.destination.path}</code> on the stick as
-                          it stands, laid out exactly as it is there.{' '}
-                          {managedFormats(profile!).join(', ')}.
+                          A copy of <code>{profile?.destination.path}</code> on the stick as it
+                          stands, laid out exactly as it is there.{' '}
+                          {managedFormats(profile).join(', ')}.
                         </>
                       ) : (
                         <>
                           A fresh FAT volume labelled “{profile?.name}” holding a copy of{' '}
                           <code>{profile?.destination.path}</code>, exactly as it is laid out
-                          there. {managedFormats(profile!).join(', ')}.
+                          there. {managedFormats(profile).join(', ')}.
                         </>
                       )}
                     </p>
@@ -537,12 +546,15 @@ export function DevicesPage({
                           <button
                             className="button secondary compact"
                             onClick={() => {
-                              const proposal = proposeExclusions(held, profile!, room)
+                              const proposal = proposeExclusions(held, profile, room)
                               setPicking({
                                 excluded: proposal.excluded,
                                 steps: proposal.fits
                                   ? proposal.steps
-                                  : [...proposal.steps, 'Even after all of that it does not fit.'],
+                                  : [
+                                      ...proposal.steps,
+                                      'Even after all of that it does not fit.',
+                                    ],
                               })
                             }}
                           >
@@ -588,10 +600,10 @@ export function DevicesPage({
 
             {copying && (
               <InlineStatus kind="info">
-                <b>This device is already formatted for a GoTek.</b> Its files can be
-                copied straight onto it, which moves only what is missing and leaves
-                everything else on the stick alone. Formatting is offered alongside, for
-                a device that needs it, or to start again from empty.
+                <b>This device is already formatted for a GoTek.</b> Its files can be copied
+                straight onto it, which moves only what is missing and leaves everything else on
+                the stick alone. Formatting is offered alongside, for a device that needs it, or
+                to start again from empty.
               </InlineStatus>
             )}
 

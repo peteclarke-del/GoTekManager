@@ -46,8 +46,7 @@ export function isDesktop(): boolean {
  * to compile. Only the preview ever reports it: the desktop application asks
  * itself.
  */
-const BUILD_VERSION: string =
-  typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0'
+const BUILD_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0'
 
 const BROWSER_MESSAGE =
   'This needs the desktop application. The browser preview cannot read drives, ' +

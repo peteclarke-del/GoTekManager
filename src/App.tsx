@@ -1,13 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  CircleHelp,
-  HardDrive,
-  LayoutDashboard,
-  Moon,
-  Settings2,
-  Sun,
-  Usb,
-} from 'lucide-react'
+import { CircleHelp, HardDrive, LayoutDashboard, Moon, Settings2, Sun, Usb } from 'lucide-react'
 import { Empty, NoticeBar } from './components/Feedback'
 import { MountPicker } from './components/MountPicker'
 import { ProfileEditor } from './components/ProfileEditor'
@@ -50,8 +42,12 @@ const PAGE_TITLES: Record<Page, string> = {
 export function App() {
   const [page, setPage] = useState<Page>('Profiles')
   const [settings, setSettings] = useSettings()
-  const { providers, setCustom: setCustomProviders, configPath: providersPath, problems: providerProblems } =
-    useProviders()
+  const {
+    providers,
+    setCustom: setCustomProviders,
+    configPath: providersPath,
+    problems: providerProblems,
+  } = useProviders()
   const [preferences, setPreferences] = useTablePreferences()
   const {
     workspace,
@@ -181,14 +177,10 @@ export function App() {
 
         {notice && <NoticeBar notice={notice} dismiss={() => setNotice(null)} />}
         {providerProblems.length > 0 && (
-          <div className="notice error">
-            Online sources: {providerProblems.join('; ')}.
-          </div>
+          <div className="notice error">Online sources: {providerProblems.join('; ')}.</div>
         )}
         {storeError && (
-          <div className="notice error">
-            The library could not be saved: {storeError}
-          </div>
+          <div className="notice error">The library could not be saved: {storeError}</div>
         )}
 
         {loading && <Empty title="Opening your library…" />}

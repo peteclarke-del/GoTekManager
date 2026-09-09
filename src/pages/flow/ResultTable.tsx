@@ -65,10 +65,7 @@ export function ResultTable({
   removeFromCollection: (itemIds: string[]) => void
   emptyMessage: string
 }) {
-  const matching = useMemo(
-    () => filterResult(entries, view, query),
-    [entries, view, query],
-  )
+  const matching = useMemo(() => filterResult(entries, view, query), [entries, view, query])
   // Drawn a page at a time. A staged collection of twenty thousand is a few
   // hundred thousand elements of markup, and building them all took minutes
   // every time one of the view tabs was pressed.
@@ -97,7 +94,11 @@ export function ResultTable({
               className={view === value ? 'active' : ''}
               onClick={() => setView(value)}
             >
-              {value === 'current' ? 'Current load' : value === 'changes' ? 'Changes' : 'Result'}
+              {value === 'current'
+                ? 'Current load'
+                : value === 'changes'
+                  ? 'Changes'
+                  : 'Result'}
             </button>
           ))}
         </div>

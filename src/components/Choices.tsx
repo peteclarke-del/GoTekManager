@@ -11,11 +11,7 @@ import type { Profile } from '../domain/types'
  * point. This is markup rather than a decision, and it belongs somewhere it can
  * be read once.
  */
-export function Options({
-  items,
-}: {
-  items: ReadonlyArray<{ id: string; name: string }>
-}) {
+export function Options({ items }: { items: ReadonlyArray<{ id: string; name: string }> }) {
   return (
     <>
       {items.map((item) => (
@@ -49,11 +45,7 @@ export function ProfileChoice({
   showDestination?: boolean
 }) {
   return (
-    <button
-      className={selected ? 'selected' : ''}
-      aria-pressed={selected}
-      onClick={onSelect}
-    >
+    <button className={selected ? 'selected' : ''} aria-pressed={selected} onClick={onSelect}>
       <HardDrive />
       <span>
         <b>{profile.name}</b>
