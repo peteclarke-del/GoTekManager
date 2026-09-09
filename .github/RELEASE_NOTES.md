@@ -3,6 +3,21 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.6.1
+
+**The theme that follows your desktop now looks like the dark theme.** Picking
+Dark yourself and letting the application follow the desktop are two different
+settings, and the second had fallen behind the first: twenty-two things carried
+a colour for the dark theme and none for the desktop one, so on a dark desktop
+they kept their light colours. The panel that says a profile will not fit on a
+stick was the worst of them, keeping a light background under pale text, which
+left the buttons on it unreadable. The capacity figures, the state of each
+title in the table, the progress dialogs and the sidebar were all affected in
+smaller ways.
+
+The two are compared by the checks now, so they cannot drift apart again
+without somebody being told.
+
 ## What is new in 0.6.0
 
 **A name too long for the drive's panel is cut where the name has a seam.** It
