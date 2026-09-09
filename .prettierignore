@@ -1,0 +1,21 @@
+# Built output and dependencies.
+dist
+node_modules
+src-tauri/target
+
+# Formatted by rustfmt, not by this.
+src-tauri
+
+# Captured from the running application.
+public/help
+
+# Written by hand and meant to be read that way. The stylesheet is kept
+# deliberately compact, a section to a line, and expanding it would turn five
+# hundred lines into several thousand for no gain. The prose is prose: its line
+# breaks are where somebody put them.
+src/styles.css
+*.md
+
+# Continuous integration configuration, where this formatter's preference for
+# single quotes is neither conventional nor an improvement.
+.github

@@ -40,11 +40,14 @@ export function useRowSelection(ids: readonly string[]): RowSelection {
   // Callbacks are handed to every row, so they must not be rebuilt whenever the
   // list changes; the current rows are read from here instead.
   const listed = useRef(ids)
-  listed.current = ids
 
-  // A tick on a row a filter has since hidden would be acted on invisibly, so
-  // the selection is narrowed with the list rather than kept behind it.
   useEffect(() => {
+    // Set here rather than while rendering, because a render that is thrown
+    // away before it commits must not leave its list behind. Nothing reads this
+    // until somebody clicks a row, which is long after the effects have run.
+    listed.current = ids
+    // A tick on a row a filter has since hidden would be acted on invisibly, so
+    // the selection is narrowed with the list rather than kept behind it.
     setSelected((current) => retained(current, ids))
   }, [ids])
 
@@ -71,15 +74,12 @@ export function useRowSelection(ids: readonly string[]): RowSelection {
   const isSelected = useCallback((id: string) => selected.has(id), [selected])
 
   const chosen = useCallback(
-    <T,>(rows: readonly T[], idOf: (row: T) => string) =>
+    <T>(rows: readonly T[], idOf: (row: T) => string) =>
       rows.filter((row) => selected.has(idOf(row))),
     [selected],
   )
 
-  const count = useMemo(
-    () => ids.filter((id) => selected.has(id)).length,
-    [ids, selected],
-  )
+  const count = useMemo(() => ids.filter((id) => selected.has(id)).length, [ids, selected])
 
   return {
     selected,

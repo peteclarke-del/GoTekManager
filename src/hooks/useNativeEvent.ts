@@ -35,7 +35,6 @@ export function useNativeEvent<T>(
     }
     // `keep` is a rule about the payload rather than state, so re-subscribing
     // when its identity changes would drop events for no reason.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event])
 
   return value
