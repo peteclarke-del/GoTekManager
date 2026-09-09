@@ -113,7 +113,9 @@ fn msa_track(source: &[u8], at: usize, length: usize, expected: usize) -> Result
             *data.get(index + 2).unwrap_or(&0),
         ]) as usize;
         if index + 3 > data.len() {
-            return Err(Error::new("A compressed track ends in the middle of a run."));
+            return Err(Error::new(
+                "A compressed track ends in the middle of a run.",
+            ));
         }
         index += 3;
         if out.len() + count > expected {
@@ -456,11 +458,15 @@ mod tests {
     #[test]
     fn an_scl_that_does_not_fit_a_disk_is_refused() {
         // More files than the catalogue holds, whatever their size.
-        let too_many = (0..200).map(|_| (b"FILE    ", b'C', 1u8)).collect::<Vec<_>>();
+        let too_many = (0..200)
+            .map(|_| (b"FILE    ", b'C', 1u8))
+            .collect::<Vec<_>>();
         assert!(scl_to_trd(&scl(&too_many)).is_err());
 
         // And files that fit the catalogue but not the disk.
-        let too_big = (0..100).map(|_| (b"FILE    ", b'C', 255u8)).collect::<Vec<_>>();
+        let too_big = (0..100)
+            .map(|_| (b"FILE    ", b'C', 255u8))
+            .collect::<Vec<_>>();
         assert!(scl_to_trd(&scl(&too_big)).is_err());
     }
 

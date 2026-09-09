@@ -626,6 +626,9 @@ mod walk_tests {
         });
 
         assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 3);
-        assert!(work.progress().is_none(), "a drained walk reports no progress");
+        assert!(
+            work.progress().is_none(),
+            "a drained walk reports no progress"
+        );
     }
 }

@@ -279,8 +279,8 @@ fn unmount(device: &PhysicalDevice) -> Vec<String> {
 /// Deliberately takes plain paths so the copy-and-verify core can be exercised
 /// against an ordinary file; only the caller decides that a target is a device.
 pub fn write_image(image: &Path, target: &Path) -> Result<(u64, bool)> {
-    let mut source = fs::File::open(image)
-        .with_context(|| format!("Unable to read {}", image.display()))?;
+    let mut source =
+        fs::File::open(image).with_context(|| format!("Unable to read {}", image.display()))?;
     let length = source.metadata()?.len();
 
     let mut destination = fs::OpenOptions::new()
@@ -414,7 +414,7 @@ pub async fn execute_provision(
 mod tests {
     use super::{confirmation_phrase, describe, write_image};
     use crate::hardware::{Partition, PhysicalDevice};
-    use std::{fs};
+    use std::fs;
 
     use crate::testing::Scratch;
 

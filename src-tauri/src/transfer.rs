@@ -12,18 +12,18 @@
 use crate::devices::{available_space, probe_writable, resolve_destination};
 use crate::error::{Context, Result};
 use crate::paths::{
-    canonical, extension_of, file_size, files_equal, normalise_extensions,
-    readers_equal, relative_key, safe_relative_path, safe_target_path, sha256_reader, to_posix,
+    canonical, extension_of, file_size, files_equal, normalise_extensions, readers_equal,
+    relative_key, safe_relative_path, safe_target_path, sha256_reader, to_posix,
 };
 use crate::task::blocking;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
+use tauri::Emitter;
 
 /// One planned copy: an indexed source file and where it should land, relative
 /// to the destination root and always `/`-separated.
@@ -505,10 +505,7 @@ impl<'a> PlanBuilder<'a> {
             return false;
         };
         if stat.size != operation.size {
-            let message = format!(
-                "Source changed since it was indexed: {}",
-                operation.source
-            );
+            let message = format!("Source changed since it was indexed: {}", operation.source);
             self.blame("changed", &operation.source, message);
             return false;
         }
@@ -873,9 +870,7 @@ pub fn compare_files(
                 } else {
                     Some(cache.digest(connection, source, stat)?)
                 };
-                let locations = digest
-                    .as_deref()
-                    .and_then(|sha256| by_content.get(sha256));
+                let locations = digest.as_deref().and_then(|sha256| by_content.get(sha256));
                 if let Some(locations) = locations {
                     let wanted = relative_key(&operation.relative_path);
                     // Already where this profile would put it, so there is
@@ -1054,7 +1049,13 @@ pub async fn execute_transfer(
         let mut spoke = std::time::Instant::now();
         let _ = app.emit(
             WRITE_PROGRESS_EVENT,
-            WriteProgress { done: 0, total: files, written: 0, bytes, current: String::new() },
+            WriteProgress {
+                done: 0,
+                total: files,
+                written: 0,
+                bytes,
+                current: String::new(),
+            },
         );
         let mut failures = Vec::new();
         // A game missing a disc will not load, so half a set on the drive is
@@ -1071,8 +1072,7 @@ pub async fn execute_transfer(
                     failures.push(CopyFailure {
                         source: operation.source.clone(),
                         relative_path: operation.relative_path.clone(),
-                        message: "Left out: another disc of this title could not be read."
-                            .into(),
+                        message: "Left out: another disc of this title could not be read.".into(),
                     });
                     continue;
                 }
@@ -1175,7 +1175,7 @@ mod tests {
             source: source.to_string_lossy().into_owned(),
             relative_path: relative_path.into(),
             size: fs::metadata(source).unwrap().len(),
-           group: None,
+            group: None,
         }
     }
 
@@ -1191,7 +1191,7 @@ mod tests {
             edits,
             remove_existing,
             &["ssd".into(), "adf".into()],
-        &mut ignore_plan_progress,
+            &mut ignore_plan_progress,
         )
         .unwrap()
     }
@@ -1270,7 +1270,7 @@ mod tests {
                     source: crate::source::entry_path(&broken, "Missing.ssd"),
                     relative_path: "BBC/Missing.ssd".into(),
                     size: 10,
-                   group: None,
+                    group: None,
                 },
                 operation(&good, "BBC/Elite.ssd"),
             ],
@@ -1300,7 +1300,10 @@ mod tests {
         }
 
         // The good one landed; the unreadable one did not, and left nothing.
-        assert_eq!(fs::read(target.join("BBC").join("Elite.ssd")).unwrap(), b"disk image");
+        assert_eq!(
+            fs::read(target.join("BBC").join("Elite.ssd")).unwrap(),
+            b"disk image"
+        );
         assert_eq!(failures, vec!["BBC/Missing.ssd".to_string()]);
         assert!(!target.join("BBC").join("Missing.ssd").exists());
         assert!(!target.join("BBC").join("Missing.ssd.part").exists());
@@ -1331,7 +1334,7 @@ mod tests {
                 source: crate::source::entry_path(&archive, "Elite.ssd"),
                 relative_path: "BBC/Elite.ssd".into(),
                 size: "disk image".len() as u64,
-               group: None,
+                group: None,
             }],
             Vec::new(),
             false,
@@ -1353,7 +1356,7 @@ mod tests {
                 source: crate::source::entry_path(&archive, "Elite.ssd"),
                 relative_path: "BBC/Elite.ssd".into(),
                 size: "disk image".len() as u64,
-               group: None,
+                group: None,
             }],
             Vec::new(),
             false,
@@ -1421,7 +1424,12 @@ mod tests {
         let source = library.join("Elite.ssd");
         fs::write(&source, b"disk").unwrap();
 
-        let result = plan(&target, vec![operation(&source, "BBC/Elite.ssd")], vec![], false);
+        let result = plan(
+            &target,
+            vec![operation(&source, "BBC/Elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(result.ready, "{:?}", result.warnings);
         assert_eq!(result.total_bytes, 4);
@@ -1437,14 +1445,24 @@ mod tests {
         fs::write(&source, b"disk").unwrap();
         fs::write(target.join("Elite.ssd"), b"disk").unwrap();
 
-        let same = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], false);
+        let same = plan(
+            &target,
+            vec![operation(&source, "Elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(same.ready);
         assert_eq!(same.result[0].status, ResultStatus::Unchanged);
         assert_eq!(same.total_bytes, 0);
 
         fs::write(target.join("Elite.ssd"), b"different").unwrap();
-        let differs = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], false);
+        let differs = plan(
+            &target,
+            vec![operation(&source, "Elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(!differs.ready);
         assert_eq!(differs.result[0].status, ResultStatus::Conflict);
@@ -1459,7 +1477,12 @@ mod tests {
         fs::write(&source, b"disk").unwrap();
         fs::write(target.join("ELITE.SSD"), b"other").unwrap();
 
-        let result = plan(&target, vec![operation(&source, "elite.ssd")], vec![], false);
+        let result = plan(
+            &target,
+            vec![operation(&source, "elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(!result.ready);
         assert_eq!(result.result[0].status, ResultStatus::Conflict);
@@ -1476,7 +1499,10 @@ mod tests {
 
         let result = plan(
             &target,
-            vec![operation(&first, "Elite.ssd"), operation(&second, "elite.ssd")],
+            vec![
+                operation(&first, "Elite.ssd"),
+                operation(&second, "elite.ssd"),
+            ],
             vec![],
             false,
         );
@@ -1510,7 +1536,12 @@ mod tests {
         fs::write(target.join("Chuckie.ssd"), b"old").unwrap();
         fs::write(target.join("FF.CFG"), b"config").unwrap();
 
-        let keep = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], false);
+        let keep = plan(
+            &target,
+            vec![operation(&source, "Elite.ssd")],
+            vec![],
+            false,
+        );
         assert!(keep.removals.is_empty());
 
         let remove = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], true);
@@ -1530,7 +1561,7 @@ mod tests {
             source: target.join("nowhere.ssd").to_string_lossy().into_owned(),
             relative_path: "nowhere.ssd".into(),
             size: 4,
-           group: None,
+            group: None,
         };
 
         let result = plan(&target, vec![operation], vec![], false);
@@ -1558,7 +1589,11 @@ mod tests {
         );
 
         assert!(moved.ready, "{:?}", moved.warnings);
-        let entry = moved.result.iter().find(|e| e.path == "BBC/Elite.ssd").unwrap();
+        let entry = moved
+            .result
+            .iter()
+            .find(|e| e.path == "BBC/Elite.ssd")
+            .unwrap();
         assert_eq!(entry.status, ResultStatus::Move);
         assert_eq!(entry.previous_path.as_deref(), Some("Old/Elite.ssd"));
 
@@ -1626,7 +1661,7 @@ mod tests {
             vec![],
             false,
             &["ssd".into()],
-        &mut ignore_plan_progress,
+            &mut ignore_plan_progress,
         );
 
         assert!(result.is_err());
@@ -1649,7 +1684,7 @@ mod tests {
             vec![],
             false,
             &["ssd".into()],
-        &mut ignore_plan_progress,
+            &mut ignore_plan_progress,
         );
 
         assert!(result.is_err());
@@ -1658,7 +1693,10 @@ mod tests {
 
     #[test]
     fn system_locations_are_refused_as_destinations() {
-        assert!(build_transfer_plan("/", vec![], vec![], false, &[], &mut ignore_plan_progress).is_err());
+        assert!(
+            build_transfer_plan("/", vec![], vec![], false, &[], &mut ignore_plan_progress)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1684,7 +1722,7 @@ mod tests {
 #[cfg(test)]
 mod checksum_tests {
     use super::copy_verified;
-    use std::{fs};
+    use std::fs;
 
     use crate::testing::Scratch;
 
@@ -1700,7 +1738,13 @@ mod checksum_tests {
         fs::write(&source, &content).unwrap();
 
         copy_verified(&source, &root.join("with.ssd"), content.len() as u64, true).unwrap();
-        copy_verified(&source, &root.join("without.ssd"), content.len() as u64, false).unwrap();
+        copy_verified(
+            &source,
+            &root.join("without.ssd"),
+            content.len() as u64,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(fs::read(root.join("with.ssd")).unwrap(), content);
         assert_eq!(fs::read(root.join("without.ssd")).unwrap(), content);
@@ -1710,10 +1754,7 @@ mod checksum_tests {
 #[cfg(test)]
 mod elsewhere_tests {
     use super::{FileStatus, TransferOperation};
-    use std::{
-        fs,
-        path::Path,
-    };
+    use std::{fs, path::Path};
 
     use crate::testing::Scratch;
 
@@ -1721,10 +1762,7 @@ mod elsewhere_tests {
         Scratch::new(&format!("transfer-{name}"))
     }
 
-    fn compare(
-        target: &Path,
-        operations: Vec<TransferOperation>,
-    ) -> Vec<super::TargetFileStatus> {
+    fn compare(target: &Path, operations: Vec<TransferOperation>) -> Vec<super::TargetFileStatus> {
         // An in-memory database gives the digest cache somewhere to live
         // without needing a running application.
         let connection = rusqlite::Connection::open_in_memory().unwrap();
@@ -1748,7 +1786,11 @@ mod elsewhere_tests {
         let source = library.join("Zynaps (1987)(Hewson Consultants).dsk");
         fs::write(&source, vec![0xC9u8; 194816]).unwrap();
         fs::create_dir(target.join("Z")).unwrap();
-        fs::copy(&source, target.join("Z/Zynaps (1987)(Hewson Consultants).dsk")).unwrap();
+        fs::copy(
+            &source,
+            target.join("Z/Zynaps (1987)(Hewson Consultants).dsk"),
+        )
+        .unwrap();
 
         let result = compare(
             &target,
@@ -1816,7 +1858,7 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 194_816,
-               group: None,
+                group: None,
             }],
         );
 
@@ -1837,7 +1879,7 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 4,
-               group: None,
+                group: None,
             }],
         );
 
@@ -1862,7 +1904,7 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 4,
-               group: None,
+                group: None,
             }],
         );
 
@@ -1887,7 +1929,7 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 194816,
-               group: None,
+                group: None,
             }],
         );
 
