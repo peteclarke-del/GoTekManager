@@ -42,7 +42,15 @@ const EMPTY: LibraryPage = {
  */
 const SETTLE_MS = 200
 
-export function useLibraryPage(query: ItemQuery): LibraryPage {
+export function useLibraryPage(
+  query: ItemQuery,
+  /**
+   * Bumped whenever the library itself changes. The query is the question and
+   * this is the other reason the answer moves: a scan that writes four thousand
+   * rows leaves the question exactly as it was.
+   */
+  revision = 0,
+): LibraryPage {
   const [page, setPage] = useState<LibraryPage>({ ...EMPTY, loading: isDesktop() })
   // Compared rather than kept: the caller builds a fresh object every render,
   // so asking whether it *says* the same thing is the only stable test.
@@ -73,7 +81,7 @@ export function useLibraryPage(query: ItemQuery): LibraryPage {
         })
     }, SETTLE_MS)
     return () => window.clearTimeout(timer)
-  }, [asked])
+  }, [asked, revision])
 
   return page
 }

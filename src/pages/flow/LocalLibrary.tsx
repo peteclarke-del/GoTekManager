@@ -99,6 +99,7 @@ export function LocalLibrary({
   profile,
   platform,
   sources,
+  libraryRevision,
   collection,
   addLocation,
   reindexSources,
@@ -118,6 +119,8 @@ export function LocalLibrary({
   profile: Profile
   platform: Platform
   sources: SourceLocation[]
+  /** Bumped when the library changes, which is the other reason to ask again. */
+  libraryRevision: number
   collection: MediaItem[]
   addLocation: () => void
   /** Re-indexes a set of sources, used by the scan of everything. */
@@ -166,14 +169,17 @@ export function LocalLibrary({
   // The library is not in the window, so the filter, the order and the page are
   // the database's work. What comes back is what the table draws, plus the
   // counts that describe everything it does not.
-  const page = useLibraryPage({
-    platformId: platform.id,
-    sources: selectedSources,
-    search: query,
-    sort: preferences.sort.key,
-    descending: preferences.sort.direction === 'desc',
-    limit: shown,
-  })
+  const page = useLibraryPage(
+    {
+      platformId: platform.id,
+      sources: selectedSources,
+      search: query,
+      sort: preferences.sort.key,
+      descending: preferences.sort.direction === 'desc',
+      limit: shown,
+    },
+    libraryRevision,
+  )
   const matching = page.rows
 
   /** How many titles each source contributes for this platform. */
@@ -758,6 +764,7 @@ export function LocalLibrary({
           staged={collection}
           presence={statuses}
           reindexSources={reindexSources}
+          libraryRevision={libraryRevision}
           assignCategory={assignCategory}
           stage={stageItems}
           close={() => setScanning(false)}
