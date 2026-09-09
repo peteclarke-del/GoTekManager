@@ -124,6 +124,16 @@ export function forgetSource(source: string): Promise<void> {
 }
 
 /** Applies one decision to a set of titles. */
+/**
+ * The titles the library has no category for, a page at a time.
+ *
+ * Read back so the rules can be asked about them again; see
+ * {@link useRecategorise}. Only these rows are read, never the library.
+ */
+export function uncategorisedItems(limit: number, offset: number): Promise<StoredItem[]> {
+  return invoke<StoredItem[]>('uncategorised_items', { limit, offset })
+}
+
 export function updateItems(ids: string[], changes: ItemChanges): Promise<void> {
   return invoke<void>('update_items', { ids, changes })
 }

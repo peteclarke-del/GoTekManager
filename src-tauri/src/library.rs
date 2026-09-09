@@ -15,7 +15,9 @@
 //! JavaScript.
 
 use crate::error::Result;
-use crate::store::{identity, item_from_row, open, write_transaction, StoredItem, ITEM_COLUMNS};
+use crate::store::{
+    identity, item_from_row, open, write_transaction, StoredItem, ITEM_COLUMNS, ITEM_ORDER,
+};
 use crate::task::blocking;
 use rusqlite::{params, Transaction};
 
@@ -239,6 +241,41 @@ pub async fn clear_library(app: tauri::AppHandle) -> Result<()> {
         transaction.execute("DELETE FROM sources", [])?;
         transaction.commit()?;
         Ok(())
+    })
+    .await
+}
+
+/// The titles the library has no category for.
+///
+/// A category is worked out when a title is indexed, from the folders it sits
+/// in, its own name, and the source it came from. Those rules improve, and a
+/// library indexed before they did keeps the answer it was given at the time,
+/// which for a great many titles was no answer at all. Re-reading thirty
+/// thousand files over a network share to collect a category they could have
+/// worked out from the path is not a reasonable thing to ask of somebody.
+///
+/// So the rows that have no answer are read back and asked again. Only those
+/// rows: a library that has already been sorted costs one query returning
+/// nothing, and the rows come whole because deciding what a title is needs its
+/// path and its name, not just its id.
+#[tauri::command]
+pub async fn uncategorised_items(
+    app: tauri::AppHandle,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<StoredItem>> {
+    blocking(move || {
+        let connection = open(&app)?;
+        let sql = format!(
+            "SELECT {ITEM_COLUMNS} FROM items \
+             WHERE category IS NULL OR category = '' \
+             ORDER BY {ITEM_ORDER} LIMIT ?1 OFFSET ?2"
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let items = statement
+            .query_map(params![limit as i64, offset as i64], item_from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(items)
     })
     .await
 }
