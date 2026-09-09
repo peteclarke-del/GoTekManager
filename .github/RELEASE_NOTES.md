@@ -17,13 +17,14 @@ on the drive each would land in, how much room they need, and what was left out 
 **A multi-disc set is only useful whole**, so discs are chosen together rather than
 separately. A set is taken from one release where one release holds all of it, filled
 disc by disc and reported as mixed where none does, and left out and named where a disc
-is missing altogether — two thirds of a game is worse than none of it. And where several
+is missing altogether, because two thirds of a game is worse than none of it. And where
+several
 copies of one title survive the filter, one is chosen: the original first, then the
 fixed dump, then the alternates, and so on down.
 
-**A file is named for what it is.** Everything a collection records about a release —
-the year, the publisher, the region, the language, the version, the dump flags — says
-which copy this is, not what the software is, and none of it fits a two-line display.
+**A file is named for what it is.** Everything a collection records about a release, the
+year, the publisher, the region, the language, the version and the dump flags, says which
+copy this is rather than what the software is, and none of it fits a two-line display.
 `Dungeon Master (1987)(FTL)(GB)(Disk 1 of 2)[cr QTX].adf` is now written as
 `Dungeon Master D1.adf`, and a one-disc game gets no disc marker at all. The library
 keeps the original name either way. A folder scan, a bulk add, an online download and a
@@ -33,8 +34,8 @@ and **Original filename** is still there for anyone who wants their collection's
 verbatim. Existing profiles keep whatever they were set to; new ones start on
 **Title only**.
 
-Reducing names this way is also what makes two titles collide — two editions of Elite
-both become `Elite.adf` — so where that happens the later one keeps the smallest thing
+Reducing names this way is also what makes two titles collide, since two editions of
+Elite both become `Elite.adf`. Where that happens the later one keeps the smallest thing
 the collection recorded that tells them apart, rather than the write being refused.
 
 **Categories read more of the evidence.** A folder named after a collection's own
@@ -49,10 +50,44 @@ they are called, which is all a single-title ZIP holding `disk1.adf` has to go o
 fill the folders already there instead of a second set appearing next to them. It is
 offered on the Contents step and confirmed on the profile, never applied silently.
 
-**Upgrading.** The stored library moves to schema 5 the first time this version opens
-it, in place, to carry the folder names a destination uses. A profile written by an
-older version arrives with none of its own and uses the standard names. An older version
-opening the library afterwards will say so and stop rather than quietly downgrade.
+**Devices is where a stick is written.** Pick a profile by name and its destination
+folder is what gets written: the folder is the master and the stick is a copy of it, so
+nothing is laid out again on the way. There are two routes onto the stick, and which one
+is offered depends on what is already there. A stick already formatted for a GoTek and
+mounted by the desktop is copied to, which moves only the files it does not already hold
+and leaves everything else on it alone. A stick that cannot be written to that way is
+formatted instead: the media is built as an image first, written in one pass, and read
+back to check it. The difference is worth having. Rebuilding an eight gigabyte stick
+reads and writes eight gigabytes to deliver one gigabyte of games, and erases what was
+there. Formatting still asks you to type the name of that exact device, serial included;
+copying erases nothing and so does not ask.
+
+**A large library opens in about two seconds rather than twenty.** A collection of
+forty-five thousand titles used to be read in full before the window showed anything,
+and saved in full on every change. The library is now queried rather than carried about:
+the page you are looking at is the page the database is asked for, and staging a title
+writes the row for that title. Several large profiles cost no more to open than one.
+
+**A release is read as being in the language of the country it was sold in**, where it
+states no language of its own. The convention is that `(de)` is German and `(DE)` is
+Germany, and real collections are nothing like that disciplined: a set can mark thousands
+of German releases `(DE)` and never write a language at all. Read strictly, every one of
+those states nothing, so an "English only" filter that kept untagged titles let the lot
+through.
+
+**"The database is locked" is fixed**, for the last case that still produced it: a save
+that overlapped a scan was refused outright rather than waiting its turn. Cached content
+digests are also swept when the application starts, so a library that has been
+reorganised a few times stops carrying rows for files that no longer exist. Digests for a
+drive that is merely unplugged are kept, since reading a whole library again is hours of
+work.
+
+**Upgrading.** The stored library moves to schema 6 the first time this version opens
+it, in place: schema 5 carries the folder names a destination uses, and schema 6 gives
+each title's machines a table of their own so the database can answer a page of the
+library without reading all of it. A profile written by an older version arrives with no
+folder names of its own and uses the standard ones. An older version opening the library
+afterwards will say so and stop rather than quietly downgrade.
 
 ## What is new in 0.4.0
 
@@ -156,5 +191,5 @@ built from the format specifications rather than against a drive that has
 loaded the result, and the `FF.CFG` written to a stick follows FlashFloppy's
 documentation rather than a drive that has read it back.
 
-Copying files to a mounted stick — which is what most people will do — verifies
-every byte it writes and never overwrites in place.
+Copying files to a mounted stick, which is what most people will do, verifies every
+byte it writes and never overwrites in place.
