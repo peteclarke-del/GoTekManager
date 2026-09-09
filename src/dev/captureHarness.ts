@@ -52,7 +52,7 @@ async function waitFor<T>(
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const value = probe()
-    if (value) return value as T
+    if (value) return value
     if (Date.now() > deadline) throw new Error(`Timed out waiting for ${describe}`)
     await sleep(100)
   }
@@ -81,6 +81,9 @@ async function click(label: string) {
  * used and an input event dispatched, which is what a real keystroke produces.
  */
 function type(input: HTMLInputElement, value: string) {
+  // Taken from a property descriptor deliberately, and called with its receiver
+  // on the next line, which is what the rule cannot see.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   setter?.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -189,7 +192,9 @@ async function walkTheFlow(controls: CaptureControls) {
 
   // 4 · Verify
   await click('Verify changes')
-  await waitFor('the planned result', () => document.querySelector('.build-result-table tbody tr'))
+  await waitFor('the planned result', () =>
+    document.querySelector('.build-result-table tbody tr'),
+  )
   await capture('04-verify')
 
   // 5 · Confirm
@@ -248,6 +253,5 @@ export function useCaptureHarness(controls: CaptureControls) {
       )
     })
     // The harness runs once for the lifetime of the window.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 }

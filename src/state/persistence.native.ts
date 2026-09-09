@@ -12,7 +12,7 @@
  * would flash the wrong palette on every start.
  */
 
-import type { Destination, MediaItem, Profile, RemovalPolicy } from '../domain/types'
+import type { MediaItem, Profile, RemovalPolicy } from '../domain/types'
 import { isDesktop } from '../native/commands'
 import {
   loadNativeWorkspace,
@@ -36,7 +36,7 @@ function toProfile(stored: StoredWorkspace['profiles'][number]): Profile {
   return {
     id: stored.id,
     name: stored.name,
-    destination: (stored.destination ?? { kind: 'folder', path: '' }) as Destination,
+    destination: stored.destination ?? { kind: 'folder', path: '' },
     platformId: stored.platformId,
     firmwareId: stored.firmwareId,
     organise: stored.organise,

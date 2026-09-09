@@ -224,13 +224,19 @@ npm run tauri dev
 npm run verify
 ```
 
-That runs three things, which can also be run on their own:
+That runs five things, which can also be run on their own:
 
 | Command | What it covers |
 | --- | --- |
 | `npm run build` | TypeScript type-checking and the production frontend build |
+| `npm run lint` | Mistakes the compiler cannot see: promises nothing waits on, values that have escaped their types, code nothing reaches |
+| `npm run check:format` | That Prettier and rustfmt would leave the sources as they are. `npm run format` writes the frontend half |
 | `npm run check` | Frontend domain rules, the workspace reducer, storage migration, and a headless render of the application |
 | `npm run check:native` | The Rust suite: path safety, device rules, planning, transfers, caching, robots handling, and archive extraction |
+
+The stylesheet, the prose, and the workflow files are left alone by the
+formatter, as are a handful of tables that are laid out a row to a line on
+purpose. `eslint.config.js` says which linting rules are switched off and why.
 
 To refresh the in-app help images after changing a screen:
 
