@@ -22,6 +22,7 @@ import {
   type StoredWorkspace,
 } from '../native/store'
 import {
+  forgetLegacyWorkspace,
   legacyLibraryItems,
   LIBRARY_KEY,
   loadWorkspace,
@@ -150,6 +151,11 @@ export async function loadPersistedWorkspace(): Promise<Workspace> {
     if (!isEmpty(previous) || legacy.length) {
       await saveNativeWorkspace(toNative(previous))
       if (legacy.length) await upsertItems(legacy.map(itemToStored))
+      // Taken in, so the copy goes. Leaving it made this a copy rather than a
+      // move, and anything that emptied the database brought the old workspace
+      // back: somebody who cleared their library to start again was handed
+      // their old profiles instead, with no way to refuse them.
+      forgetLegacyWorkspace()
       return previous
     }
     return emptyWorkspace

@@ -34,7 +34,17 @@ export type AllItems = {
   error: string
 }
 
-export function useAllItems(platformId: string, enabled = true): AllItems {
+export function useAllItems(
+  platformId: string,
+  enabled = true,
+  /**
+   * Bumped when the library changes. Without it, re-indexing every source from
+   * inside the bulk add would leave the preview describing the library as it
+   * was when the dialog opened, which for a library that was empty then is a
+   * scan that appears to have found nothing.
+   */
+  revision = 0,
+): AllItems {
   const [state, setState] = useState<AllItems>({
     items: [],
     read: 0,
@@ -82,7 +92,7 @@ export function useAllItems(platformId: string, enabled = true): AllItems {
     return () => {
       active = false
     }
-  }, [platformId, enabled])
+  }, [platformId, enabled, revision])
 
   return state
 }

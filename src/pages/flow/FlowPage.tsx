@@ -96,6 +96,8 @@ const STEP_LABELS = ['Profile', 'Contents', 'Sources', 'Verify', 'Confirm', 'Sum
 export type FlowPageProps = {
   workspace: Workspace
   dispatch: React.Dispatch<WorkspaceAction>
+  /** Bumped when the library changes, so what reads it asks again. */
+  libraryRevision: number
   collection: MediaItem[]
   removalPolicy: 'keep' | 'remove'
   providers: OnlineProvider[]
@@ -113,6 +115,7 @@ export type FlowPageProps = {
 export function FlowPage({
   workspace,
   dispatch,
+  libraryRevision,
   collection,
   removalPolicy,
   providers,
@@ -883,6 +886,7 @@ export function FlowPage({
               profile={profile}
               platform={platform}
               sources={workspace.sources}
+              libraryRevision={libraryRevision}
               collection={collection}
               addLocation={() => void addLocation()}
               reindexSources={reindexSources}
