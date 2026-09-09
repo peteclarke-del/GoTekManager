@@ -181,14 +181,8 @@ pub fn extract_zip_images(
 }
 
 fn relative_to(path: &Path, folder: &Path) -> String {
-    to_posix(
-        &path
-            .strip_prefix(folder)
-            .unwrap_or(path)
-            .to_string_lossy(),
-    )
+    to_posix(&path.strip_prefix(folder).unwrap_or(path).to_string_lossy())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -232,7 +226,10 @@ mod tests {
         let entries = list_zip_images(&archive, &extensions).unwrap();
 
         assert_eq!(
-            entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["Games/Elite.SSD", "Repton.ssd"],
         );
         // The uncompressed size, which is what the file will occupy once written.
@@ -249,7 +246,10 @@ mod tests {
         // cheap; unpacking them to find out was not.
         let root = fixture("preservation");
         let archive = root.join("game.zip");
-        write_archive(&archive, &[("Game (1988).ipf", b"flux"), ("kick.rom", b"rom")]);
+        write_archive(
+            &archive,
+            &[("Game (1988).ipf", b"flux"), ("kick.rom", b"rom")],
+        );
 
         let entries = list_zip_images(&archive, &normalise_extensions(vec!["adf".into()])).unwrap();
 
@@ -298,8 +298,7 @@ mod tests {
         );
         let extensions = normalise_extensions(vec!["ssd".into()]);
 
-        let files =
-            extract_zip_images(&archive, &root, &extensions, PLENTY).unwrap();
+        let files = extract_zip_images(&archive, &root, &extensions, PLENTY).unwrap();
 
         assert_eq!(files, vec!["images/Games/Elite.SSD".to_string()]);
         assert_eq!(fs::read(root.join(&files[0])).unwrap(), b"disk image");
@@ -336,7 +335,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.to_string(), "Extracted images exceed the cache limit.");
+        assert_eq!(
+            error.to_string(),
+            "Extracted images exceed the cache limit."
+        );
         assert!(!root.join("images").exists());
     }
 }

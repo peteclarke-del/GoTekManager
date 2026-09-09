@@ -34,7 +34,10 @@ pub fn allows(robots: &str, path: &str) -> bool {
             "allow" | "disallow" => {
                 naming_agents = false;
                 if applies && !value.is_empty() {
-                    rules.push((field.trim().eq_ignore_ascii_case("allow"), value.to_string()));
+                    rules.push((
+                        field.trim().eq_ignore_ascii_case("allow"),
+                        value.to_string(),
+                    ));
                 }
             }
             _ => {}

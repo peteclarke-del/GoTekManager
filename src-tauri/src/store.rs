@@ -230,8 +230,8 @@ pub fn connection(app: &tauri::AppHandle) -> Result<Connection> {
 
 pub(crate) fn open(app: &tauri::AppHandle) -> Result<Connection> {
     let path = database_path(app)?;
-    let connection = Connection::open(&path)
-        .with_context(|| format!("Unable to open {}", path.display()))?;
+    let connection =
+        Connection::open(&path).with_context(|| format!("Unable to open {}", path.display()))?;
     prepare(&connection)?;
     Ok(connection)
 }
@@ -286,8 +286,7 @@ pub fn prepare(connection: &Connection) -> Result<()> {
 
 /// Moves an existing database forward to the current schema.
 fn migrate(connection: &Connection) -> Result<()> {
-    let version: i64 =
-        connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version == SCHEMA_VERSION {
         return Ok(());
     }
@@ -806,7 +805,11 @@ mod tests {
         let loaded = read_workspace(&connection).unwrap();
 
         assert_eq!(
-            loaded.profiles.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            loaded
+                .profiles
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["p1", "p2"]
         );
     }
@@ -818,7 +821,10 @@ mod tests {
         write_workspace(&mut connection, &workspace()).unwrap();
         let loaded = read_workspace(&connection).unwrap();
 
-        assert_eq!(loaded.removal_policies.get("p1").map(String::as_str), Some("remove"));
+        assert_eq!(
+            loaded.removal_policies.get("p1").map(String::as_str),
+            Some("remove")
+        );
         // "keep" is the default, so it is absent rather than stored redundantly.
         assert!(!loaded.removal_policies.contains_key("p2"));
     }
@@ -859,7 +865,9 @@ mod tests {
 
         for table in ["items", "collection_items"] {
             let count: i64 = connection
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(count, 1, "{table} should be untouched by a workspace save");
         }
@@ -946,7 +954,9 @@ mod tests {
         assert_eq!(category, None);
         // And schema 6's membership table was filled from what was already there.
         let platform: String = connection
-            .query_row("SELECT platform_id FROM item_platforms", [], |row| row.get(0))
+            .query_row("SELECT platform_id FROM item_platforms", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(platform, "bbc");
     }
@@ -1032,7 +1042,6 @@ mod tests {
             waited >= Duration::from_millis(300),
             "gave up after {waited:?} without waiting for the lock"
         );
-
     }
 }
 

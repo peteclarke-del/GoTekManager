@@ -17,26 +17,26 @@
 //! stick never freezes the window.
 
 mod archive;
-mod source;
-mod update;
 mod cache;
 mod convert;
 mod devices;
-mod hardware;
-mod image;
 mod error;
 mod fingerprint;
 mod firmware;
+mod hardware;
+mod image;
 mod library;
 mod media;
 mod online;
 mod paths;
 mod provision;
+mod source;
 mod store;
 mod task;
 #[cfg(test)]
 mod testing;
 mod transfer;
+mod update;
 
 pub fn run() {
     tauri::Builder::default()

@@ -137,7 +137,11 @@ mod tests {
     #[test]
     fn a_configuration_already_on_the_drive_is_not_overwritten_by_accident() {
         let root = drive("existing");
-        fs::write(root.join(CONFIG_NAME), b"# tuned by hand\nnav-mode = indexed\n").unwrap();
+        fs::write(
+            root.join(CONFIG_NAME),
+            b"# tuned by hand\nnav-mode = indexed\n",
+        )
+        .unwrap();
 
         let refused = write_config(&root, "nav-mode = native\n", false);
 
@@ -162,7 +166,10 @@ mod tests {
         let path = write_config(&root, contents, false).unwrap();
 
         assert_eq!(path, CONFIG_NAME);
-        assert_eq!(fs::read_to_string(root.join(CONFIG_NAME)).unwrap(), contents);
+        assert_eq!(
+            fs::read_to_string(root.join(CONFIG_NAME)).unwrap(),
+            contents
+        );
         // The temporary name used during the write is gone.
         assert!(!root.join("FF.part").exists());
     }

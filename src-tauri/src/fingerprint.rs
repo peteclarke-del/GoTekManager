@@ -115,12 +115,7 @@ impl DigestCache {
     /// Taking the stat as an argument is the point: the destination walk and
     /// the source check have both already looked at the file, and looking again
     /// doubles the cost of the whole comparison for nothing.
-    pub fn digest(
-        &mut self,
-        connection: &Connection,
-        path: &Path,
-        stat: Stat,
-    ) -> Result<String> {
+    pub fn digest(&mut self, connection: &Connection, path: &Path, stat: Stat) -> Result<String> {
         let key = path.to_string_lossy().into_owned();
         if let Some(sha256) = self.get(&key, stat) {
             return Ok(sha256.to_string());

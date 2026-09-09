@@ -216,7 +216,9 @@ pub fn write_files(path: &Path, files: &[ImageFile]) -> Result<u64> {
             .root_dir()
             .create_file(&file.relative_path)
             .with_context(|| format!("Unable to create {} in the image", file.relative_path))?;
-        target.truncate().map_err(|error| Error::new(error.to_string()))?;
+        target
+            .truncate()
+            .map_err(|error| Error::new(error.to_string()))?;
         // Read through the source resolver rather than opened as a file: a
         // title can live in a folder, inside a ZIP, or inside another image,
         // and opening the path directly worked for only the first of those.
@@ -286,7 +288,9 @@ pub fn list_files(path: &Path) -> Result<Vec<FileEntry>> {
             }
         }
         if found.len() > 100_000 {
-            return Err(Error::new("The image holds an implausible number of files."));
+            return Err(Error::new(
+                "The image holds an implausible number of files.",
+            ));
         }
     }
     found.sort_by(|left, right| left.path.cmp(&right.path));
@@ -438,7 +442,10 @@ mod tests {
         })
         .unwrap();
 
-        assert!(measured.cluster_bytes >= 512, "a cluster is at least a sector");
+        assert!(
+            measured.cluster_bytes >= 512,
+            "a cluster is at least a sector"
+        );
         assert!(measured.cluster_bytes.is_power_of_two());
         assert!(measured.usable_bytes > 0);
         // The filesystem's own structures are not available for files.
@@ -489,13 +496,12 @@ mod tests {
             entry_size(&held, "Games/Inside.adf").unwrap(),
             Some("loose title".len() as u64),
         );
-        let read_back =
-            read_entry(&held, "Games/Inside.adf", |reader| {
-                let mut buffer = Vec::new();
-                std::io::Read::read_to_end(reader, &mut buffer).unwrap();
-                Ok(buffer)
-            })
-            .unwrap();
+        let read_back = read_entry(&held, "Games/Inside.adf", |reader| {
+            let mut buffer = Vec::new();
+            std::io::Read::read_to_end(reader, &mut buffer).unwrap();
+            Ok(buffer)
+        })
+        .unwrap();
         assert_eq!(read_back, b"loose title");
 
         // And all three can be written into a stick in one pass.
@@ -726,6 +732,9 @@ pub async fn create_image(
 
 /// Unpacks an image into a folder.
 #[tauri::command]
-pub async fn extract_image(image: String, destination: String) -> crate::error::Result<Vec<String>> {
+pub async fn extract_image(
+    image: String,
+    destination: String,
+) -> crate::error::Result<Vec<String>> {
     crate::task::blocking(move || extract(Path::new(&image), Path::new(&destination))).await
 }

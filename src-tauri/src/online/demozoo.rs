@@ -370,7 +370,10 @@ mod tests {
         let extensions = normalise_extensions(vec!["dsk".into()]);
 
         assert!(supported("https://x/y/game.dsk?dl=1", &extensions));
-        assert!(!supported("https://x/y/page.php?file=game.dsk", &extensions));
+        assert!(!supported(
+            "https://x/y/page.php?file=game.dsk",
+            &extensions
+        ));
     }
 
     /// Opt-in: `cargo test -- --ignored` reaches the live API.
@@ -381,10 +384,11 @@ mod tests {
         let http = client(None).unwrap();
         let source = provider(Some("66"));
 
-        let titles =
-            tauri::async_runtime::block_on(super::search(&http, &source, "bbc")).unwrap();
+        let titles = tauri::async_runtime::block_on(super::search(&http, &source, "bbc")).unwrap();
         assert!(!titles.is_empty(), "no productions listed");
-        assert!(titles.iter().all(|t| t.platform_id.as_deref() == Some("bbc")));
+        assert!(titles
+            .iter()
+            .all(|t| t.platform_id.as_deref() == Some("bbc")));
 
         // Walk a few until one has something this machine could use, which is
         // the whole point of preferring an API over crawling the site.

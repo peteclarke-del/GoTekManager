@@ -15,9 +15,7 @@
 //! JavaScript.
 
 use crate::error::Result;
-use crate::store::{
-    identity, item_from_row, open, write_transaction, StoredItem, ITEM_COLUMNS,
-};
+use crate::store::{identity, item_from_row, open, write_transaction, StoredItem, ITEM_COLUMNS};
 use crate::task::blocking;
 use rusqlite::{params, Transaction};
 
@@ -96,7 +94,11 @@ fn put_item(transaction: &Transaction, item: &StoredItem) -> Result<()> {
 /// Staging refers to items by id, so a title dropped from the library has to
 /// leave the profiles that staged it as well — otherwise a write would plan
 /// around a file that is no longer known.
-fn drop_items(transaction: &Transaction, where_clause: &str, bound: &[&dyn rusqlite::ToSql]) -> Result<()> {
+fn drop_items(
+    transaction: &Transaction,
+    where_clause: &str,
+    bound: &[&dyn rusqlite::ToSql],
+) -> Result<()> {
     transaction.execute(
         &format!(
             "DELETE FROM item_platforms WHERE item_id IN (SELECT id FROM items WHERE {where_clause})"
@@ -435,7 +437,13 @@ mod tests {
     fn a_library_far_beyond_the_browser_storage_limit_round_trips() {
         let mut connection = connection();
         let many: Vec<StoredItem> = (0..5000)
-            .map(|index| item(&format!("/library/{index}.adf"), &format!("Title {index}.adf"), &["amiga"]))
+            .map(|index| {
+                item(
+                    &format!("/library/{index}.adf"),
+                    &format!("Title {index}.adf"),
+                    &["amiga"],
+                )
+            })
             .collect();
 
         store(&mut connection, &many);
@@ -454,15 +462,24 @@ mod tests {
         download.canonical_title = Some("Elite (Disk 1)".into());
         store(
             &mut connection,
-            &[item("/library/Elite.adf", "Elite.adf", &["amiga"]), download],
+            &[
+                item("/library/Elite.adf", "Elite.adf", &["amiga"]),
+                download,
+            ],
         );
 
         let loaded = read_all(&connection);
-        let scanned = loaded.iter().find(|i| i.path == "/library/Elite.adf").unwrap();
+        let scanned = loaded
+            .iter()
+            .find(|i| i.path == "/library/Elite.adf")
+            .unwrap();
         assert_eq!(scanned.id, None, "a scanned title is its path");
         assert_eq!(scanned.canonical_title, None, "a scanned title is its file");
 
-        let back = loaded.iter().find(|i| i.path == "/cache/00fa3b.adf").unwrap();
+        let back = loaded
+            .iter()
+            .find(|i| i.path == "/cache/00fa3b.adf")
+            .unwrap();
         assert_eq!(back.id.as_deref(), Some("download:elite:1"));
         assert_eq!(back.canonical_title.as_deref(), Some("Elite (Disk 1)"));
     }
@@ -493,7 +510,10 @@ mod tests {
             &mut connection,
             &[item("/a/Elite.adf", "Elite.adf", &["amiga", "st"])],
         );
-        store(&mut connection, &[item("/a/Elite.adf", "Elite.adf", &["st"])]);
+        store(
+            &mut connection,
+            &[item("/a/Elite.adf", "Elite.adf", &["st"])],
+        );
 
         let count: i64 = connection
             .query_row("SELECT count(*) FROM item_platforms", [], |row| row.get(0))

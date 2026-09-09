@@ -121,9 +121,7 @@ fn entry_size(container: &Path, entry: &str, kind: Container) -> Result<Option<u
 
 pub fn read_with<T>(path: &Path, read: impl FnOnce(&mut dyn Read) -> Result<T>) -> Result<T> {
     match contained(path) {
-        Some((container, entry, Container::Zip)) => {
-            archive::read_zip_entry(container, entry, read)
-        }
+        Some((container, entry, Container::Zip)) => archive::read_zip_entry(container, entry, read),
         Some((container, entry, Container::Image)) => {
             crate::image::read_entry(container, entry, read)
         }
