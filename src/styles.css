@@ -527,3 +527,10 @@ th.select-cell{width:34px}
 .device-row small{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .device-row .device-partitions{display:none}
 .device-row.selected .device-partitions{display:block;white-space:normal}
+
+/* The same corrections again for somebody whose theme follows the desktop.
+   Every rule under `.app.dark` needs one of these, and twenty-two of them had
+   drifted: on a dark desktop the "will not fit" panel kept its light amber
+   background while the text on it stayed pale, which made the buttons on it
+   unreadable. `npm run check` now fails if the two ever disagree again. */
+@media(prefers-color-scheme:dark){.app.system-theme .search,.app.system-theme .dropzone{background:var(--soft)}.app.system-theme .target,.app.system-theme .select{border-color:var(--line);color:var(--ink);background:transparent}.app.system-theme aside{background:var(--nav)}.app.system-theme .queue-list>div,.app.system-theme .organise{border-color:#2b3a44}.app.system-theme .platform-list button.selected{background:#3b3425}.app.system-theme .dropzone b,.app.system-theme .empty b{color:#eaf0f5}.app.system-theme .plan-files,.app.system-theme .plan-files>div{border-color:var(--line)}.app.system-theme .scan-progress small{color:#17212b}.app.system-theme .target-state.new{color:#83d6aa}.app.system-theme .target-state.different{color:#f5ca68}.app.system-theme .target-state.on-target{color:#8dc6e3}.app.system-theme .target-state.identical,.app.system-theme .target-state.checking{color:#c2d0d8}.app.system-theme .progress-dialog>svg{color:#f2b84a}.app.system-theme .version-actions .version-current{color:#8fd6ae}.app.system-theme .browse-into:hover{color:#f2b84a}.app.system-theme .capacity .fits{color:#6fcf9a}.app.system-theme .capacity .over,.app.system-theme .picker-total .over{color:#ee8a82}.app.system-theme .too-big{background:#443718;color:#f5ca68}.app.system-theme .picker-total .fits{color:#6fcf9a}}

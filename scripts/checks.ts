@@ -3232,6 +3232,39 @@ check('a stored column order gains a column it predates', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Themes
+// ---------------------------------------------------------------------------
+
+/// A theme that follows the desktop is a second theme to maintain, and it drifts
+/// silently: nothing looks wrong to somebody who has picked Light or Dark
+/// explicitly. Twenty-two rules had drifted before anyone noticed, and what
+/// finally showed it was the "will not fit" panel keeping its light amber
+/// background on a dark desktop, which left the buttons on it unreadable.
+///
+/// So the two are held level here. Every element the dark theme corrects must be
+/// corrected for the system theme as well, whatever the correction is.
+check('what the dark theme fixes, the system theme fixes too', () => {
+  const css = readFileSync('src/styles.css', 'utf8')
+  const styled = (theme: string) =>
+    new Set(
+      [
+        ...css.matchAll(new RegExp(`\\.(?:app\\.)?${theme} ([.\\w-]+(?:\\.[\\w-]+)*)`, 'g')),
+      ].map((match) => match[1]),
+    )
+
+  const dark = styled('dark')
+  const system = styled('system-theme')
+  const missing = [...dark].filter((selector) => !system.has(selector)).sort()
+
+  assert.ok(dark.size > 40, 'the dark theme should style a good deal')
+  assert.deepEqual(
+    missing,
+    [],
+    `styled for .dark but not for .system-theme: ${missing.join(', ')}`,
+  )
+})
+
+// ---------------------------------------------------------------------------
 // Help screenshots
 // ---------------------------------------------------------------------------
 
