@@ -427,15 +427,6 @@ export type ImageOptions = {
   partitioned: boolean
 }
 
-export type ImageSummary = {
-  path: string
-  sizeBytes: number
-  partitioned: boolean
-  filesystemBytes: number
-  fileCount: number
-  usedBytes: number
-}
-
 export type CacheSummary = {
   totalBytes: number
   downloadCount: number

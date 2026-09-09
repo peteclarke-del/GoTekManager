@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
+import { Options } from './Choices'
 import { firmwareProfiles } from '../domain/catalog'
 import { formatBytes, NAMING_CHOICES } from '../domain/media'
 import type {
@@ -213,11 +214,7 @@ export function SettingsDialog({
                 value={settings.defaults.firmwareId}
                 onChange={(event) => setDefault('firmwareId', event.target.value)}
               >
-                {firmwareProfiles.map((firmware) => (
-                  <option key={firmware.id} value={firmware.id}>
-                    {firmware.name}
-                  </option>
-                ))}
+                <Options items={firmwareProfiles} />
               </select>
             </label>
             <label>
@@ -228,11 +225,7 @@ export function SettingsDialog({
                   setDefault('naming', event.target.value as ProfileDefaults['naming'])
                 }
               >
-                {NAMING_CHOICES.map((choice) => (
-                  <option key={choice.id} value={choice.id}>
-                    {choice.name}
-                  </option>
-                ))}
+                <Options items={NAMING_CHOICES} />
               </select>
             </label>
             <label>

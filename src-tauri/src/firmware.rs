@@ -114,19 +114,12 @@ pub async fn write_firmware_config(
 #[cfg(test)]
 mod tests {
     use super::{config_location, read_state, write_config, CONFIG_FOLDER, CONFIG_NAME};
-    use std::{fs, path::PathBuf};
+    use crate::testing::Scratch;
+    use std::fs;
 
     /// A throwaway directory standing in for a mounted stick.
-    fn drive(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-firmware-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    fn drive(name: &str) -> Scratch {
+        Scratch::new(&format!("firmware-{name}"))
     }
 
     #[test]

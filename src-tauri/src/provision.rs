@@ -414,18 +414,12 @@ pub async fn execute_provision(
 mod tests {
     use super::{confirmation_phrase, describe, write_image};
     use crate::hardware::{Partition, PhysicalDevice};
-    use std::{fs, path::PathBuf};
+    use std::{fs};
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-provision-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("provision-{name}"))
     }
 
     fn device() -> PhysicalDevice {
@@ -510,7 +504,6 @@ mod tests {
         assert_eq!(written, content.len() as u64);
         assert!(verified);
         assert_eq!(fs::read(&target).unwrap(), content);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -520,7 +513,6 @@ mod tests {
         let error = write_image(&root.join("missing.img"), &root.join("nowhere")).unwrap_err();
 
         assert!(error.to_string().contains("Unable to read"));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -540,6 +532,5 @@ mod tests {
         let after = fs::read(&target).unwrap();
         assert_eq!(after.len(), 8192);
         assert!(after[1024..].iter().all(|byte| *byte == 0));
-        fs::remove_dir_all(root).unwrap();
     }
 }

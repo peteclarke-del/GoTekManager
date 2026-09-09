@@ -18,6 +18,7 @@ import {
   SelectCell,
   SelectColumns,
 } from '../../components/BulkSelection'
+import { Options } from '../../components/Choices'
 import { Empty, InlineStatus } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
 import { BulkAddDialog } from './BulkAddDialog'
@@ -346,11 +347,7 @@ export function LocalLibrary({
               value={item.assignedPlatformId || platform.id}
               onChange={(event) => assignPlatform([item.id], event.target.value)}
             >
-              {platforms.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.name}
-                </option>
-              ))}
+              <Options items={platforms} />
             </select>
           </td>
         )
@@ -363,11 +360,7 @@ export function LocalLibrary({
               onChange={(event) => assignCategory([item.id], event.target.value)}
             >
               <option value="">Unsorted</option>
-              {categories.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.name}
-                </option>
-              ))}
+              <Options items={categories} />
             </select>
           </td>
         )
@@ -658,11 +651,7 @@ export function LocalLibrary({
               <option value="" disabled>
                 Set for {picked.length}…
               </option>
-              {categories.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.name}
-                </option>
-              ))}
+              <Options items={categories} />
               <option value="clear">Unsorted</option>
             </select>
           </label>

@@ -1,6 +1,7 @@
-import { Check, ChevronRight, HardDrive, Pencil } from 'lucide-react'
+import { ChevronRight, Pencil } from 'lucide-react'
 import { requireFirmware, requirePlatform } from '../../domain/catalog'
 import { formatBytes, namingChoice } from '../../domain/media'
+import { ProfileChoice } from '../../components/Choices'
 import { Empty } from '../../components/Feedback'
 import type { Profile } from '../../domain/types'
 import { isWritable } from '../../state/workspace'
@@ -38,28 +39,15 @@ export function ProfileStep({
 
       {profiles.length ? (
         <div className="profile-choice-list">
-          {profiles.map((profile) => {
-            const selected = profile.id === active?.id
-            return (
-              <button
-                key={profile.id}
-                className={selected ? 'selected' : ''}
-                aria-pressed={selected}
-                onClick={() => select(profile.id)}
-              >
-                <HardDrive />
-                <span>
-                  <b>{profile.name}</b>
-                  <small>
-                    {requirePlatform(profile.platformId).name} ·{' '}
-                    {requireFirmware(profile.firmwareId).name}
-                  </small>
-                  <small title={profile.destination.path}>{profile.destination.path}</small>
-                </span>
-                {selected && <Check />}
-              </button>
-            )
-          })}
+          {profiles.map((profile) => (
+            <ProfileChoice
+              key={profile.id}
+              profile={profile}
+              selected={profile.id === active?.id}
+              onSelect={() => select(profile.id)}
+              showDestination
+            />
+          ))}
         </div>
       ) : (
         <Empty title="No profiles yet" action="Create profile" run={manageProfiles} />

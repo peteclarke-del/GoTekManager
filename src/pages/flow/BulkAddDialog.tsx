@@ -23,6 +23,7 @@ import {
   type ScanFilter,
 } from '../../domain/bulkAdd'
 import { formatBytes, tagsOf } from '../../domain/media'
+import { Options } from '../../components/Choices'
 import { spokenLanguages } from '../../domain/tags'
 import type { DevStatus, Distribution, DumpFlag } from '../../domain/tags'
 import type { MediaItem, Profile, SourceLocation, TargetFileStatus } from '../../domain/types'
@@ -539,11 +540,7 @@ export function BulkAddDialog({
                   onChange={(event) => setSortUnsorted(event.target.value)}
                 >
                   <option value="">Leave them unsorted</option>
-                  {categories.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </option>
-                  ))}
+                  <Options items={categories} />
                 </select>
               </label>
             </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
+import { Options } from './Choices'
 import { firmwareProfiles, platforms } from '../domain/catalog'
 import { categories, categoryFolderFor, UNCATEGORISED } from '../domain/categories'
 import { configSupport, DISPLAY_CHOICES } from '../domain/firmwareConfig'
@@ -91,11 +92,7 @@ export function ProfileEditor({
           value={draft.platformId}
           onChange={(event) => update('platformId', event.target.value)}
         >
-          {platforms.map((platform) => (
-            <option key={platform.id} value={platform.id}>
-              {platform.name}
-            </option>
-          ))}
+          <Options items={platforms} />
         </select>
       </label>
       <label>
@@ -104,11 +101,7 @@ export function ProfileEditor({
           value={draft.firmwareId}
           onChange={(event) => update('firmwareId', event.target.value)}
         >
-          {firmwareProfiles.map((firmware) => (
-            <option key={firmware.id} value={firmware.id}>
-              {firmware.name}
-            </option>
-          ))}
+          <Options items={firmwareProfiles} />
         </select>
       </label>
       {draft.destination.detectedFirmwareId &&
@@ -228,11 +221,7 @@ export function ProfileEditor({
           value={draft.naming}
           onChange={(event) => update('naming', event.target.value as Profile['naming'])}
         >
-          {NAMING_CHOICES.map((choice) => (
-            <option key={choice.id} value={choice.id}>
-              {choice.name}
-            </option>
-          ))}
+          <Options items={NAMING_CHOICES} />
         </select>
       </label>
       <p className="mode-note">{namingChoice(draft.naming).summary}</p>

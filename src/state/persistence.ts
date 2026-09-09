@@ -29,14 +29,6 @@ export function writeStored(key: string, value: unknown): void {
   }
 }
 
-export function removeStored(key: string): void {
-  try {
-    localStorage.removeItem(key)
-  } catch {
-    /* see writeStored */
-  }
-}
-
 /**
  * `useState` that loads from and saves to local storage.
  *

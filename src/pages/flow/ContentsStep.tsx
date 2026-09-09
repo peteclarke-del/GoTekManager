@@ -1,8 +1,8 @@
-import { ChevronLeft, ChevronRight, Pencil, RefreshCw, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, Trash2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Check } from 'lucide-react'
 import { BulkBar } from '../../components/BulkSelection'
-import { FileBrowserTable } from '../../components/FileBrowserTable'
+import { FileBrowserTable, RefreshContents } from '../../components/FileBrowserTable'
 import { Modal } from '../../components/Modal'
 import { joinRelative, relativeTo, toPosix } from '../../domain/paths'
 import type { DestinationEdit, FileEntry, Profile } from '../../domain/types'
@@ -73,13 +73,7 @@ export function ContentsStep({
               <ChevronLeft />
             </button>
           )}
-          <button
-            className="icon-button"
-            title="Refresh contents"
-            onClick={() => void browser.refresh()}
-          >
-            <RefreshCw className={browser.busy ? 'spinning' : ''} />
-          </button>
+          <RefreshContents browser={browser} />
         </div>
       </div>
 

@@ -12,7 +12,8 @@
  */
 
 import { acceptedFormats } from './catalog'
-import { categoryIn } from './categories'
+import { categoryIn, wordsOf } from './categories'
+import { formatBytes } from './media'
 import { dottedExtensionOf } from './paths'
 import { readTags } from './tags'
 import type { Profile } from './types'
@@ -162,22 +163,6 @@ const SETUP_WORDS = [
   'patch',
 ]
 
-/** Bytes as a person reads them. Kept here so the domain owes nothing to the UI. */
-function bytes(value: number): string {
-  const units = ['bytes', 'KB', 'MB', 'GB', 'TB']
-  let size = value
-  let unit = 0
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024
-    unit += 1
-  }
-  return `${unit === 0 ? size : size.toFixed(size >= 10 ? 0 : 1)} ${units[unit]}`
-}
-
-function wordsOf(text: string): string {
-  return ` ${text.toLowerCase().split(/[^a-z0-9+]+/i).filter(Boolean).join(' ')} `
-}
-
 /**
  * The top-level folders, in the order they should be given up.
  *
@@ -298,7 +283,7 @@ export function proposeExclusions(
     // The size is the point: "1,142 titles" is a number, "1.7 GB" is the reason
     // it was worth giving up, and somebody deciding whether to put it back
     // needs the second one.
-    if (freed > 0) steps.push(`${reason}: ${doomed.size} titles, ${bytes(freed)}`)
+    if (freed > 0) steps.push(`${reason}: ${doomed.size} titles, ${formatBytes(freed)}`)
   }
 
   // 1. Anything this drive cannot load is a copy of something it cannot show.

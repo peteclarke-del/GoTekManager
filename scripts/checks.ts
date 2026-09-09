@@ -2211,6 +2211,26 @@ check('a title already staged is not duplicated when the selection loads', () =>
   assert.equal(settled.collections[bbcProfile.id].length, 1)
 })
 
+/// "Remove what the collection does not contain" means something very different
+/// once the collection contains nothing, so emptying one puts its policy back to
+/// keeping what is on the drive. Nothing on screen says this, which is exactly
+/// why it is worth a test.
+check('emptying a collection stops it being one that removes files', () => {
+  const item = classifyMedia(entry('Elite.ssd'), '/library')
+  const before: Workspace = {
+    ...workspaceWith(bbcProfile, [item]),
+    removalPolicies: { [bbcProfile.id]: 'remove' },
+  }
+
+  const after = workspaceReducer(before, {
+    type: 'collectionCleared',
+    profileId: bbcProfile.id,
+  })
+
+  assert.deepEqual(after.collections[bbcProfile.id], [])
+  assert.equal(after.removalPolicies[bbcProfile.id], 'keep')
+})
+
 check('a selection of titles leaves a collection in one pass', () => {
   const elite = classifyMedia(entry('Elite.ssd'), '/library')
   const repton = classifyMedia(entry('Repton.ssd'), '/library')

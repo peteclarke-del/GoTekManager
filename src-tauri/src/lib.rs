@@ -34,6 +34,8 @@ mod paths;
 mod provision;
 mod store;
 mod task;
+#[cfg(test)]
+mod testing;
 mod transfer;
 
 pub fn run() {
@@ -59,7 +61,6 @@ pub fn run() {
             transfer::plan_transfer,
             transfer::execute_transfer,
             // Filesystem images.
-            image::image_summary,
             image::create_image,
             image::extract_image,
             // Destructive device provisioning.
@@ -84,18 +85,24 @@ pub fn run() {
             library::stage_items,
             library::unstage_items,
             library::clear_collection,
-            store::read_document,
             store::read_config_file,
             // Which version this is, and whether a newer one is published.
             update::app_version,
             update::published_releases,
-            fingerprint::fingerprint_paths,
-            fingerprint::prune_digests,
-            store::write_document,
             cache::cache_summary,
             cache::evict_cache,
             cache::clear_download_cache,
         ])
+        .setup(|app| {
+            // Housekeeping rather than startup work, so it runs on a thread of
+            // its own and nothing on screen waits for it. See prune_digests for
+            // why the cache is swept at all.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let _ = fingerprint::prune_digests(&handle);
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running GoTek Manager");
 }

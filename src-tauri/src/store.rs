@@ -723,43 +723,15 @@ pub async fn save_workspace(app: tauri::AppHandle, workspace: StoredWorkspace) -
     .await
 }
 
-/// Small preferences that have no shape worth modelling as tables.
-#[tauri::command]
-pub async fn read_document(app: tauri::AppHandle, key: String) -> Result<Option<String>> {
-    blocking(move || {
-        let connection = open(&app)?;
-        Ok(connection
-            .query_row(
-                "SELECT value FROM documents WHERE key = ?1",
-                params![key],
-                |row| row.get(0),
-            )
-            .ok())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn write_document(app: tauri::AppHandle, key: String, value: String) -> Result<()> {
-    blocking(move || {
-        let connection = open(&app)?;
-        connection.execute(
-            "INSERT OR REPLACE INTO documents (key, value) VALUES (?1, ?2)",
-            params![key, value],
-        )?;
-        Ok(())
-    })
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         migrate, prepare, read_workspace, write_transaction, write_workspace, StoredProfile,
         StoredSource, StoredWorkspace, BUSY_TIMEOUT, SCHEMA_VERSION,
     };
-    use std::time::Duration;
+    use crate::testing::Scratch;
     use rusqlite::{Connection, Transaction, TransactionBehavior};
+    use std::time::Duration;
 
     fn connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
@@ -1031,11 +1003,8 @@ mod tests {
     /// waiting back, and this measures that it happens.
     #[test]
     fn a_writer_meeting_a_busy_database_waits_rather_than_giving_up_at_once() {
-        let path = std::env::temp_dir()
-            .join(format!("gotek-store-lock-{}.sqlite", std::process::id()));
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
+        let scratch = Scratch::new("store-lock");
+        let path = scratch.join("library.sqlite");
 
         // Both connections are prepared before anything holds the lock:
         // creating the schema is itself a write, and would otherwise be what
@@ -1064,12 +1033,6 @@ mod tests {
             "gave up after {waited:?} without waiting for the lock"
         );
 
-        drop(held);
-        drop(holder);
-        drop(waiting);
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
     }
 }
 

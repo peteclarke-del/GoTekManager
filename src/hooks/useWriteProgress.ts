@@ -10,24 +10,21 @@
  * and a count of them crawls and leaps.
  */
 
+import { percentageOf, whileRunning, type Counted } from './progress'
 import { useNativeEvent } from './useNativeEvent'
 
-export type WriteProgress = {
-  done: number
-  total: number
+export type WriteProgress = Counted & {
+  /** Bytes written so far, and how many there are, which is what the bar shows. */
   written: number
   bytes: number
   current: string
 }
 
 export function useWriteProgress(): WriteProgress | null {
-  return useNativeEvent<WriteProgress>('write:progress', (progress) =>
-    progress.done >= progress.total ? null : progress,
-  )
+  return useNativeEvent<WriteProgress>('write:progress', whileRunning)
 }
 
-/** How much of the write is done, by size, never claiming to be finished. */
+/** How much of the write is done, by size rather than by the count of files. */
 export function writePercentage(progress: WriteProgress): number {
-  if (!progress.bytes) return 0
-  return Math.min(99, Math.round((progress.written / progress.bytes) * 100))
+  return percentageOf(progress.written, progress.bytes)
 }

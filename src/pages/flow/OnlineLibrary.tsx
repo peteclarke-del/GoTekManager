@@ -19,6 +19,7 @@ import {
   SelectCell,
   SelectColumns,
 } from '../../components/BulkSelection'
+import { Options } from '../../components/Choices'
 import { Empty, InlineStatus, ProgressDialog } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
 import { namesAnotherPlatform, platforms, type Platform } from '../../domain/catalog'
@@ -802,11 +803,7 @@ function SiteDialog({
       <label>
         For which machine
         <select value={draft.scope} onChange={(event) => set('scope', event.target.value)}>
-          {platforms.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
+          <Options items={platforms} />
         </select>
       </label>
       <p className="mode-note">

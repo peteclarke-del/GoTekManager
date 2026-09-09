@@ -19,7 +19,6 @@ import type {
   FileEntry,
   FirmwareConfigState,
   ImageOptions,
-  ImageSummary,
   MountedTarget,
   OnlineProvider,
   OnlineTitle,
@@ -325,10 +324,6 @@ export function executeProvision(
 // ---------------------------------------------------------------------------
 // Filesystem images
 // ---------------------------------------------------------------------------
-
-export function imageSummary(path: string): Promise<ImageSummary> {
-  return invokeNative<ImageSummary>('image_summary', { path })
-}
 
 /** Creates a new image, optionally filling it. Refuses to replace an existing file. */
 export function createImage(
