@@ -3,6 +3,29 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.5.1
+
+**Titles the library was never able to sort are sorted.** A category is worked
+out when a title is indexed and then kept, which is what makes a category you
+set by hand stick. The cost of keeping it is that a collection carries the
+answers the rules gave at the time, and the rules have improved several times:
+reading a folder named after a collection's own catalogue, reading an archive's
+name, and reading the source folder all arrived after most libraries were built.
+Until 0.5.0 that was covered up, because the whole library was re-derived every
+time it loaded, and it stopped being loaded whole in the same release that
+improved the rules.
+
+So the titles that were never sorted are asked again, once, the next time this
+version opens the library. Only those rows are read, and only the ones that can
+now be answered are written back. On the collection that prompted this, nine
+thousand titles with two thousand six hundred and ninety-three unsorted between
+them came down to eighteen, which were cached downloads with no folders to read.
+
+A category that already says something is never touched, whether the rules
+worked it out or you chose it, because there is no way to tell those apart
+afterwards. To change one that is wrong, set it by hand, or re-scan the source,
+which works its categories out again from scratch.
+
 ## What is new in 0.5.0
 
 **A stick can be filled from a whole collection in one pass.** **Scan all sources**,
