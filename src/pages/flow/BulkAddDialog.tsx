@@ -162,6 +162,7 @@ export function BulkAddDialog({
   staged,
   presence,
   reindexSources,
+  libraryRevision,
   assignCategory,
   stage,
   close,
@@ -175,6 +176,8 @@ export function BulkAddDialog({
   presence: Record<string, TargetFileStatus>
   /** Re-indexes the chosen sources before they are scanned. */
   reindexSources: (chosen: SourceLocation[]) => Promise<void>
+  /** Bumped when the library changes, so a re-index here is read back. */
+  libraryRevision: number
   assignCategory: (itemIds: string[], categoryId: string) => void
   stage: (items: MediaItem[]) => void
   close: () => void
@@ -195,7 +198,7 @@ export function BulkAddDialog({
 
   // Read here rather than handed in: the library is not carried about any
   // more, and this is the one screen that genuinely wants all of it.
-  const library = useAllItems(platform.id)
+  const library = useAllItems(platform.id, true, libraryRevision)
   const mine = library.items
 
   /** What this library actually contains, which is what the choices offer. */

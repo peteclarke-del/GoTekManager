@@ -8,7 +8,7 @@
  */
 
 import { basename } from '../domain/paths'
-import { readStored } from './persistence'
+import { readStored, removeStored } from './persistence'
 import { emptyWorkspace, profileIdFor, type Workspace } from './workspace'
 import { inferPlatformId } from '../domain/catalog'
 import type {
@@ -210,6 +210,41 @@ export function splitWorkspace(workspace: Workspace): {
 export function legacyLibraryItems(): MediaItem[] {
   const library = readStored<Partial<StoredLibrary>>(LIBRARY_KEY, {})
   return library.items ?? migrateItems(readStored('gm.items', []))
+}
+
+/**
+ * Every key an older version kept a workspace or a library in.
+ *
+ * The preferences are deliberately not here. Theme, table layout and the
+ * provider list are still kept in local storage by the current version, and
+ * they are read straight from these same names.
+ */
+const LEGACY_WORKSPACE_KEYS = [
+  WORKSPACE_KEY,
+  LIBRARY_KEY,
+  'gm.targets',
+  'gm.profiles',
+  'gm.setupQueues',
+  'gm.setupMatchModes',
+  'gm.selectedTarget',
+  'gm.sources',
+  'gm.items',
+]
+
+/**
+ * Forgets the copy an older version left behind, once it has been taken in.
+ *
+ * Adopting it is a one-way move, and until it was forgotten it was not a move
+ * at all: the copy stayed, and anything that left the database empty brought it
+ * back. Somebody who deleted their library to start again found their old
+ * profiles waiting for them, with no way to be rid of them from inside the
+ * application.
+ *
+ * Called only after the database has taken the contents, so a failure part way
+ * through leaves the old copy where it is and the next start tries again.
+ */
+export function forgetLegacyWorkspace(): void {
+  for (const key of LEGACY_WORKSPACE_KEYS) removeStored(key)
 }
 
 /** Loads the workspace, migrating the previous layout the first time. */

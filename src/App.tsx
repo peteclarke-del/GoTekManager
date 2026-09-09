@@ -53,6 +53,7 @@ export function App() {
   const {
     workspace,
     dispatch,
+    libraryRevision,
     activeProfile,
     collection,
     removalPolicy,
@@ -194,6 +195,7 @@ export function App() {
           <FlowPage
             workspace={workspace}
             dispatch={dispatch}
+            libraryRevision={libraryRevision}
             collection={collection}
             removalPolicy={removalPolicy}
             providers={providers}
