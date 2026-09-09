@@ -340,9 +340,10 @@ check('a disc number is found in the middle of a name, and survives the cut', ()
 })
 
 check('a name cut for the display gives up the title, never the disc', () => {
+  // Whole words, rather than the character the room happens to run out at.
   assert.equal(
     releaseName(media('A Very Long Retro Game Title Indeed.ssd'), undefined, 24),
-    'A Very Long Retro Ga.ssd',
+    'A Very Long Retro.ssd',
   )
   // Factory firmware has a much smaller display.
   assert.ok(releaseName(media('Elite.ssd'), undefined, 8).length <= 8)
@@ -357,6 +358,43 @@ check('a name cut for the display gives up the title, never the disc', () => {
   const tight = releaseName(set[1], positions.get(set[1].id), 20)
   assert.ok(tight.length <= 20)
   assert.ok(tight.endsWith(' B.adf'), tight)
+})
+
+/// Cutting at the character the room runs out at is what the panel needs and
+/// not what a person reads. These are real names from a real Amiga collection,
+/// and the left-hand column is what the drive used to be given.
+check('a name too long for the panel is cut where the name has a seam', () => {
+  const cut = (title: string) => releaseName(media(`${title}.adf`, 'amiga'), undefined, 24)
+
+  // A subtitle goes first: the game is still the game without it.
+  assert.equal(cut('Indianapolis 500 - The Simulation'), 'Indianapolis 500.adf')
+  assert.equal(cut('Cycles, The - International Grand Prix Racing'), 'Cycles, The.adf')
+  assert.equal(cut('Donk! - The Samurai Duck!'), 'Donk!.adf')
+
+  // Then whole words, and never a dangling comma or dash where one was cut.
+  assert.equal(cut('Moonstone A Hard Days Knight'), 'Moonstone A Hard.adf')
+  assert.ok(!/[ ,;:-]\.adf$/.test(cut('Killing Game Show, The')), cut('Killing Game Show, The'))
+})
+
+/// A trailing number says which of these this is. Dropping it makes two titles
+/// one, and cutting through it is worse still: `Compilation Disk #04672` became
+/// `Compilation Disk #04`, which is a different disk and looks like a real name.
+check('a number that says which title this is survives the cut', () => {
+  const cut = (title: string) => releaseName(media(`${title}.adf`, 'amiga'), undefined, 24)
+
+  assert.equal(cut('Compilation Disk #04672'), 'Compilation #04672.adf')
+  assert.equal(cut('Delicious Fruits #033'), 'Delicious #033.adf')
+  // Two editions of one game stay two.
+  assert.notEqual(cut('Championship Manager 93'), cut('Championship Manager 94'))
+})
+
+/// Not every name has a seam, and one cut mid-word still beats one cut down to
+/// nothing: "Spike in Transylvani" is a poor name and "Spike in" is a worse one.
+check('a name with nowhere to cut keeps as much of itself as fits', () => {
+  const cut = releaseName(media('Spikeintransylvania Underworld.adf', 'amiga'), undefined, 24)
+
+  assert.ok(cut.length <= 24, cut)
+  assert.ok(cut.startsWith('Spikeintransylvania'), cut)
 })
 
 check('every route into the library writes the same name', () => {
