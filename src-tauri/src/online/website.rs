@@ -141,7 +141,14 @@ fn section_of(url: &reqwest::Url, label: &str) -> Option<String> {
 /// entries. The file's own name is the better answer wherever the page has not
 /// given a real one.
 const EMPTY_LABELS: [&str; 8] = [
-    "download", "download now", "get", "get it", "click here", "here", "link", "file",
+    "download",
+    "download now",
+    "get",
+    "get it",
+    "click here",
+    "here",
+    "link",
+    "file",
 ];
 
 /// What to call a title: what the page called it, or what the file is called.
@@ -157,7 +164,13 @@ fn download_title(label: &str, filename: &str) -> String {
         .unwrap_or(filename)
         .trim();
     let generic = label.trim().is_empty()
-        || EMPTY_LABELS.contains(&label.trim().trim_end_matches(['.', '!', '»', '>']).to_lowercase().as_str());
+        || EMPTY_LABELS.contains(
+            &label
+                .trim()
+                .trim_end_matches(['.', '!', '»', '>'])
+                .to_lowercase()
+                .as_str(),
+        );
     if generic && !stem.is_empty() {
         return stem.to_string();
     }
@@ -322,17 +335,22 @@ pub async fn inspect(
         let asked = if known_page {
             None
         } else {
-            client.head(url.clone()).send().await.ok().filter(|response| {
-                response.status().is_success() || response.status().is_redirection()
-            })
+            client
+                .head(url.clone())
+                .send()
+                .await
+                .ok()
+                .filter(|response| {
+                    response.status().is_success() || response.status().is_redirection()
+                })
         };
         let head_is_page = known_page
             || asked.as_ref().is_none_or(|response| {
-            response
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .is_none_or(|value| value.contains("text/html"))
+                response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .is_none_or(|value| value.contains("text/html"))
             });
         let response = match asked {
             Some(response) if !head_is_page => response,
@@ -461,9 +479,7 @@ pub async fn inspect(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        attachment_name, downloadable_name, link_extension, link_label, PAGE_EXTENSIONS,
-    };
+    use super::{attachment_name, downloadable_name, link_extension, link_label, PAGE_EXTENSIONS};
 
     fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
         let mut map = reqwest::header::HeaderMap::new();
@@ -498,9 +514,18 @@ mod tests {
         );
         // Whole words only, so a page about a game show is not a section of
         // games, and a search for a publisher is not a section at all.
-        assert_eq!(section_of(&url("https://example.org/items.php?search=Gameshow"), ""), None);
-        assert_eq!(section_of(&url("https://example.org/items.php?search=Bullfrog"), ""), None);
-        assert_eq!(section_of(&url("https://example.org/index.php"), "Home"), None);
+        assert_eq!(
+            section_of(&url("https://example.org/items.php?search=Gameshow"), ""),
+            None
+        );
+        assert_eq!(
+            section_of(&url("https://example.org/items.php?search=Bullfrog"), ""),
+            None
+        );
+        assert_eq!(
+            section_of(&url("https://example.org/index.php"), "Home"),
+            None
+        );
     }
 
     #[test]
@@ -513,7 +538,10 @@ mod tests {
             "Syndicate American Revolt (Bullfrog)"
         );
         assert_eq!(download_title("Download now", "Elite.adf"), "Elite");
-        assert_eq!(download_title("  ", "Hellfire (Martech).zip"), "Hellfire (Martech)");
+        assert_eq!(
+            download_title("  ", "Hellfire (Martech).zip"),
+            "Hellfire (Martech)"
+        );
         // A page that does give a real name keeps it.
         assert_eq!(
             download_title("Elite (1988) (Firebird)", "dl-1234.zip"),
@@ -549,7 +577,10 @@ mod tests {
         let url = reqwest::Url::parse("https://example.org/index.php?page=2").unwrap();
 
         assert_eq!(
-            downloadable_name(&headers(&[("content-type", "text/html; charset=utf-8")]), &url),
+            downloadable_name(
+                &headers(&[("content-type", "text/html; charset=utf-8")]),
+                &url
+            ),
             None
         );
         assert_eq!(
@@ -563,8 +594,11 @@ mod tests {
         let url = reqwest::Url::parse("https://example.org/files/Elite.adf").unwrap();
 
         assert_eq!(
-            downloadable_name(&headers(&[("content-type", "application/octet-stream")]), &url)
-                .as_deref(),
+            downloadable_name(
+                &headers(&[("content-type", "application/octet-stream")]),
+                &url
+            )
+            .as_deref(),
             Some("Elite.adf")
         );
     }
@@ -574,8 +608,11 @@ mod tests {
         // Quotes are optional in the wild, and a header is not to be trusted
         // with a path: only the last segment of it is ever used.
         assert_eq!(
-            attachment_name(&headers(&[("content-disposition", "attachment; filename=\"Elite.adf\"")]))
-                .as_deref(),
+            attachment_name(&headers(&[(
+                "content-disposition",
+                "attachment; filename=\"Elite.adf\""
+            )]))
+            .as_deref(),
             Some("Elite.adf")
         );
         assert_eq!(
@@ -586,7 +623,10 @@ mod tests {
             .as_deref(),
             Some("passwd")
         );
-        assert_eq!(attachment_name(&headers(&[("content-type", "application/zip")])), None);
+        assert_eq!(
+            attachment_name(&headers(&[("content-type", "application/zip")])),
+            None
+        );
     }
 
     use scraper::{Html, Selector};
@@ -678,8 +718,7 @@ mod tests {
     #[test]
     fn a_crawl_does_not_climb_out_of_the_folder_it_was_pointed_at() {
         use super::{start_directory, within_scope};
-        let start =
-            reqwest::Url::parse("https://ftp.example.net/collections/Atari%20ST/").unwrap();
+        let start = reqwest::Url::parse("https://ftp.example.net/collections/Atari%20ST/").unwrap();
         let directory = start_directory(&start);
 
         assert_eq!(directory, "/collections/Atari%20ST/");
@@ -736,8 +775,10 @@ mod tests {
         .unwrap();
 
         assert!(!titles.is_empty());
-        assert!(titles
-            .iter()
-            .all(|title| title.download_url.as_deref().unwrap_or_default().starts_with("https://")));
+        assert!(titles.iter().all(|title| title
+            .download_url
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("https://")));
     }
 }

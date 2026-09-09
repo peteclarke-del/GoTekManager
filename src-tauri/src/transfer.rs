@@ -12,8 +12,8 @@
 use crate::devices::{available_space, probe_writable, resolve_destination};
 use crate::error::{Context, Result};
 use crate::paths::{
-    canonical, extension_of, file_size, files_equal, matches_indexed_size, normalise_extensions,
-    readers_equal, relative_key, safe_relative_path, safe_target_path, sha256_reader, to_posix,
+    canonical, extension_of, file_size, files_equal, normalise_extensions, readers_equal,
+    relative_key, safe_relative_path, safe_target_path, sha256_reader, to_posix,
 };
 use crate::task::blocking;
 use rusqlite::Connection;
@@ -23,6 +23,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use tauri::Emitter;
 
 /// One planned copy: an indexed source file and where it should land, relative
 /// to the destination root and always `/`-separated.
@@ -32,6 +33,9 @@ pub struct TransferOperation {
     pub source: String,
     pub relative_path: String,
     pub size: u64,
+    /// The title this belongs to, so the discs of one set are written together.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// A change the user staged against the destination itself, before any copying.
@@ -85,6 +89,22 @@ pub struct TransferResultEntry {
     pub result_size: Option<u64>,
 }
 
+/// A file this write has already put down, kept in case its set has to go back.
+struct LaidDown {
+    path: PathBuf,
+    size: u64,
+    source: String,
+    relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyFailure {
+    pub source: String,
+    pub relative_path: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferPlan {
@@ -103,6 +123,14 @@ pub struct TransferPlan {
     /// it rather than leaving someone at a step that will not go forward and
     /// will not say what to change.
     pub blockers: Vec<Blocker>,
+    /// Titles that could not be written, and why.
+    ///
+    /// A source can be unreadable through no fault of the plan — a corrupt
+    /// archive is the common one, and a large collection holds a few. Losing
+    /// the other nine thousand titles to one of them helps nobody, so the write
+    /// carries on and says at the end exactly what it could not take.
+    #[serde(default)]
+    pub failures: Vec<CopyFailure>,
     pub ready: bool,
 }
 
@@ -173,8 +201,15 @@ fn read_inventory(root: &Path) -> Result<Inventory> {
         let entries = fs::read_dir(&folder)
             .with_context(|| format!("Unable to inspect {}", folder.display()))?;
         for entry in entries {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
+            // Named at every step. A destination is read while other things may
+            // be touching it, and "No such file or directory (os error 2)" with
+            // nothing attached is impossible to act on — it does not even say
+            // whether the missing thing was the drive, a folder, or one file.
+            let entry = entry
+                .with_context(|| format!("Unable to read an entry in {}", folder.display()))?;
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("Unable to inspect {}", entry.path().display()))?;
             if file_type.is_symlink() {
                 continue;
             }
@@ -192,7 +227,9 @@ fn read_inventory(root: &Path) -> Result<Inventory> {
                     .context("A destination entry escaped the destination root.")?
                     .to_string_lossy(),
             );
-            let metadata = entry.metadata()?;
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("Unable to measure {}", entry.path().display()))?;
             let stat = crate::fingerprint::Stat::of(&metadata);
             files.insert(
                 relative.to_lowercase(),
@@ -405,8 +442,14 @@ impl<'a> PlanBuilder<'a> {
         Ok(())
     }
 
-    fn apply_operations(&mut self, operations: Vec<TransferOperation>) -> Result<()> {
-        for operation in operations {
+    fn apply_operations(
+        &mut self,
+        operations: Vec<TransferOperation>,
+        report: &mut dyn FnMut(usize, usize),
+    ) -> Result<()> {
+        let total = operations.len();
+        for (done, operation) in operations.into_iter().enumerate() {
+            report(done, total);
             safe_relative_path(&operation.relative_path)?;
             safe_target_path(self.root, &operation.relative_path)?;
             let source = Path::new(&operation.source);
@@ -446,17 +489,23 @@ impl<'a> PlanBuilder<'a> {
 
     /// A source that vanished or changed since indexing must not be copied
     /// silently: the plan reports it and becomes unexecutable.
+    ///
+    /// Asked through `source::stat`, because a title's bytes are not always a
+    /// file: an entry inside an archive is addressed `…/Game.zip!/Game.adf`,
+    /// which `Path::is_file` quite correctly says is not a file. Testing the
+    /// path directly reported every archived title as missing, so a library
+    /// held as ZIPs could be staged and then never written.
     fn check_source(&mut self, source: &Path, operation: &TransferOperation) -> bool {
-        if !source.is_file() {
+        let stat = crate::source::stat(source, Some(operation.size))
+            .ok()
+            .flatten();
+        let Some(stat) = stat else {
             let message = format!("Source is unavailable: {}", operation.source);
             self.blame("unavailable", &operation.source, message);
             return false;
-        }
-        if !matches_indexed_size(source, operation.size) {
-            let message = format!(
-                "Source changed since it was indexed: {}",
-                operation.source
-            );
+        };
+        if stat.size != operation.size {
+            let message = format!("Source changed since it was indexed: {}", operation.source);
             self.blame("changed", &operation.source, message);
             return false;
         }
@@ -540,6 +589,7 @@ impl<'a> PlanBuilder<'a> {
             self.warn("The destination does not have enough free space.");
         }
         TransferPlan {
+            failures: Vec::new(),
             target: target.to_string(),
             operations: self.operations,
             edits,
@@ -555,12 +605,53 @@ impl<'a> PlanBuilder<'a> {
 }
 
 /// Builds a plan without touching the destination.
+/// Reports how far through the operations a plan has got.
+///
+/// Planning a few titles is instant; planning ten thousand held on a network
+/// share is not, because every one of them has to be found before the plan can
+/// say whether it is writable. Unlike a directory walk this one knows its own
+/// length, so it can report a real proportion rather than a spinner.
+pub type OnPlanProgress<'a> = &'a mut dyn FnMut(usize, usize);
+
+/// How far through its operations a plan has got.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanProgress {
+    pub done: usize,
+    pub total: usize,
+}
+
+pub const PLAN_PROGRESS_EVENT: &str = "plan:progress";
+
+/// How far through the copying a write has got.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteProgress {
+    pub done: usize,
+    pub total: usize,
+    pub written: u64,
+    pub bytes: u64,
+    /// The file being written, so it is visibly making headway.
+    pub current: String,
+}
+
+pub const WRITE_PROGRESS_EVENT: &str = "write:progress";
+
+/// Below this many operations a plan is quick enough to need no telling.
+const PLAN_PROGRESS_FLOOR: usize = 250;
+
+const PLAN_REPORT_EVERY: std::time::Duration = std::time::Duration::from_millis(200);
+
+#[cfg(test)]
+pub fn ignore_plan_progress(_: usize, _: usize) {}
+
 pub fn build_transfer_plan(
     target: &str,
     operations: Vec<TransferOperation>,
     edits: Vec<DestinationEdit>,
     remove_existing: bool,
     managed_extensions: &[String],
+    report: OnPlanProgress<'_>,
 ) -> Result<TransferPlan> {
     let root = resolve_destination(target)?;
     if remove_existing && operations.is_empty() {
@@ -569,15 +660,45 @@ pub fn build_transfer_plan(
         );
     }
     let managed = normalise_extensions(managed_extensions.to_vec());
+    let planned = operations.len();
+    // Said before the destination is inventoried, which on a stick holding
+    // thousands of images is itself a wait. Otherwise the first word only
+    // arrives once that is over, and the silence before it is the part that
+    // looks like nothing is happening.
+    report(0, planned);
     let mut builder = PlanBuilder::new(&root)?;
     builder.apply_edits(&edits)?;
-    builder.apply_operations(operations)?;
+    builder.apply_operations(operations, report)?;
+    // A last word saying it is over, so whatever is watching can put itself
+    // away rather than sitting at the final percentage.
+    report(planned, planned);
     builder.apply_retained(remove_existing, &managed);
     Ok(builder.finish(target, edits))
 }
 
+/// Reports how far a plan has got, to whatever is watching.
+///
+/// Both commands that build a plan report the same way, and the rules are the
+/// part worth keeping in one place. A short plan says nothing at all, so a
+/// dialog is never flashed up for work that was over before it could be drawn.
+/// The first and last words are never throttled away, because one of them opens
+/// that dialog and the other is what closes it.
+fn plan_reporter(app: &tauri::AppHandle) -> impl FnMut(usize, usize) + '_ {
+    let mut last = std::time::Instant::now();
+    move |done, total| {
+        if total < PLAN_PROGRESS_FLOOR {
+            return;
+        }
+        if done == 0 || done >= total || last.elapsed() >= PLAN_REPORT_EVERY {
+            last = std::time::Instant::now();
+            let _ = app.emit(PLAN_PROGRESS_EVENT, PlanProgress { done, total });
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn plan_transfer(
+    app: tauri::AppHandle,
     target: String,
     operations: Vec<TransferOperation>,
     edits: Vec<DestinationEdit>,
@@ -585,12 +706,14 @@ pub async fn plan_transfer(
     managed_extensions: Vec<String>,
 ) -> Result<TransferPlan> {
     blocking(move || {
+        let mut report = plan_reporter(&app);
         build_transfer_plan(
             &target,
             operations,
             edits,
             remove_existing,
             &managed_extensions,
+            &mut report,
         )
     })
     .await
@@ -747,9 +870,7 @@ pub fn compare_files(
                 } else {
                     Some(cache.digest(connection, source, stat)?)
                 };
-                let locations = digest
-                    .as_deref()
-                    .and_then(|sha256| by_content.get(sha256));
+                let locations = digest.as_deref().and_then(|sha256| by_content.get(sha256));
                 if let Some(locations) = locations {
                     let wanted = relative_key(&operation.relative_path);
                     // Already where this profile would put it, so there is
@@ -810,7 +931,8 @@ const PART_SUFFIX: &str = ".gotek-part";
 /// something else, which is exactly how a failing USB stick behaves.
 fn copy_verified(source: &Path, destination: &Path, expected: u64, checksum: bool) -> Result<()> {
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Unable to make the folder {}", parent.display()))?;
     }
     let temporary = destination.with_file_name(format!(
         "{}{PART_SUFFIX}",
@@ -887,6 +1009,7 @@ fn apply_edit(root: &Path, edit: &DestinationEdit) -> Result<()> {
 /// the user pressed Confirm cannot be written with stale expectations.
 #[tauri::command]
 pub async fn execute_transfer(
+    app: tauri::AppHandle,
     target: String,
     operations: Vec<TransferOperation>,
     edits: Vec<DestinationEdit>,
@@ -895,12 +1018,17 @@ pub async fn execute_transfer(
     #[allow(non_snake_case)] verify_checksums: Option<bool>,
 ) -> Result<TransferPlan> {
     blocking(move || {
+        // The re-plan before a write walks every source again, which on a
+        // network share is the slow half of applying, so it reports itself for
+        // the same reason planning does.
+        let mut report = plan_reporter(&app);
         let plan = build_transfer_plan(
             &target,
             operations,
             edits,
             remove_existing,
             &managed_extensions,
+            &mut report,
         )?;
         if !plan.ready {
             return Err("The transfer plan has unresolved warnings.".into());
@@ -911,14 +1039,107 @@ pub async fn execute_transfer(
         for edit in &plan.edits {
             apply_edit(&root, edit)?;
         }
-        for operation in &plan.operations {
+        // Copying is the long half — gigabytes over a network share — and said
+        // nothing at all, so the last thing anybody saw was the planning
+        // dialog sitting at its final percentage while the write ran on
+        // invisibly behind it.
+        let files = plan.operations.len();
+        let bytes: u64 = plan.operations.iter().map(|operation| operation.size).sum();
+        let mut written = 0u64;
+        let mut spoke = std::time::Instant::now();
+        let _ = app.emit(
+            WRITE_PROGRESS_EVENT,
+            WriteProgress {
+                done: 0,
+                total: files,
+                written: 0,
+                bytes,
+                current: String::new(),
+            },
+        );
+        let mut failures = Vec::new();
+        // A game missing a disc will not load, so half a set on the drive is
+        // worse than none of it. What each set has already written is kept in
+        // hand, so that if one of its discs cannot be read the rest can be
+        // taken back off and the remainder of that set skipped.
+        let mut laid_down: HashMap<String, Vec<LaidDown>> = HashMap::new();
+        let mut abandoned: HashSet<String> = HashSet::new();
+
+        for (done, operation) in plan.operations.iter().enumerate() {
             let destination = safe_target_path(&root, &operation.relative_path)?;
-            copy_verified(
+            if let Some(group) = &operation.group {
+                if abandoned.contains(group) {
+                    failures.push(CopyFailure {
+                        source: operation.source.clone(),
+                        relative_path: operation.relative_path.clone(),
+                        message: "Left out: another disc of this title could not be read.".into(),
+                    });
+                    continue;
+                }
+            }
+            // A source that cannot be read is recorded and stepped over rather
+            // than abandoning everything after it. A large collection holds a
+            // corrupt archive or two, and losing nine thousand good titles to
+            // one of them helps nobody — but nothing is written for it either,
+            // and the summary names every one at the end.
+            if let Err(reason) = copy_verified(
                 Path::new(&operation.source),
                 &destination,
                 operation.size,
                 verify_checksums.unwrap_or(false),
-            )?;
+            ) {
+                failures.push(CopyFailure {
+                    source: operation.source.clone(),
+                    relative_path: operation.relative_path.clone(),
+                    message: reason.to_string(),
+                });
+                if let Some(group) = &operation.group {
+                    abandoned.insert(group.clone());
+                    // Take back the discs of this set that did land, so the
+                    // drive is never left holding part of a game.
+                    for laid in laid_down.remove(group).unwrap_or_default() {
+                        if fs::remove_file(&laid.path).is_ok() {
+                            written = written.saturating_sub(laid.size);
+                        }
+                        failures.push(CopyFailure {
+                            // Its own source, so the interface can keep the
+                            // title staged and let it be tried again.
+                            source: laid.source,
+                            // Where it was written, said the way every other
+                            // path here is said. Deriving it from the absolute
+                            // destination gave a lower-cased full path that
+                            // matched nothing else on the screen.
+                            relative_path: laid.relative_path,
+                            message: "Taken back off: another disc of this title could not \
+                                      be read."
+                                .into(),
+                        });
+                    }
+                }
+                continue;
+            }
+            written += operation.size;
+            if let Some(group) = &operation.group {
+                laid_down.entry(group.clone()).or_default().push(LaidDown {
+                    path: destination.clone(),
+                    size: operation.size,
+                    source: operation.source.clone(),
+                    relative_path: operation.relative_path.clone(),
+                });
+            }
+            if spoke.elapsed() >= PLAN_REPORT_EVERY || done + 1 == files {
+                spoke = std::time::Instant::now();
+                let _ = app.emit(
+                    WRITE_PROGRESS_EVENT,
+                    WriteProgress {
+                        done: done + 1,
+                        total: files,
+                        written,
+                        bytes,
+                        current: operation.relative_path.clone(),
+                    },
+                );
+            }
         }
         for relative_path in &plan.removals {
             let path = safe_target_path(&root, relative_path)?;
@@ -927,7 +1148,7 @@ pub async fn execute_transfer(
                     .with_context(|| format!("Failed to remove {}", path.display()))?;
             }
         }
-        Ok(plan)
+        Ok(TransferPlan { failures, ..plan })
     })
     .await
 }
@@ -935,24 +1156,18 @@ pub async fn execute_transfer(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_transfer_plan, copy_verified, DestinationEdit, EditKind, ResultStatus,
-        TransferOperation,
+        build_transfer_plan, copy_verified, ignore_plan_progress, DestinationEdit, EditKind,
+        ResultStatus, TransferOperation,
     };
     use std::{
         fs,
         path::{Path, PathBuf},
     };
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-transfer-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("transfer-{name}"))
     }
 
     fn operation(source: &PathBuf, relative_path: &str) -> TransferOperation {
@@ -960,6 +1175,7 @@ mod tests {
             source: source.to_string_lossy().into_owned(),
             relative_path: relative_path.into(),
             size: fs::metadata(source).unwrap().len(),
+            group: None,
         }
     }
 
@@ -975,8 +1191,178 @@ mod tests {
             edits,
             remove_existing,
             &["ssd".into(), "adf".into()],
+            &mut ignore_plan_progress,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_set_that_cannot_be_finished_is_taken_back_off_the_drive() {
+        // A game missing a disc will not load, so half a set on the drive is
+        // worse than none of it. Disc one lands, disc two cannot be read, and
+        // disc one has to come back off rather than sit there unusable.
+        let library = fixture("part-set");
+        let target = fixture("part-set-target");
+        let first = library.join("Elite Disk 1.ssd");
+        fs::write(&first, b"disk image").unwrap();
+        let broken = library.join("broken.zip");
+        fs::write(&broken, b"not a zip").unwrap();
+
+        let operations = vec![
+            TransferOperation {
+                source: first.to_string_lossy().into_owned(),
+                relative_path: "BBC/Elite D1.ssd".into(),
+                size: 10,
+                group: Some("elite bbc".into()),
+            },
+            TransferOperation {
+                source: crate::source::entry_path(&broken, "Elite Disk 2.ssd"),
+                relative_path: "BBC/Elite D2.ssd".into(),
+                size: 10,
+                group: Some("elite bbc".into()),
+            },
+        ];
+
+        let mut laid_down: Vec<PathBuf> = Vec::new();
+        let mut abandoned = false;
+        for operation in &operations {
+            let destination = super::safe_target_path(&target, &operation.relative_path).unwrap();
+            match copy_verified(
+                Path::new(&operation.source),
+                &destination,
+                operation.size,
+                false,
+            ) {
+                Ok(()) => laid_down.push(destination),
+                Err(_) => {
+                    abandoned = true;
+                    for path in laid_down.drain(..) {
+                        fs::remove_file(&path).unwrap();
+                    }
+                }
+            }
+        }
+
+        assert!(abandoned, "the second disc could not be read");
+        assert!(
+            !target.join("BBC").join("Elite D1.ssd").exists(),
+            "the disc that did land was taken back off",
+        );
+        assert!(!target.join("BBC").join("Elite D2.ssd").exists());
+    }
+
+    #[test]
+    fn a_source_that_cannot_be_read_is_stepped_over_rather_than_ending_the_write() {
+        // A large collection holds a corrupt archive or two. Abandoning the
+        // other nine thousand titles over one of them helps nobody — but
+        // nothing may be written for it either, and it has to be named.
+        let library = fixture("bad-source");
+        let target = fixture("bad-source-target");
+        let good = library.join("Elite.ssd");
+        fs::write(&good, b"disk image").unwrap();
+        let broken = library.join("broken.zip");
+        fs::write(&broken, b"this is not a zip at all").unwrap();
+
+        let plan = super::TransferPlan {
+            target: target.to_string_lossy().into_owned(),
+            operations: vec![
+                TransferOperation {
+                    source: crate::source::entry_path(&broken, "Missing.ssd"),
+                    relative_path: "BBC/Missing.ssd".into(),
+                    size: 10,
+                    group: None,
+                },
+                operation(&good, "BBC/Elite.ssd"),
+            ],
+            edits: Vec::new(),
+            removals: Vec::new(),
+            result: Vec::new(),
+            total_bytes: 0,
+            available_bytes: None,
+            warnings: Vec::new(),
+            blockers: Vec::new(),
+            failures: Vec::new(),
+            ready: true,
+        };
+
+        let mut failures = Vec::new();
+        for operation in &plan.operations {
+            let destination = super::safe_target_path(&target, &operation.relative_path).unwrap();
+            if let Err(reason) = copy_verified(
+                Path::new(&operation.source),
+                &destination,
+                operation.size,
+                false,
+            ) {
+                failures.push(operation.relative_path.clone());
+                let _ = reason;
+            }
+        }
+
+        // The good one landed; the unreadable one did not, and left nothing.
+        assert_eq!(
+            fs::read(target.join("BBC").join("Elite.ssd")).unwrap(),
+            b"disk image"
+        );
+        assert_eq!(failures, vec!["BBC/Missing.ssd".to_string()]);
+        assert!(!target.join("BBC").join("Missing.ssd").exists());
+        assert!(!target.join("BBC").join("Missing.ssd.part").exists());
+    }
+
+    #[test]
+    fn a_title_inside_an_archive_can_be_planned_and_not_only_copied() {
+        // Copying out of an archive was covered; planning one was not, and the
+        // plan tested the path with `is_file`. An entry is addressed
+        // `…/collection.zip!/Elite.ssd`, which is quite correctly not a file,
+        // so every archived title planned as "Source is unavailable" and a
+        // library held as ZIPs could be staged and then never written.
+        let library = fixture("archive-plan");
+        let target = fixture("archive-plan-target");
+        let archive = library.join("collection.zip");
+        {
+            let mut writer = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+            writer
+                .start_file("Elite.ssd", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut writer, b"disk image").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let planned = plan(
+            &target,
+            vec![TransferOperation {
+                source: crate::source::entry_path(&archive, "Elite.ssd"),
+                relative_path: "BBC/Elite.ssd".into(),
+                size: "disk image".len() as u64,
+                group: None,
+            }],
+            Vec::new(),
+            false,
+        );
+
+        assert!(planned.ready, "blockers: {:?}", planned.blockers);
+        assert!(planned.blockers.is_empty());
+        assert_eq!(planned.operations.len(), 1);
+
+        // An archive that has gone is still caught. An entry's size is taken
+        // from what the library recorded rather than by opening the archive —
+        // deliberately, since a few thousand entries would mean a few thousand
+        // archives opened to learn what is already known — so the archive
+        // being there is what the plan can actually check.
+        fs::remove_file(&archive).unwrap();
+        let gone = plan(
+            &target,
+            vec![TransferOperation {
+                source: crate::source::entry_path(&archive, "Elite.ssd"),
+                relative_path: "BBC/Elite.ssd".into(),
+                size: "disk image".len() as u64,
+                group: None,
+            }],
+            Vec::new(),
+            false,
+        );
+        assert!(!gone.ready);
+        assert_eq!(gone.blockers[0].kind, "unavailable");
     }
 
     #[test]
@@ -1010,8 +1396,6 @@ mod tests {
         assert_eq!(fs::read(&destination).unwrap(), b"disk image");
         // The verification pass re-read the entry rather than a copy of it.
         assert!(!target.join("BBC").join("ELITE.SSD.part").exists());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1040,14 +1424,17 @@ mod tests {
         let source = library.join("Elite.ssd");
         fs::write(&source, b"disk").unwrap();
 
-        let result = plan(&target, vec![operation(&source, "BBC/Elite.ssd")], vec![], false);
+        let result = plan(
+            &target,
+            vec![operation(&source, "BBC/Elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(result.ready, "{:?}", result.warnings);
         assert_eq!(result.total_bytes, 4);
         assert_eq!(result.result.len(), 1);
         assert_eq!(result.result[0].status, ResultStatus::Add);
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1058,20 +1445,28 @@ mod tests {
         fs::write(&source, b"disk").unwrap();
         fs::write(target.join("Elite.ssd"), b"disk").unwrap();
 
-        let same = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], false);
+        let same = plan(
+            &target,
+            vec![operation(&source, "Elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(same.ready);
         assert_eq!(same.result[0].status, ResultStatus::Unchanged);
         assert_eq!(same.total_bytes, 0);
 
         fs::write(target.join("Elite.ssd"), b"different").unwrap();
-        let differs = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], false);
+        let differs = plan(
+            &target,
+            vec![operation(&source, "Elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(!differs.ready);
         assert_eq!(differs.result[0].status, ResultStatus::Conflict);
         assert!(differs.warnings[0].contains("Different file already exists"));
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1082,12 +1477,15 @@ mod tests {
         fs::write(&source, b"disk").unwrap();
         fs::write(target.join("ELITE.SSD"), b"other").unwrap();
 
-        let result = plan(&target, vec![operation(&source, "elite.ssd")], vec![], false);
+        let result = plan(
+            &target,
+            vec![operation(&source, "elite.ssd")],
+            vec![],
+            false,
+        );
 
         assert!(!result.ready);
         assert_eq!(result.result[0].status, ResultStatus::Conflict);
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1101,7 +1499,10 @@ mod tests {
 
         let result = plan(
             &target,
-            vec![operation(&first, "Elite.ssd"), operation(&second, "elite.ssd")],
+            vec![
+                operation(&first, "Elite.ssd"),
+                operation(&second, "elite.ssd"),
+            ],
             vec![],
             false,
         );
@@ -1124,8 +1525,6 @@ mod tests {
             collisions[0].source.as_deref(),
             Some(second.to_string_lossy().as_ref())
         );
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1137,7 +1536,12 @@ mod tests {
         fs::write(target.join("Chuckie.ssd"), b"old").unwrap();
         fs::write(target.join("FF.CFG"), b"config").unwrap();
 
-        let keep = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], false);
+        let keep = plan(
+            &target,
+            vec![operation(&source, "Elite.ssd")],
+            vec![],
+            false,
+        );
         assert!(keep.removals.is_empty());
 
         let remove = plan(&target, vec![operation(&source, "Elite.ssd")], vec![], true);
@@ -1148,8 +1552,6 @@ mod tests {
             .result
             .iter()
             .any(|entry| entry.path == "FF.CFG" && entry.status == ResultStatus::Unchanged));
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1159,6 +1561,7 @@ mod tests {
             source: target.join("nowhere.ssd").to_string_lossy().into_owned(),
             relative_path: "nowhere.ssd".into(),
             size: 4,
+            group: None,
         };
 
         let result = plan(&target, vec![operation], vec![], false);
@@ -1166,7 +1569,6 @@ mod tests {
         assert!(!result.ready);
         assert!(result.operations.is_empty());
         assert_eq!(result.total_bytes, 0);
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1187,7 +1589,11 @@ mod tests {
         );
 
         assert!(moved.ready, "{:?}", moved.warnings);
-        let entry = moved.result.iter().find(|e| e.path == "BBC/Elite.ssd").unwrap();
+        let entry = moved
+            .result
+            .iter()
+            .find(|e| e.path == "BBC/Elite.ssd")
+            .unwrap();
         assert_eq!(entry.status, ResultStatus::Move);
         assert_eq!(entry.previous_path.as_deref(), Some("Old/Elite.ssd"));
 
@@ -1214,7 +1620,6 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("Overlapping destination edits")));
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1241,8 +1646,6 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("conflicts with a staged move")));
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1258,11 +1661,10 @@ mod tests {
             vec![],
             false,
             &["ssd".into()],
+            &mut ignore_plan_progress,
         );
 
         assert!(result.is_err());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[cfg(unix)]
@@ -1282,18 +1684,19 @@ mod tests {
             vec![],
             false,
             &["ssd".into()],
+            &mut ignore_plan_progress,
         );
 
         assert!(result.is_err());
         assert!(!outside.join("Elite.ssd").exists());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
-        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
     fn system_locations_are_refused_as_destinations() {
-        assert!(build_transfer_plan("/", vec![], vec![], false, &[]).is_err());
+        assert!(
+            build_transfer_plan("/", vec![], vec![], false, &[], &mut ignore_plan_progress)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1313,26 +1716,18 @@ mod tests {
 
         copy_verified(&source, &destination, 4, true).unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"disk");
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 }
 
 #[cfg(test)]
 mod checksum_tests {
     use super::copy_verified;
-    use std::{fs, path::PathBuf};
+    use std::fs;
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-checksum-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("transfer-{name}"))
     }
 
     #[test]
@@ -1343,38 +1738,31 @@ mod checksum_tests {
         fs::write(&source, &content).unwrap();
 
         copy_verified(&source, &root.join("with.ssd"), content.len() as u64, true).unwrap();
-        copy_verified(&source, &root.join("without.ssd"), content.len() as u64, false).unwrap();
+        copy_verified(
+            &source,
+            &root.join("without.ssd"),
+            content.len() as u64,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(fs::read(root.join("with.ssd")).unwrap(), content);
         assert_eq!(fs::read(root.join("without.ssd")).unwrap(), content);
-        fs::remove_dir_all(root).unwrap();
     }
 }
 
 #[cfg(test)]
 mod elsewhere_tests {
     use super::{FileStatus, TransferOperation};
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-    };
+    use std::{fs, path::Path};
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-elsewhere-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("transfer-{name}"))
     }
 
-    fn compare(
-        target: &Path,
-        operations: Vec<TransferOperation>,
-    ) -> Vec<super::TargetFileStatus> {
+    fn compare(target: &Path, operations: Vec<TransferOperation>) -> Vec<super::TargetFileStatus> {
         // An in-memory database gives the digest cache somewhere to live
         // without needing a running application.
         let connection = rusqlite::Connection::open_in_memory().unwrap();
@@ -1398,7 +1786,11 @@ mod elsewhere_tests {
         let source = library.join("Zynaps (1987)(Hewson Consultants).dsk");
         fs::write(&source, vec![0xC9u8; 194816]).unwrap();
         fs::create_dir(target.join("Z")).unwrap();
-        fs::copy(&source, target.join("Z/Zynaps (1987)(Hewson Consultants).dsk")).unwrap();
+        fs::copy(
+            &source,
+            target.join("Z/Zynaps (1987)(Hewson Consultants).dsk"),
+        )
+        .unwrap();
 
         let result = compare(
             &target,
@@ -1407,6 +1799,7 @@ mod elsewhere_tests {
                 // Where this profile would put it: nothing is there.
                 relative_path: "CPC464/Zynaps (1987)(Hewson.dsk".into(),
                 size: 194816,
+                group: None,
             }],
         );
 
@@ -1415,8 +1808,6 @@ mod elsewhere_tests {
             result[0].found_at.as_deref(),
             Some("Z/Zynaps (1987)(Hewson Consultants).dsk")
         );
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1439,6 +1830,7 @@ mod elsewhere_tests {
                 // is on the media, but the contents do.
                 relative_path: "Z/Zynaps (1987)(Hewson Consultants).dsk".into(),
                 size: 194_816,
+                group: None,
             }],
         );
 
@@ -1447,8 +1839,6 @@ mod elsewhere_tests {
             result[0].found_at.as_deref(),
             Some("CPC464/Zynaps (1987)(Hewson.dsk")
         );
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1468,13 +1858,12 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 194_816,
+                group: None,
             }],
         );
 
         assert_eq!(result[0].status, FileStatus::New);
         assert!(result[0].found_at.is_none());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1490,13 +1879,12 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 4,
+                group: None,
             }],
         );
 
         assert_eq!(result[0].status, FileStatus::New);
         assert!(result[0].found_at.is_none());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1516,14 +1904,13 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 4,
+                group: None,
             }],
         );
 
         // Present where it belongs, so the copy elsewhere is not the story.
         assert_eq!(result[0].status, FileStatus::Identical);
         assert!(result[0].found_at.is_none());
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
@@ -1542,11 +1929,10 @@ mod elsewhere_tests {
                 source: source.to_string_lossy().into_owned(),
                 relative_path: "CPC464/Elite.dsk".into(),
                 size: 194816,
+                group: None,
             }],
         );
 
         assert_eq!(result[0].status, FileStatus::New);
-        fs::remove_dir_all(library).unwrap();
-        fs::remove_dir_all(target).unwrap();
     }
 }

@@ -22,15 +22,23 @@ import type {
   TargetSummary,
 } from '../domain/types'
 
+/**
+ * Everything the window holds about the collection — which is deliberately not
+ * the collection.
+ *
+ * The library itself stays in the database and is asked for a page at a time;
+ * see {@link ../native/store}. What remains here is bounded: a handful of
+ * profiles and sources, and the titles the active profile has staged, which is
+ * a chosen selection rather than everything the user owns.
+ */
 export type Workspace = {
   version: 2
   profiles: Profile[]
   activeProfileId: string
-  /** Staged titles per profile id. */
+  /** Staged titles, held for the active profile and fetched when it changes. */
   collections: Record<string, MediaItem[]>
   removalPolicies: Record<string, RemovalPolicy>
   sources: SourceLocation[]
-  items: MediaItem[]
 }
 
 export const emptyWorkspace: Workspace = {
@@ -40,7 +48,6 @@ export const emptyWorkspace: Workspace = {
   collections: {},
   removalPolicies: {},
   sources: [],
-  items: [],
 }
 
 /**
@@ -159,6 +166,8 @@ export type WorkspaceAction =
   | { type: 'libraryCleared' }
   /** Replaces everything, once, when the stored workspace has been read. */
   | { type: 'workspaceLoaded'; workspace: Workspace }
+  /** What a profile has staged, fetched when that profile becomes active. */
+  | { type: 'collectionLoaded'; profileId: string; items: MediaItem[] }
 
 /** Applies a change to every profile's staged collection at once. */
 function acrossCollections(
@@ -166,6 +175,22 @@ function acrossCollections(
   transform: (items: MediaItem[]) => MediaItem[],
 ): Workspace['collections'] {
   return mapValues(collections, transform)
+}
+
+/** What one profile has staged, which is nothing at all until it stages something. */
+function stagedBy(state: Workspace, profileId: string): MediaItem[] {
+  return state.collections[profileId] ?? []
+}
+
+/**
+ * The workspace with one profile's staged collection replaced.
+ *
+ * Four actions change a collection and each of them has to leave the other
+ * profiles' collections alone. Spelling that out four times is how one of them
+ * comes to be spelled slightly differently.
+ */
+function withCollection(state: Workspace, profileId: string, items: MediaItem[]): Workspace {
+  return { ...state, collections: { ...state.collections, [profileId]: items } }
 }
 
 /**
@@ -183,9 +208,10 @@ function editItems(
 ): Workspace {
   const chosen = new Set(itemIds)
   const apply = (item: MediaItem): MediaItem => (chosen.has(item.id) ? edit(item) : item)
+  // Only the staged copies are held here; the library's own rows are changed by
+  // the command this action is paired with, and the table re-reads them.
   return {
     ...state,
-    items: state.items.map(apply),
     collections: acrossCollections(state.collections, (items) => items.map(apply)),
   }
 }
@@ -236,13 +262,13 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
 
     case 'sourceIndexed': {
       // Re-indexing replaces this source's titles rather than accumulating
-      // stale entries for files that have since been deleted.
-      const others = state.items.filter((item) => item.source !== action.source.path)
+      // stale entries for files that have since been deleted. A staged title
+      // that survived is refreshed, and one that has gone is unstaged, because
+      // a plan built around a file that no longer exists cannot be written.
       const indexed = new Map(action.items.map((item) => [item.id, item]))
       return {
         ...state,
         sources: upsertById(state.sources, action.source),
-        items: [...others, ...action.items],
         collections: acrossCollections(state.collections, (items) =>
           items.flatMap((item) => {
             if (item.source !== action.source.path) return [item]
@@ -257,11 +283,7 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       // Unlike indexing, this does not stand for everything the source holds:
       // a download arrives on its own, and the ones cached before it are still
       // there. Replacing would empty the site's source on every new title.
-      return {
-        ...state,
-        sources: upsertById(state.sources, action.source),
-        items: upsertById(state.items, ...action.items),
-      }
+      return { ...state, sources: upsertById(state.sources, action.source) }
 
     case 'sourceRenamed':
       return { ...state, sources: replaceById(state.sources, action.source) }
@@ -270,7 +292,6 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       return {
         ...state,
         sources: removeById(state.sources, action.source.id),
-        items: state.items.filter((item) => item.source !== action.source.path),
         collections: acrossCollections(state.collections, (items) =>
           items.filter((item) => item.source !== action.source.path),
         ),
@@ -301,33 +322,25 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
     }
 
     case 'collectionAdded':
-      return {
-        ...state,
-        collections: {
-          ...state.collections,
-          [action.profileId]: upsertById(
-            state.collections[action.profileId] || [],
-            ...action.items,
-          ),
-        },
-      }
+      return withCollection(
+        state,
+        action.profileId,
+        upsertById(stagedBy(state, action.profileId), ...action.items),
+      )
 
     case 'collectionRemoved':
-      return {
-        ...state,
-        collections: {
-          ...state.collections,
-          [action.profileId]: removeById(
-            state.collections[action.profileId] || [],
-            ...action.itemIds,
-          ),
-        },
-      }
+      return withCollection(
+        state,
+        action.profileId,
+        removeById(stagedBy(state, action.profileId), ...action.itemIds),
+      )
 
     case 'collectionCleared':
       return {
-        ...state,
-        collections: { ...state.collections, [action.profileId]: [] },
+        // Emptying a collection also puts its removal policy back: "remove what
+        // the collection does not contain" means something very different once
+        // the collection contains nothing.
+        ...withCollection(state, action.profileId, []),
         removalPolicies: { ...state.removalPolicies, [action.profileId]: 'keep' },
       }
 
@@ -340,11 +353,21 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
     case 'workspaceLoaded':
       return action.workspace
 
+    case 'collectionLoaded': {
+      // Merged, never replaced. The fetch was started when the profile became
+      // active and answers a question about how things were then; anything
+      // staged while it was in flight is newer than the answer, and replacing
+      // would throw it away moments after the user asked for it. The store has
+      // both by this point, because staging wrote its row as it happened.
+      const held = stagedBy(state, action.profileId)
+      const loaded = action.items.filter((item) => !held.some((entry) => entry.id === item.id))
+      return withCollection(state, action.profileId, [...loaded, ...held])
+    }
+
     case 'libraryCleared':
       return {
         ...state,
         sources: [],
-        items: [],
         collections: mapValues(state.collections, () => []),
       }
 

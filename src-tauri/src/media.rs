@@ -16,7 +16,150 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Condvar, Mutex,
+    },
+    thread,
+    time::Duration,
 };
+use tauri::Emitter;
+
+/// How far a scan has got, emitted while it walks.
+///
+/// A library on a network share is not read in a moment: a TOSEC set of thirty
+/// thousand images over SMB takes minutes before a single title can be shown,
+/// and silence for that long is indistinguishable from the application having
+/// ignored the folder entirely. There is no total to count towards — learning
+/// it would mean walking the tree twice — so this reports what has been seen
+/// rather than a percentage.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProgress {
+    pub folders: usize,
+    /// Folders found but not yet read, which is what gives the bar a length.
+    pub pending: usize,
+    /// Recognised images found so far, archives included.
+    pub found: usize,
+    /// The folder being read, so it is visibly making headway.
+    pub current: String,
+    /// True for the last message, which lets the indicator clear itself.
+    pub finished: bool,
+}
+
+pub const SCAN_PROGRESS_EVENT: &str = "scan:progress";
+
+/// How often a walking scan reports itself.
+///
+/// Per folder would be thousands of messages a second on a local disk, which
+/// costs more than the scan; this is often enough to look alive and rare
+/// enough to be free.
+const SCAN_REPORT_EVERY: Duration = Duration::from_millis(200);
+
+/// The shared state of a parallel directory walk.
+///
+/// The only subtle part is knowing when to stop. An empty queue does not mean
+/// the walk is over: a worker still reading a folder may be about to add a
+/// dozen more. So the count of workers currently inside a folder is tracked
+/// alongside the queue, and the walk is finished only when the queue is empty
+/// *and* nobody is working — at which point every waiting worker is woken so
+/// they can all leave together.
+struct Walk {
+    state: Mutex<WalkState>,
+    ready: Condvar,
+    /// Counted as each file is recognised rather than as each folder finishes.
+    ///
+    /// An organised set is often one flat folder holding tens of thousands of
+    /// images, so a count that only moves when a folder completes sits at zero
+    /// for the entire scan and then jumps to the total. This one rises while
+    /// the folder is still being read, which is the whole point of showing it.
+    found: AtomicUsize,
+}
+
+struct WalkState {
+    queue: Vec<PathBuf>,
+    /// Workers currently reading a folder, not merely alive.
+    working: usize,
+    folders: usize,
+    files: Vec<FileEntry>,
+    current: PathBuf,
+}
+
+impl Walk {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            state: Mutex::new(WalkState {
+                queue: vec![root],
+                working: 0,
+                folders: 0,
+                files: Vec::new(),
+                current: PathBuf::new(),
+            }),
+            ready: Condvar::new(),
+            found: AtomicUsize::new(0),
+        }
+    }
+
+    /// Notes files recognised inside a folder that is still being read.
+    fn note_found(&self, count: usize) {
+        self.found.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// The next folder to read, or nothing once the walk is over.
+    fn take(&self) -> Option<PathBuf> {
+        let mut state = self.state.lock().unwrap_or_else(|held| held.into_inner());
+        loop {
+            if let Some(folder) = state.queue.pop() {
+                state.working += 1;
+                state.current = folder.clone();
+                return Some(folder);
+            }
+            if state.working == 0 {
+                // Nothing queued and nobody working: the walk is finished, and
+                // every other worker waiting here has to be told so too.
+                self.ready.notify_all();
+                return None;
+            }
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(|held| held.into_inner());
+        }
+    }
+
+    /// Hands back what a folder held, and wakes anyone waiting for work.
+    fn done(&self, folder: PathBuf, folders: Vec<PathBuf>, files: Vec<FileEntry>) {
+        let mut state = self.state.lock().unwrap_or_else(|held| held.into_inner());
+        state.queue.extend(folders);
+        state.files.extend(files);
+        state.folders += 1;
+        state.working -= 1;
+        let _ = folder;
+        self.ready.notify_all();
+    }
+
+    /// Where the walk has got to, or nothing once it is over.
+    fn progress(&self) -> Option<ScanProgress> {
+        let state = self.state.lock().unwrap_or_else(|held| held.into_inner());
+        if state.queue.is_empty() && state.working == 0 {
+            return None;
+        }
+        Some(ScanProgress {
+            folders: state.folders,
+            pending: state.queue.len(),
+            found: self.found.load(Ordering::Relaxed),
+            current: state.current.display().to_string(),
+            finished: false,
+        })
+    }
+
+    fn into_files(self) -> Vec<FileEntry> {
+        self.state
+            .into_inner()
+            .unwrap_or_else(|held| held.into_inner())
+            .files
+    }
+}
 
 /// The state of a profile's destination, refreshed whenever it is selected.
 ///
@@ -123,6 +266,102 @@ pub async fn list_image_directory(image: String, inner_path: String) -> Result<V
 /// Symbolic links are never followed, so a link loop or a link pointing outside
 /// the library cannot be walked. ZIP archives are inspected in place and their
 /// supported contents are served from the cache, leaving the archive untouched.
+/// One file held by a profile's destination, wherever that destination is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldFile {
+    /// How to read it: a path, or a container path and the entry inside it.
+    pub source: String,
+    /// `/`-separated and relative to the destination root.
+    pub relative_path: String,
+    pub size: u64,
+}
+
+/// Everything a profile's destination holds, ready to be copied elsewhere.
+///
+/// Every file, not only the ones this application recognises: a stick built
+/// from a destination has to carry the drive's own configuration too, and
+/// `scan_folder` filters by extension. A destination is wherever somebody chose
+/// to keep it — a folder, a mounted stick, or a FAT image kept as a backup — so
+/// all three answer here, and each file comes back with the address its bytes
+/// can be read from.
+/// What a directory entry is, for the purposes of walking a tree.
+///
+/// Both walks in this module ask the same three questions of every entry, and
+/// the middle one is a safety rule rather than a convenience: a symbolic link is
+/// never followed, so a link pointing out of the tree cannot be read as though
+/// it were inside it, and a link pointing back into the tree cannot make the
+/// walk go round for ever. An entry whose kind cannot even be established is
+/// passed over, for the same reason an unreadable folder is: one of them turns
+/// up in any large library, and losing thirty thousand titles to it helps
+/// nobody.
+enum Walked {
+    Folder,
+    File,
+}
+
+fn walked(entry: &fs::DirEntry) -> Option<Walked> {
+    let file_type = entry.file_type().ok()?;
+    if file_type.is_symlink() {
+        return None;
+    }
+    if file_type.is_dir() {
+        return Some(Walked::Folder);
+    }
+    file_type.is_file().then_some(Walked::File)
+}
+
+#[tauri::command]
+pub async fn read_destination(path: String) -> Result<Vec<HeldFile>> {
+    blocking(move || {
+        let root = PathBuf::from(&path);
+        if matches!(extension_of(&root).as_str(), "img" | "ima") {
+            return Ok(crate::image::list_files(&root)?
+                .into_iter()
+                .map(|entry| HeldFile {
+                    source: crate::source::entry_path(&root, &entry.path),
+                    relative_path: entry.path,
+                    size: entry.size,
+                })
+                .collect());
+        }
+        if !root.is_dir() {
+            return Err(format!("The destination is not there: {path}").into());
+        }
+
+        let mut held = Vec::new();
+        let mut pending = vec![root.clone()];
+        while let Some(folder) = pending.pop() {
+            let Ok(entries) = fs::read_dir(&folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                match walked(&entry) {
+                    None => continue,
+                    Some(Walked::Folder) => pending.push(entry.path()),
+                    Some(Walked::File) => {
+                        let Ok(metadata) = entry.metadata() else {
+                            continue;
+                        };
+                        let path = entry.path();
+                        let Ok(relative) = path.strip_prefix(&root) else {
+                            continue;
+                        };
+                        held.push(HeldFile {
+                            source: path.to_string_lossy().into_owned(),
+                            relative_path: crate::paths::to_posix(&relative.to_string_lossy()),
+                            size: metadata.len(),
+                        });
+                    }
+                }
+            }
+        }
+        held.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        Ok(held)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn scan_folder(
     app: tauri::AppHandle,
@@ -137,25 +376,76 @@ pub async fn scan_folder(
             return Err(format!("The source folder does not exist: {path}").into());
         }
         let extensions = normalise_extensions(extensions);
-        let mut files = Vec::new();
-        let mut pending = vec![root];
-        while let Some(folder) = pending.pop() {
-            let entries = fs::read_dir(&folder)
-                .with_context(|| format!("Unable to read {}", folder.display()))?;
-            for entry in entries.flatten() {
-                let Ok(file_type) = entry.file_type() else {
-                    continue;
-                };
-                if file_type.is_symlink() {
-                    continue;
-                }
-                if file_type.is_dir() {
-                    pending.push(entry.path());
-                } else if file_type.is_file() {
-                    collect_file(&app, &entry.path(), &extensions, convert, &mut files)?;
-                }
+
+        // Walked by several threads at once, which is the whole difference on a
+        // network share. A TOSEC set of thirty thousand images over SMB spends
+        // nearly all of its time waiting for round trips rather than working,
+        // so reading many folders at once costs little and finishes many times
+        // sooner. On a local disk the threads simply queue behind the disk and
+        // it is no worse than walking in one.
+        let work = Walk::new(root);
+        let workers = thread::available_parallelism()
+            .map(|count| count.get() * 2)
+            .unwrap_or(8)
+            .clamp(4, 16);
+
+        thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    while let Some(folder) = work.take() {
+                        let mut found = Vec::new();
+                        let mut folders = Vec::new();
+                        // A folder that cannot be read is skipped rather than
+                        // abandoning the whole scan. A library of any size
+                        // collects one sooner or later — a permissions
+                        // boundary, a share that dropped out — and losing
+                        // thirty thousand titles to one of them helps nobody.
+                        if let Ok(entries) = fs::read_dir(&folder) {
+                            for entry in entries.flatten() {
+                                match walked(&entry) {
+                                    None => continue,
+                                    Some(Walked::Folder) => folders.push(entry.path()),
+                                    Some(Walked::File) => {
+                                        let before = found.len();
+                                        // One bad file is skipped for the same
+                                        // reason one bad folder is.
+                                        let _ = collect_file(
+                                            &app,
+                                            &entry,
+                                            &extensions,
+                                            convert,
+                                            &mut found,
+                                        );
+                                        work.note_found(found.len() - before);
+                                    }
+                                }
+                            }
+                        }
+                        work.done(folder, folders, found);
+                    }
+                });
             }
-        }
+
+            // Reported from here rather than from a worker, so the rate is the
+            // clock's rather than however fast folders happen to arrive.
+            while let Some(progress) = work.progress() {
+                let _ = app.emit(SCAN_PROGRESS_EVENT, progress);
+                thread::sleep(SCAN_REPORT_EVERY);
+            }
+        });
+
+        let mut files = work.into_files();
+        let _ = app.emit(
+            SCAN_PROGRESS_EVENT,
+            ScanProgress {
+                folders: 0,
+                pending: 0,
+                found: files.len(),
+                current: String::new(),
+                finished: true,
+            },
+        );
+
         files.sort_by(|left, right| {
             left.name
                 .to_lowercase()
@@ -167,15 +457,22 @@ pub async fn scan_folder(
     .await
 }
 
+/// Reads one directory entry into the library, if it is anything we can use.
+///
+/// Takes the entry rather than its path so the size and time can be asked of
+/// the entry the directory already yielded. `fs::metadata` resolves the whole
+/// path again, which on a network share is another round trip per file — over
+/// thirty thousand of them, that alone is minutes.
 fn collect_file(
     app: &tauri::AppHandle,
-    path: &Path,
+    entry: &fs::DirEntry,
     extensions: &HashSet<String>,
     convert: bool,
     files: &mut Vec<FileEntry>,
 ) -> Result<()> {
+    let path = &entry.path();
     if extensions.contains(&extension_of(path)) {
-        if let Ok(metadata) = fs::metadata(path) {
+        if let Ok(metadata) = entry.metadata() {
             files.push(file_entry(path, metadata));
         }
         return Ok(());
@@ -186,7 +483,8 @@ fn collect_file(
     // if and when it is actually written. A folder of a few thousand archives
     // that holds nothing this application can use now says so in seconds.
     if is_archive(path) {
-        let modified = fs::metadata(path)
+        let modified = entry
+            .metadata()
             .ok()
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
@@ -291,5 +589,46 @@ mod tests {
         sort_entries(&mut entries);
 
         assert_eq!(entries[0].name, "A.ssd");
+    }
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::Walk;
+    use std::{
+        path::{Path, PathBuf},
+        thread,
+    };
+
+    #[test]
+    fn a_parallel_walk_finishes_when_the_queue_drains() {
+        // The subtle part of walking in parallel: an empty queue does not mean
+        // the walk is over while a worker is still inside a folder that may
+        // add more. Every worker must leave, and none may leave early.
+        let work = Walk::new(PathBuf::from("/root"));
+        let taken = std::sync::atomic::AtomicUsize::new(0);
+
+        thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    while let Some(folder) = work.take() {
+                        taken.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        // The root yields two children; they yield none.
+                        let children = if folder.as_path() == Path::new("/root") {
+                            vec![PathBuf::from("/root/a"), PathBuf::from("/root/b")]
+                        } else {
+                            Vec::new()
+                        };
+                        work.done(folder, children, Vec::new());
+                    }
+                });
+            }
+        });
+
+        assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert!(
+            work.progress().is_none(),
+            "a drained walk reports no progress"
+        );
     }
 }

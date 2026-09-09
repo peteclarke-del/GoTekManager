@@ -32,3 +32,21 @@ tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["time"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
+
+# Development builds are optimised enough to carry a real library.
+#
+# A workspace of forty-five thousand titles is twenty-five megabytes of JSON on
+# its way to the window. Unoptimised that took twenty seconds to read and
+# serialise; at level 1 it takes two.
+#
+# This crate only, which is where the whole gain is: serde writes its
+# `Serialize` implementations into the crate that derives them, so the loop
+# doing the work is ours however well the dependencies are built. Optimising
+# them as well was measured and changed nothing, while turning every dependency
+# rebuild into the better part of an hour, so they are left alone.
+#
+# Cross-unit inlining stays off because the lld this toolchain links with
+# rejects the internal symbols it emits ("undefined hidden symbol: anon.<hash>").
+[profile.dev]
+opt-level = 1
+lto = "off"

@@ -17,8 +17,7 @@ use crate::error::Result;
 use crate::online::http::client;
 use serde::{Deserialize, Serialize};
 
-const RELEASES_API: &str =
-    "https://api.github.com/repos/peteclarke-del/GoTekManager/releases";
+const RELEASES_API: &str = "https://api.github.com/repos/peteclarke-del/GoTekManager/releases";
 
 /// How many releases to look at. The newest handful is all that can matter.
 const MAX_RELEASES: usize = 10;

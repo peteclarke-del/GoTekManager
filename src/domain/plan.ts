@@ -15,6 +15,7 @@ import type {
   PlanBlocker,
   Profile,
   ResultStatus,
+  TransferOperation,
   TransferPlan,
   TransferResultEntry,
 } from './types'
@@ -74,17 +75,44 @@ export const emptyPlanSummary: PlanSummary = {
  * A collision names the *later* of the pair, because the first claim on a path
  * is the one the rest of the plan is built around.
  */
+export type BlockedTitle = {
+  kind: PlanBlocker['kind']
+  item: MediaItem
+  message: string
+  /** Where it would have been written, for a title that collides with another. */
+  path?: string
+  /** The title already taking that path, which is what makes this one a problem. */
+  against?: MediaItem
+}
+
 export function blockedTitles(
   plan: TransferPlan | null,
   itemsBySource: Map<string, MediaItem>,
-): { kind: PlanBlocker['kind']; item: MediaItem; message: string }[] {
+  /** The same operations the plan was built from, which say where each lands. */
+  operations: readonly TransferOperation[] = [],
+): BlockedTitle[] {
+  // Where each title would go, and who got there first. "This would overwrite
+  // another title" is not something anybody can act on without knowing which
+  // one and where: dropping the right title means seeing both.
+  const destinations = new Map<string, string>()
+  const firstAt = new Map<string, string>()
+  for (const operation of operations) {
+    const key = operation.relativePath.toLowerCase()
+    destinations.set(operation.source, operation.relativePath)
+    if (!firstAt.has(key)) firstAt.set(key, operation.source)
+  }
+
   const seen = new Set<string>()
   return (plan?.blockers ?? []).flatMap((blocker) => {
     if (!blocker.source || seen.has(blocker.source)) return []
     const item = itemsBySource.get(blocker.source)
     if (!item) return []
     seen.add(blocker.source)
-    return [{ kind: blocker.kind, item, message: blocker.message }]
+
+    const path = destinations.get(blocker.source)
+    const holder = path ? firstAt.get(path.toLowerCase()) : undefined
+    const against = holder && holder !== blocker.source ? itemsBySource.get(holder) : undefined
+    return [{ kind: blocker.kind, item, message: blocker.message, path, against }]
   })
 }
 

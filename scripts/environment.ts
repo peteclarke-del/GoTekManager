@@ -36,5 +36,9 @@ class MemoryStorage implements Storage {
 
 export const storage = new MemoryStorage()
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// The checks run under Node, which has no localStorage, and the code they
+// exercise expects one. Standing it up means writing to the global object,
+// which is exactly the untyped act these rules exist to catch elsewhere.
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 ;(globalThis as any).localStorage = storage
+/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */

@@ -15,7 +15,9 @@ pub mod website;
 use crate::archive::extract_zip_images;
 use crate::cache::{catalogue_file, catalogue_folder, download_folder, safe_cache_part};
 use crate::error::{Context, Result};
-use crate::paths::{entry_at, extension_of, normalise_extensions, sha256_reader, to_posix, FileEntry};
+use crate::paths::{
+    entry_at, extension_of, normalise_extensions, sha256_reader, to_posix, FileEntry,
+};
 use crate::task::blocking;
 use futures_util::StreamExt;
 use http::{client, secure_url, DOWNLOAD_BYTE_LIMIT};
@@ -309,7 +311,10 @@ fn cached_files(folder: &Path, source_url: &str, updated: Option<&str>) -> Optio
     let present = metadata.source_url == source_url
         && metadata.updated.as_deref() == updated
         && !metadata.files.is_empty()
-        && metadata.files.iter().all(|file| folder.join(file).is_file());
+        && metadata
+            .files
+            .iter()
+            .all(|file| folder.join(file).is_file());
     if !present {
         return None;
     }
@@ -390,7 +395,9 @@ pub async fn download_online_title(
     let extensions = normalise_extensions(extensions);
     let client = client(provider.user_agent.as_deref())?;
     let resolved = match provider.adapter {
-        Adapter::InternetArchive => archive_org::resolve_download(&client, &title, &extensions).await?,
+        Adapter::InternetArchive => {
+            archive_org::resolve_download(&client, &title, &extensions).await?
+        }
         Adapter::Demozoo => {
             demozoo::resolve_download(&client, &provider, &title, &extensions).await?
         }
@@ -428,9 +435,7 @@ pub async fn download_online_title(
         })
         .await?;
         if extracted.is_empty() {
-            return Err(
-                "The ZIP archive contains no supported images for this platform.".into(),
-            );
+            return Err("The ZIP archive contains no supported images for this platform.".into());
         }
         extracted
     } else {

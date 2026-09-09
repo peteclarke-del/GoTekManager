@@ -49,7 +49,11 @@ pub fn catalogue_folder(app: &tauri::AppHandle) -> Result<PathBuf> {
     Ok(folder)
 }
 
-pub fn catalogue_file(app: &tauri::AppHandle, provider_id: &str, platform_id: &str) -> Result<PathBuf> {
+pub fn catalogue_file(
+    app: &tauri::AppHandle,
+    provider_id: &str,
+    platform_id: &str,
+) -> Result<PathBuf> {
     Ok(online_root(app)?.join("catalogues").join(format!(
         "{}--{}.json",
         safe_cache_part(provider_id),
@@ -57,7 +61,11 @@ pub fn catalogue_file(app: &tauri::AppHandle, provider_id: &str, platform_id: &s
     )))
 }
 
-pub fn download_folder(app: &tauri::AppHandle, provider_id: &str, remote_id: &str) -> Result<PathBuf> {
+pub fn download_folder(
+    app: &tauri::AppHandle,
+    provider_id: &str,
+    remote_id: &str,
+) -> Result<PathBuf> {
     let folder = online_root(app)?
         .join("downloads")
         .join(safe_cache_part(provider_id))
@@ -72,8 +80,8 @@ pub fn download_folder(app: &tauri::AppHandle, provider_id: &str, remote_id: &st
 /// so that editing or replacing it produces a new folder rather than serving a
 /// stale conversion.
 pub fn converted_folder(app: &tauri::AppHandle, source: &Path) -> Result<PathBuf> {
-    let metadata = fs::metadata(source)
-        .with_context(|| format!("Unable to read {}", source.display()))?;
+    let metadata =
+        fs::metadata(source).with_context(|| format!("Unable to read {}", source.display()))?;
     let modified = metadata
         .modified()
         .ok()
@@ -98,7 +106,10 @@ mod tests {
 
     #[test]
     fn cache_names_strip_separators_and_leading_dots() {
-        assert_eq!(safe_cache_part("bbc/elite (1984).ssd"), "bbc_elite__1984_.ssd");
+        assert_eq!(
+            safe_cache_part("bbc/elite (1984).ssd"),
+            "bbc_elite__1984_.ssd"
+        );
         // Separators become underscores, so no traversal survives.
         assert_eq!(safe_cache_part("../../etc/passwd"), "_.._etc_passwd");
         assert_eq!(safe_cache_part("..."), "");
@@ -253,21 +264,12 @@ pub async fn clear_download_cache(app: tauri::AppHandle) -> Result<Vec<String>> 
 #[cfg(test)]
 mod cache_tests {
     use super::{entries, evict_to_fit, summarise};
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-    };
+    use std::{fs, path::Path};
 
-    fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "gotek-cachetest-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+    use crate::testing::Scratch;
+
+    fn fixture(name: &str) -> Scratch {
+        Scratch::new(&format!("cachetest-{name}"))
     }
 
     fn download(root: &Path, provider: &str, item: &str, bytes: usize, last_used: u64) {
@@ -276,7 +278,9 @@ mod cache_tests {
         fs::write(folder.join("image.ssd"), vec![0u8; bytes]).unwrap();
         fs::write(
             folder.join("download.json"),
-            format!(r#"{{"sourceUrl":"https://x/{item}","files":["image.ssd"],"lastUsed":{last_used}}}"#),
+            format!(
+                r#"{{"sourceUrl":"https://x/{item}","files":["image.ssd"],"lastUsed":{last_used}}}"#
+            ),
         )
         .unwrap();
     }
@@ -295,7 +299,6 @@ mod cache_tests {
         assert_eq!(summary.catalogue_count, 1);
         // The metadata file counts too; the point is the total is real.
         assert!(summary.total_bytes > 3000);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -310,7 +313,6 @@ mod cache_tests {
         assert!(removed[0].ends_with("oldest"));
         assert!(root.join("downloads/archive/newest").exists());
         assert!(!root.join("downloads/archive/oldest").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -320,7 +322,6 @@ mod cache_tests {
 
         assert!(evict_to_fit(&root, 10_000_000).unwrap().is_empty());
         assert_eq!(entries(&root).len(), 1);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -335,6 +336,5 @@ mod cache_tests {
         assert!(entries(&root).is_empty());
         // Losing these would take coverage comparison offline for no gain.
         assert!(root.join("catalogues/a--bbc.json").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 }

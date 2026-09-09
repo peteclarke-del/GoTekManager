@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { supportedExtensionList } from '../domain/catalog'
+import type { Capacity, HeldFile } from '../domain/deviceBuild'
 import type {
   CachedDownload,
   CacheSummary,
@@ -18,7 +19,6 @@ import type {
   FileEntry,
   FirmwareConfigState,
   ImageOptions,
-  ImageSummary,
   MountedTarget,
   OnlineProvider,
   OnlineTitle,
@@ -46,8 +46,7 @@ export function isDesktop(): boolean {
  * to compile. Only the preview ever reports it: the desktop application asks
  * itself.
  */
-const BUILD_VERSION: string =
-  typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0'
+const BUILD_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0'
 
 const BROWSER_MESSAGE =
   'This needs the desktop application. The browser preview cannot read drives, ' +
@@ -117,6 +116,27 @@ export function scanFolder(
   convert = true,
 ): Promise<FileEntry[]> {
   return invokeNative<FileEntry[]>('scan_folder', { path, extensions, convert })
+}
+
+/**
+ * Everything a profile's destination holds, ready to be copied to media.
+ *
+ * Every file, not only recognised images: a stick built from a destination has
+ * to carry the drive's own configuration too. A destination is wherever it was
+ * kept — a folder, a mounted volume, or a FAT image — and all three answer.
+ */
+export function readDestination(path: string): Promise<HeldFile[]> {
+  return invokeNative<HeldFile[]>('read_destination', { path })
+}
+
+/**
+ * What a stick of this size will actually hold.
+ *
+ * Asked rather than estimated: the cluster size is chosen by the formatter, and
+ * it is the number that decides whether a collection fits.
+ */
+export function imageCapacity(options: ImageOptions): Promise<Capacity> {
+  return invokeNative<Capacity>('image_capacity', { options })
 }
 
 export function supportedConversions(): Promise<ConversionSupport[]> {
@@ -254,7 +274,14 @@ export function downloadOnlineTitle(
 // ---------------------------------------------------------------------------
 
 /** Read-only. Lists every disk the operating system reports, system ones too. */
-export function physicalDevices(): Promise<PhysicalDevice[]> {
+export async function physicalDevices(): Promise<PhysicalDevice[]> {
+  // A help screenshot must never name the hardware of the machine it was taken
+  // on, so a capture run is answered with invented drives instead. The
+  // condition is statically false in a production build and the import is
+  // dynamic, so neither the branch nor the module it names is bundled.
+  if (import.meta.env.DEV && import.meta.env.VITE_CAPTURE) {
+    return (await import('../dev/captureDevices')).CAPTURE_DEVICES
+  }
   return invokeNative<PhysicalDevice[]>('physical_devices')
 }
 
@@ -296,10 +323,6 @@ export function executeProvision(
 // ---------------------------------------------------------------------------
 // Filesystem images
 // ---------------------------------------------------------------------------
-
-export function imageSummary(path: string): Promise<ImageSummary> {
-  return invokeNative<ImageSummary>('image_summary', { path })
-}
 
 /** Creates a new image, optionally filling it. Refuses to replace an existing file. */
 export function createImage(

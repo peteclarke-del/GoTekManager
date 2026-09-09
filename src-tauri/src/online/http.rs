@@ -30,7 +30,8 @@ pub fn client(user_agent: Option<&str>) -> Result<reqwest::Client> {
 /// This is enforced at the boundary rather than trusted from the frontend, so a
 /// hand-edited catalogue cannot introduce `http://` or `file://` sources.
 pub fn secure_url(value: &str) -> Result<reqwest::Url> {
-    let url = reqwest::Url::parse(value).with_context(|| format!("Invalid provider URL {value}"))?;
+    let url =
+        reqwest::Url::parse(value).with_context(|| format!("Invalid provider URL {value}"))?;
     if url.scheme() != "https" || url.host_str().is_none() {
         return Err("Online providers and downloads must use an HTTPS URL.".into());
     }

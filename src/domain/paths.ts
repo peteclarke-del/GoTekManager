@@ -20,6 +20,30 @@ export function segments(path: string): string[] {
   return path.split(SEPARATORS).filter(Boolean)
 }
 
+/**
+ * Separates an archive from the entry inside it, matching the native backend.
+ *
+ * A title held in a ZIP is addressed by the archive's path, this separator, and
+ * the entry's path inside it, so that everything downstream carries one kind of
+ * thing: a string saying where the bytes are. See `src-tauri/src/source.rs`.
+ */
+export const ARCHIVE_SEPARATOR = '!/'
+
+/**
+ * The archive a path names, when it names an entry inside one.
+ *
+ * The separator alone is not enough to decide, exactly as on the native side:
+ * what precedes it has to actually be an archive, or an ordinary folder with an
+ * unusual name would be read as one.
+ */
+export function archiveOf(path: string): string | undefined {
+  const at = path.indexOf(ARCHIVE_SEPARATOR)
+  if (at < 0) return undefined
+  const archive = path.slice(0, at)
+  const entry = path.slice(at + ARCHIVE_SEPARATOR.length)
+  return extensionOf(archive) === 'zip' && entry ? archive : undefined
+}
+
 /** The final segment of a native path, falling back to the path itself. */
 export function basename(path: string): string {
   const parts = segments(path)
@@ -94,5 +118,10 @@ export function joinRelative(...parts: string[]): string {
  * nothing about the original file is lost.
  */
 export function safeFileName(value: string): string {
-  return value.replace(/[\\/:*?"<>|]/g, '_').replace(/^\.+$/, '_').trim() || 'Untitled'
+  return (
+    value
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/^\.+$/, '_')
+      .trim() || 'Untitled'
+  )
 }

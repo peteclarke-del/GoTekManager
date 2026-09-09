@@ -1,6 +1,6 @@
 /** Wires the workspace reducer to persistence and derives the active profile. */
 
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   defaultProviders,
   mergeProviders,
@@ -16,7 +16,23 @@ import {
   SETTINGS_KEY,
   TABLE_PREFS_KEY,
 } from './migrations'
-import { loadPersistedWorkspace, persistWorkspace } from './persistence.native'
+import {
+  itemsFromStored,
+  itemToStored,
+  loadPersistedWorkspace,
+  persistWorkspace,
+} from './persistence.native'
+import {
+  clearCollection,
+  clearLibrary,
+  forgetSource,
+  replaceSourceItems,
+  stageItems,
+  stagedItems,
+  unstageItems,
+  updateItems,
+  upsertItems,
+} from '../native/store'
 import { isDesktop, readConfigFile } from '../native/commands'
 import { readStored, usePersistentState } from './persistence'
 import {
@@ -25,6 +41,8 @@ import {
   emptyWorkspace,
   removalPolicyOf,
   workspaceReducer,
+  type Workspace,
+  type WorkspaceAction,
 } from './workspace'
 
 /** Coalesces a burst of edits into one transaction. */
@@ -35,21 +53,33 @@ export function useWorkspace() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // Nothing is written back until the stored workspace has been read, or the
-  // first render's empty state would overwrite the real library.
-  const loaded = useRef(false)
+  // first render's empty state would overwrite the real library. The workspace
+  // that was read is kept as well: settling it into state is a change like any
+  // other, so without this every start ends by writing back, unaltered, the
+  // tens of thousands of rows it has just finished reading — seconds of work
+  // for a result already on disk.
+  const loaded = useRef<Workspace | undefined>(undefined)
   const pending = useRef<number | undefined>(undefined)
+  // One save at a time, and only the newest one waiting. A whole-workspace
+  // transaction over a large library takes seconds, which is longer than the
+  // debounce, so without this a steady stream of edits starts transactions
+  // faster than they finish: they queue against each other in the database and
+  // every one but the last is written for nothing.
+  const saving = useRef(false)
+  const queued = useRef<Workspace | undefined>(undefined)
 
   useEffect(() => {
     let active = true
     loadPersistedWorkspace()
       .then((stored) => {
         if (!active) return
+        loaded.current = stored
         dispatch({ type: 'workspaceLoaded', workspace: stored })
       })
       .catch((reason) => active && setError(String(reason)))
       .finally(() => {
         if (!active) return
-        loaded.current = true
+        loaded.current = loaded.current ?? emptyWorkspace
         setLoading(false)
       })
     return () => {
@@ -57,22 +87,145 @@ export function useWorkspace() {
     }
   }, [])
 
+  /**
+   * Writes whatever is waiting, then whatever arrived while it was writing.
+   *
+   * Only the newest workspace is ever kept, because each save replaces the
+   * stored workspace entirely: an older one that has been superseded has
+   * nothing left to contribute.
+   */
+  const drain = useCallback(async () => {
+    if (saving.current) return
+    saving.current = true
+    try {
+      while (queued.current) {
+        const next = queued.current
+        queued.current = undefined
+        try {
+          await persistWorkspace(next)
+        } catch (reason) {
+          setError(String(reason))
+        }
+      }
+    } finally {
+      saving.current = false
+    }
+  }, [])
+
   useEffect(() => {
-    if (!loaded.current) return
+    // Not until the stored workspace has been read, and not to write it
+    // straight back out again unchanged.
+    if (!loaded.current || workspace === loaded.current) return
     // Saving is a whole-workspace transaction, so a burst of edits is worth
     // coalescing; the delay is short enough to survive an ordinary close.
     window.clearTimeout(pending.current)
     pending.current = window.setTimeout(() => {
-      void persistWorkspace(workspace).catch((reason) => setError(String(reason)))
+      queued.current = workspace
+      void drain()
     }, SAVE_DELAY_MS)
     return () => window.clearTimeout(pending.current)
-  }, [workspace])
+  }, [workspace, drain])
+
+  /**
+   * Dispatches an action and tells the store about the part it owns.
+   *
+   * The library is no longer held in the window, so an action that changes it
+   * has two halves: what the screen should now show, which the reducer decides,
+   * and what the database should now hold, which is one statement naming the
+   * rows it touches. Pairing them here keeps the reducer pure and keeps every
+   * caller from having to remember the second half.
+   *
+   * The write is not awaited. These are small, indexed statements rather than
+   * the whole-workspace transaction they replace, and making the interface wait
+   * for a round trip before a tick box moves would undo the point of them.
+   */
+  const record = useCallback((action: WorkspaceAction) => {
+    dispatch(action)
+    if (!isDesktop()) return
+    const failed = (reason: unknown) => setError(String(reason))
+    switch (action.type) {
+      case 'sourceIndexed':
+        void replaceSourceItems(action.source.path, action.items.map(itemToStored)).catch(
+          failed,
+        )
+        break
+      case 'itemsImported':
+        void upsertItems(action.items.map(itemToStored)).catch(failed)
+        break
+      case 'sourceRemoved':
+        void forgetSource(action.source.path).catch(failed)
+        break
+      case 'platformAssigned':
+        void updateItems(action.itemIds, {
+          assignedPlatformId: action.platformId || null,
+        }).catch(failed)
+        break
+      case 'categoryAssigned':
+        void updateItems(action.itemIds, { category: action.categoryId || null }).catch(failed)
+        break
+      case 'displayTitleSet':
+        void updateItems([action.itemId], {
+          displayTitle: action.displayTitle.trim() || null,
+        }).catch(failed)
+        break
+      case 'collectionAdded':
+        void stageItems(
+          action.profileId,
+          action.items.map((item) => item.id),
+        ).catch(failed)
+        break
+      case 'collectionRemoved':
+        void unstageItems(action.profileId, action.itemIds).catch(failed)
+        break
+      case 'collectionCleared':
+        void clearCollection(action.profileId).catch(failed)
+        break
+      case 'libraryCleared':
+        void clearLibrary().catch(failed)
+        break
+      default:
+        break
+    }
+  }, [])
+
+  // What the active profile has staged, fetched when it becomes active. Only
+  // one profile's selection is ever in hand, so a second large profile costs
+  // nothing until it is opened.
+  const activeId = workspace.activeProfileId
+  const fetched = useRef(new Set<string>())
+  useEffect(() => {
+    if (!loaded.current || !isDesktop() || !activeId) return
+    if (fetched.current.has(activeId)) return
+    fetched.current.add(activeId)
+    let active = true
+    stagedItems(activeId)
+      .then((rows) => {
+        if (!active) return
+        dispatch({
+          type: 'collectionLoaded',
+          profileId: activeId,
+          items: itemsFromStored(rows),
+        })
+      })
+      .catch((reason) => active && setError(String(reason)))
+    return () => {
+      active = false
+    }
+  }, [activeId, loading])
 
   const activeProfile = activeProfileOf(workspace)
   const collection = collectionOf(workspace, activeProfile?.id)
   const removalPolicy = removalPolicyOf(workspace, activeProfile?.id)
 
-  return { workspace, dispatch, activeProfile, collection, removalPolicy, loading, error }
+  return {
+    workspace,
+    dispatch: record,
+    activeProfile,
+    collection,
+    removalPolicy,
+    loading,
+    error,
+  }
 }
 
 export function useSettings() {
@@ -107,7 +260,11 @@ export function useProviders() {
           const load = readProviderConfig(JSON.parse(file.contents))
           setProblems(load.problems)
           if (load.providers.length) setShipped(load.providers)
-          else setProblems((current) => [...current, 'no usable sources; keeping the built-in list'])
+          else
+            setProblems((current) => [
+              ...current,
+              'no usable sources; keeping the built-in list',
+            ])
         } catch (reason) {
           setProblems([`${PROVIDERS_FILE} is not valid JSON: ${String(reason)}`])
         }
@@ -163,9 +320,7 @@ export function reviveTablePreferences(stored: Partial<TablePreferences>): Table
   const merged = { ...defaultTablePreferences, ...stored }
   const known = new Set(defaultTablePreferences.columnOrder)
   const kept = merged.columnOrder.filter((column) => known.has(column))
-  const missing = defaultTablePreferences.columnOrder.filter(
-    (column) => !kept.includes(column),
-  )
+  const missing = defaultTablePreferences.columnOrder.filter((column) => !kept.includes(column))
   // The action column is the row's own control and belongs at the end.
   const columnOrder = [...kept, ...missing].filter((column) => column !== 'action')
   return { ...merged, columnOrder: [...columnOrder, 'action'] }

@@ -26,16 +26,44 @@ use std::{fs, io::Read, path::Path, time::UNIX_EPOCH};
 /// Separates an archive from the entry inside it.
 pub const ENTRY_SEPARATOR: &str = "!/";
 
-/// The archive and entry a path names, when it names one at all.
+/// What a container path holds its entries in.
+///
+/// Two things can hold a title: a ZIP in somebody's library, and a FAT image
+/// used as a profile's destination. Both are addressed the same way — the
+/// container, the separator, and the path inside — so everything downstream
+/// carries one kind of thing and only this module knows the difference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Container {
+    Zip,
+    Image,
+}
+
+fn container_of(path: &Path) -> Option<Container> {
+    match extension_of(path).as_str() {
+        "zip" => Some(Container::Zip),
+        "img" | "ima" => Some(Container::Image),
+        _ => None,
+    }
+}
+
+/// The container and entry a path names, when it names one at all.
 ///
 /// The separator alone is not enough to decide: a folder could contain it. The
-/// left-hand side must actually be an archive, which is what stops an ordinary
+/// left-hand side must actually be a container, which is what stops an ordinary
 /// path with an unusual name being read as something it is not.
+#[cfg(test)]
 pub fn split(path: &Path) -> Option<(&Path, &str)> {
+    contained(path).map(|(container, entry, _)| (container, entry))
+}
+
+fn contained(path: &Path) -> Option<(&Path, &str, Container)> {
     let text = path.to_str()?;
-    let (archive, entry) = text.split_once(ENTRY_SEPARATOR)?;
-    let archive = Path::new(archive);
-    (extension_of(archive) == "zip" && !entry.is_empty()).then_some((archive, entry))
+    let (container, entry) = text.split_once(ENTRY_SEPARATOR)?;
+    let container = Path::new(container);
+    if entry.is_empty() {
+        return None;
+    }
+    container_of(container).map(|kind| (container, entry, kind))
 }
 
 /// Builds the path that names one entry inside an archive.
@@ -56,7 +84,7 @@ pub fn entry_path(archive: &Path, entry: &str) -> String {
 /// it already knew. The archive's own modification time still decides whether
 /// what was recorded can still be believed.
 pub fn stat(path: &Path, expected: Option<u64>) -> Result<Option<Stat>> {
-    let Some((archive, entry)) = split(path) else {
+    let Some((archive, entry, kind)) = contained(path) else {
         return Ok(fs::metadata(path)
             .ok()
             .filter(|metadata| metadata.is_file())
@@ -67,7 +95,7 @@ pub fn stat(path: &Path, expected: Option<u64>) -> Result<Option<Stat>> {
     };
     let size = match expected {
         Some(size) => size,
-        None => match archive::zip_entry_size(archive, entry)? {
+        None => match entry_size(archive, entry, kind)? {
             Some(size) => size,
             None => return Ok(None),
         },
@@ -84,9 +112,19 @@ pub fn stat(path: &Path, expected: Option<u64>) -> Result<Option<Stat>> {
 }
 
 /// Hands the source's contents to the caller, wherever they live.
+fn entry_size(container: &Path, entry: &str, kind: Container) -> Result<Option<u64>> {
+    match kind {
+        Container::Zip => archive::zip_entry_size(container, entry),
+        Container::Image => crate::image::entry_size(container, entry),
+    }
+}
+
 pub fn read_with<T>(path: &Path, read: impl FnOnce(&mut dyn Read) -> Result<T>) -> Result<T> {
-    match split(path) {
-        Some((archive, entry)) => archive::read_zip_entry(archive, entry, read),
+    match contained(path) {
+        Some((container, entry, Container::Zip)) => archive::read_zip_entry(container, entry, read),
+        Some((container, entry, Container::Image)) => {
+            crate::image::read_entry(container, entry, read)
+        }
         None => {
             let mut file = fs::File::open(path)
                 .with_context(|| format!("Unable to read {}", path.display()))?;

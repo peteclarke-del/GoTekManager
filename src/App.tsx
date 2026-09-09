@@ -1,13 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  CircleHelp,
-  HardDrive,
-  LayoutDashboard,
-  Moon,
-  Settings2,
-  Sun,
-  Usb,
-} from 'lucide-react'
+import { CircleHelp, HardDrive, LayoutDashboard, Moon, Settings2, Sun, Usb } from 'lucide-react'
 import { Empty, NoticeBar } from './components/Feedback'
 import { MountPicker } from './components/MountPicker'
 import { ProfileEditor } from './components/ProfileEditor'
@@ -29,25 +21,33 @@ import {
 } from './state/useWorkspace'
 import { profilesForMounts } from './state/workspace'
 
+/**
+ * The order the work happens in: a profile is set up, its folder is filled,
+ * and then that folder is written to real media.
+ */
 const NAVIGATION: Array<[Page, typeof HardDrive]> = [
-  ['Flow', LayoutDashboard],
   ['Profiles', HardDrive],
+  ['Library', LayoutDashboard],
   ['Devices', Usb],
   ['Help', CircleHelp],
 ]
 
 const PAGE_TITLES: Record<Page, string> = {
-  Flow: 'Prepare GoTek media',
   Profiles: 'Profiles',
-  Devices: 'Devices',
+  Library: 'Fill a profile',
+  Devices: 'Write to media',
   Help: 'Help',
 }
 
 export function App() {
-  const [page, setPage] = useState<Page>('Flow')
+  const [page, setPage] = useState<Page>('Profiles')
   const [settings, setSettings] = useSettings()
-  const { providers, setCustom: setCustomProviders, configPath: providersPath, problems: providerProblems } =
-    useProviders()
+  const {
+    providers,
+    setCustom: setCustomProviders,
+    configPath: providersPath,
+    problems: providerProblems,
+  } = useProviders()
   const [preferences, setPreferences] = useTablePreferences()
   const {
     workspace,
@@ -177,19 +177,15 @@ export function App() {
 
         {notice && <NoticeBar notice={notice} dismiss={() => setNotice(null)} />}
         {providerProblems.length > 0 && (
-          <div className="notice error">
-            Online sources: {providerProblems.join('; ')}.
-          </div>
+          <div className="notice error">Online sources: {providerProblems.join('; ')}.</div>
         )}
         {storeError && (
-          <div className="notice error">
-            The library could not be saved: {storeError}
-          </div>
+          <div className="notice error">The library could not be saved: {storeError}</div>
         )}
 
         {loading && <Empty title="Opening your library…" />}
 
-        {!loading && page === 'Flow' && (
+        {!loading && page === 'Library' && (
           <FlowPage
             workspace={workspace}
             dispatch={dispatch}
@@ -202,6 +198,7 @@ export function App() {
             convertIncompatible={settings.convertIncompatible}
             notify={setNotice}
             manageProfiles={() => setPage('Profiles')}
+            writeToDevice={() => setPage('Devices')}
           />
         )}
 
@@ -218,7 +215,11 @@ export function App() {
         )}
 
         {!loading && page === 'Devices' && (
-          <DevicesPage profile={activeProfile} collection={collection} notify={setNotice} />
+          <DevicesPage
+            profiles={workspace.profiles}
+            activeProfileId={activeProfile?.id ?? ''}
+            notify={setNotice}
+          />
         )}
 
         {!loading && page === 'Help' && <HelpPage theme={settings.theme} />}

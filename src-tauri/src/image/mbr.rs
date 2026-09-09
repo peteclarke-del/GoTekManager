@@ -100,10 +100,7 @@ mod tests {
         let region = locate(&sector, total_sectors as u64 * SECTOR);
 
         assert_eq!(region.offset, FIRST_LBA as u64 * SECTOR);
-        assert_eq!(
-            region.length,
-            (total_sectors - FIRST_LBA) as u64 * SECTOR
-        );
+        assert_eq!(region.length, (total_sectors - FIRST_LBA) as u64 * SECTOR);
     }
 
     #[test]

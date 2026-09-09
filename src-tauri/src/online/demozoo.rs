@@ -67,6 +67,25 @@ struct DownloadLink {
     url: String,
 }
 
+/// What to call the file a link points at.
+///
+/// The last segment of the path, which is the name the server would have given
+/// it. A link that ends in a slash, or that cannot be parsed at all, leaves
+/// nothing to go on, and the release's own title is used instead so the download
+/// still arrives with a name somebody can recognise.
+fn file_name_from(url: &str, fallback: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .path_segments()
+                .and_then(|mut segments| segments.next_back())
+                .map(str::to_string)
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 /// "Elite by Acornsoft", where the author is known.
 fn display_title(production: &Production) -> String {
     let title = production
@@ -196,16 +215,7 @@ pub fn item_files(
         .filter(|url| url.starts_with("https://"))
         .filter(|url| supported(url, extensions))
         .map(|url| {
-            let name = reqwest::Url::parse(url)
-                .ok()
-                .and_then(|parsed| {
-                    parsed
-                        .path_segments()
-                        .and_then(|mut segments| segments.next_back())
-                        .map(str::to_string)
-                })
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| title.title.clone());
+            let name = file_name_from(url, &title.title);
             OnlineTitle {
                 provider_id: provider.id.clone(),
                 remote_id: title.remote_id.clone(),
@@ -235,16 +245,7 @@ pub async fn resolve_download(
 ) -> Result<ResolvedDownload> {
     // An already-resolved link is used as it stands.
     if let Some(url) = title.download_url.as_deref() {
-        let name = reqwest::Url::parse(url)
-            .ok()
-            .and_then(|parsed| {
-                parsed
-                    .path_segments()
-                    .and_then(|mut segments| segments.next_back())
-                    .map(str::to_string)
-            })
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| title.title.clone());
+        let name = file_name_from(url, &title.title);
         return Ok(ResolvedDownload {
             url: url.to_string(),
             name,
@@ -369,7 +370,10 @@ mod tests {
         let extensions = normalise_extensions(vec!["dsk".into()]);
 
         assert!(supported("https://x/y/game.dsk?dl=1", &extensions));
-        assert!(!supported("https://x/y/page.php?file=game.dsk", &extensions));
+        assert!(!supported(
+            "https://x/y/page.php?file=game.dsk",
+            &extensions
+        ));
     }
 
     /// Opt-in: `cargo test -- --ignored` reaches the live API.
@@ -380,10 +384,11 @@ mod tests {
         let http = client(None).unwrap();
         let source = provider(Some("66"));
 
-        let titles =
-            tauri::async_runtime::block_on(super::search(&http, &source, "bbc")).unwrap();
+        let titles = tauri::async_runtime::block_on(super::search(&http, &source, "bbc")).unwrap();
         assert!(!titles.is_empty(), "no productions listed");
-        assert!(titles.iter().all(|t| t.platform_id.as_deref() == Some("bbc")));
+        assert!(titles
+            .iter()
+            .all(|t| t.platform_id.as_deref() == Some("bbc")));
 
         // Walk a few until one has something this machine could use, which is
         // the whole point of preferring an API over crawling the site.

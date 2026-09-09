@@ -8,10 +8,24 @@
  * whole class of inconsistency and matches how the interface talks about them.
  */
 
-export type Page = 'Flow' | 'Profiles' | 'Devices' | 'Help'
+/**
+ * The four places in the application, in the order the work happens.
+ *
+ * A profile is set up, the flow fills its folder, and Devices writes that
+ * folder to real media. The names are the nouns of the job rather than the
+ * shape of the code, which is why "Flow" is called what it does.
+ */
+export type Page = 'Library' | 'Profiles' | 'Devices' | 'Help'
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
-export type NamingRule = 'original' | 'oled'
+/**
+ * What a file is called once it reaches the drive.
+ *
+ * `title` is the name of the game or application and nothing else; `oled` is
+ * that name cut to what the drive's panel can show; `original` keeps whatever
+ * the collection called the file. See `NAMING_CHOICES` in `./media`.
+ */
+export type NamingRule = 'original' | 'title' | 'oled'
 export type FolderLayout = 'flat' | 'platform' | 'category' | 'custom'
 
 /**
@@ -23,11 +37,7 @@ export type FolderLayout = 'flat' | 'platform' | 'category' | 'custom'
  * and it is the setting that puts an upside-down panel the right way up.
  */
 export type DisplayType =
-  | 'auto'
-  | 'oled-128x32'
-  | 'oled-128x32-rotate'
-  | 'oled-128x64'
-  | 'oled-128x64-rotate'
+  'auto' | 'oled-128x32' | 'oled-128x32-rotate' | 'oled-128x64' | 'oled-128x64-rotate'
 
 /** What happens to destination files the collection does not include. */
 export type RemovalPolicy = 'keep' | 'remove'
@@ -62,6 +72,14 @@ export type Profile = {
   display?: DisplayType
   /** Used when folderLayout is 'custom'. See renderFolderTemplate. */
   folderTemplate?: string
+  /**
+   * The folder this destination already uses for a category, by category id.
+   *
+   * Discovered from the destination's own listing and confirmed rather than
+   * applied silently, because writing `Apps` to a stick that already has
+   * `Applications` makes a second folder instead of filling the first.
+   */
+  categoryFolders?: Record<string, string>
   naming: NamingRule
   /**
    * Compare a digest of every copied file against its source.
@@ -197,6 +215,14 @@ export type TransferOperation = {
   /** Always `/`-separated and relative to the destination root. */
   relativePath: string
   size: number
+  /**
+   * The title this belongs to, so the discs of one set are written together.
+   *
+   * A game that is missing a disc will not load, so half a set on the drive is
+   * worse than none of it: if one disc cannot be read, the ones already written
+   * are taken back off and the rest are skipped.
+   */
+  group?: string
 }
 
 export type FileStatus =
@@ -249,7 +275,22 @@ export type TransferPlan = {
   warnings: string[]
   /** The same problems, each naming the staged title responsible. */
   blockers: PlanBlocker[]
+  /**
+   * Titles the write could not take, and why.
+   *
+   * A source can be unreadable through no fault of the plan — a corrupt archive
+   * is the common one, and a large collection holds a few. The write steps over
+   * them rather than abandoning everything after them, and names them here.
+   */
+  failures?: CopyFailure[]
   ready: boolean
+}
+
+/** A title the write could not take, and the reason it gave. */
+export type CopyFailure = {
+  source: string
+  relativePath: string
+  message: string
 }
 
 /** Why a plan cannot be written, tied to the title that caused it. */
@@ -380,15 +421,6 @@ export type ImageOptions = {
   label: string
   fat: FatKind
   partitioned: boolean
-}
-
-export type ImageSummary = {
-  path: string
-  sizeBytes: number
-  partitioned: boolean
-  filesystemBytes: number
-  fileCount: number
-  usedBytes: number
 }
 
 export type CacheSummary = {

@@ -33,8 +33,7 @@ export const FLASHFLOPPY_CONFIG = 'FF.CFG'
  * plausible would be worse than producing nothing.
  */
 export type ConfigSupport =
-  | { writable: true; fileName: string }
-  | { writable: false; reason: string }
+  { writable: true; fileName: string } | { writable: false; reason: string }
 
 export function configSupport(firmwareId: string): ConfigSupport {
   if (firmwareId === 'flashfloppy') return { writable: true, fileName: FLASHFLOPPY_CONFIG }
@@ -96,9 +95,7 @@ function displaySetting(profile: Profile): Setting[] {
             'rotated 180 degrees. Rotation can only be asked for on a named',
             'panel, which is why the size is spelled out rather than detected.',
           ]
-        : [
-            'The panel fitted to this drive, named rather than detected.',
-          ],
+        : ['The panel fitted to this drive, named rather than detected.'],
     },
   ]
 }

@@ -10,6 +10,7 @@ import { formatBytes, isOutsideProfile } from '../../domain/media'
 import { isOnDestination } from '../../domain/plan'
 import type { MediaItem, Profile, ResultStatus, TransferResultEntry } from '../../domain/types'
 import { useRowSelection } from '../../hooks/useRowSelection'
+import { PAGE_SIZE, usePagedRows } from '../../hooks/usePagedRows'
 
 export type ResultView = 'current' | 'changes' | 'result'
 
@@ -64,10 +65,11 @@ export function ResultTable({
   removeFromCollection: (itemIds: string[]) => void
   emptyMessage: string
 }) {
-  const visible = useMemo(
-    () => filterResult(entries, view, query),
-    [entries, view, query],
-  )
+  const matching = useMemo(() => filterResult(entries, view, query), [entries, view, query])
+  // Drawn a page at a time. A staged collection of twenty thousand is a few
+  // hundred thousand elements of markup, and building them all took minutes
+  // every time one of the view tabs was pressed.
+  const { visible, remaining, showMore } = usePagedRows(matching)
 
   // Only staged additions can be taken back from here: a file that is already
   // on the destination is the removal policy's business, not the collection's.
@@ -92,7 +94,11 @@ export function ResultTable({
               className={view === value ? 'active' : ''}
               onClick={() => setView(value)}
             >
-              {value === 'current' ? 'Current load' : value === 'changes' ? 'Changes' : 'Result'}
+              {value === 'current'
+                ? 'Current load'
+                : value === 'changes'
+                  ? 'Changes'
+                  : 'Result'}
             </button>
           ))}
         </div>
@@ -175,6 +181,16 @@ export function ResultTable({
             })}
           </tbody>
         </table>
+        {remaining > 0 && (
+          <div className="table-more">
+            <span>
+              Showing {visible.length.toLocaleString()} of {matching.length.toLocaleString()}
+            </span>
+            <button className="button secondary compact" onClick={showMore}>
+              Show {Math.min(PAGE_SIZE, remaining).toLocaleString()} more
+            </button>
+          </div>
+        )}
         {!visible.length && <p className="result-empty">{emptyMessage}</p>}
       </div>
     </div>
