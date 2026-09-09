@@ -81,6 +81,7 @@ pub fn run() {
             library::update_items,
             library::clear_library,
             library::held_titles,
+            library::uncategorised_items,
             library::staged_items,
             library::stage_items,
             library::unstage_items,

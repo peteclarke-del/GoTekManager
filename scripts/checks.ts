@@ -61,6 +61,7 @@ import {
   inferCategoryId,
   UNCATEGORISED,
 } from '../src/domain/categories'
+import { categoriesToFill } from '../src/domain/recategorise'
 import { dumpRank, readTags, releaseSignature, spokenLanguages } from '../src/domain/tags'
 import {
   costOf,
@@ -1702,6 +1703,96 @@ check('what the user called a source is read when its path says nothing', () => 
   assert.equal(
     inferCategoryFor(`${source.path}/Elite.adf`, { ...source, name: 'Ghostware' }),
     undefined,
+  )
+})
+
+/**
+ * A title as an older version of the application left it: indexed, and with no
+ * category, because the rules of the day could not read one from where it sat.
+ */
+function unsorted(source: string, relative: string): MediaItem {
+  const path = `${source}/${relative}`
+  const name = relative.split('/').pop()!
+  const file: FileEntry = {
+    name,
+    path,
+    extension: name.split('.').pop()!.toLowerCase(),
+    size: 901_120,
+    directory: false,
+  }
+  return { ...classifyMedia(file, source), category: undefined }
+}
+
+/// The rules for deciding what a title is have improved more than once, and a
+/// library keeps the answer it was given when each title was indexed. Without
+/// this, a collection indexed before the source folder was read keeps thousands
+/// of titles with no category at all, and the only way out is re-reading every
+/// file over a network share. Reported from a real library: nine thousand
+/// titles, of which two thousand six hundred had no category, and every one of
+/// those was answerable from the path alone.
+check('titles the library never sorted are sorted when the rules can do it', () => {
+  const source = {
+    id: 'source:/nas/Gamebase/Commodore Amiga/Games',
+    name: 'Gamebase Games',
+    path: '/nas/Gamebase/Commodore Amiga/Games',
+  }
+  const held = [
+    unsorted(source.path, 'B/B.A.T. II (De)_Disk1.adf'),
+    unsorted(source.path, 'A/Elite.adf'),
+  ]
+
+  const fill = categoriesToFill(held, [source])
+
+  assert.deepEqual([...fill.keys()], ['games'])
+  assert.deepEqual(
+    fill.get('games'),
+    held.map((item) => item.id),
+  )
+})
+
+/// The same library, a different source: an applications set is not made into
+/// games because most of the collection is.
+check('what a title is comes from where it sits, not from the rest of the library', () => {
+  const applications = {
+    id: 'source:/nas/TOSEC/Amiga/Applications/[ADF]',
+    name: 'Applications (TOSEC)',
+    path: '/nas/TOSEC/Amiga/Applications/[ADF]',
+  }
+
+  const fill = categoriesToFill(
+    [unsorted(applications.path, '3-D Professional v1.10 (1990)(Cryogenic).adf')],
+    [applications],
+  )
+
+  assert.deepEqual([...fill.keys()], ['applications'])
+})
+
+/// A category that says something is never touched, because there is no way to
+/// tell "the rules worked this out" from "somebody chose this" after the fact,
+/// and overwriting a decision is worse than leaving a title unsorted.
+check('a category already recorded is never overwritten', () => {
+  const source = {
+    id: 'source:/nas/TOSEC/Amiga/Applications/[ADF]',
+    name: 'Applications (TOSEC)',
+    path: '/nas/TOSEC/Amiga/Applications/[ADF]',
+  }
+  // The path says applications; the person who filed it said games.
+  const decided = {
+    ...unsorted(source.path, '3-D Professional v1.50 (1990)(Cryogenic).adf'),
+    category: 'games',
+  }
+
+  assert.equal(categoriesToFill([decided], [source]).size, 0)
+})
+
+/// A title with nothing to go on stays unsorted rather than being guessed at.
+/// This is also what stops the pass rewriting the same rows on every start.
+check('a title with nothing to go on is left alone', () => {
+  const source = { id: 'source:/downloads', name: 'Amiga Archive', path: '/downloads' }
+
+  assert.equal(
+    categoriesToFill([unsorted(source.path, 'site-1788/Elite.adf')], [source]).size,
+    0,
   )
 })
 
