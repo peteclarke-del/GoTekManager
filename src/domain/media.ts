@@ -346,6 +346,66 @@ export function setIndexOf(items: readonly MediaItem[]): Map<string, SetPosition
 // Naming
 // ---------------------------------------------------------------------------
 
+/** Where a title stops being its name and starts being a subtitle. */
+const SUBTITLE = /\s+[-\u2013\u2014:]\s+/
+
+/** Punctuation that only made sense joined to what followed it. */
+const DANGLING = /[\s,;:\-\u2013\u2014]+$/
+
+/**
+ * A title cut down to what a drive's panel can show.
+ *
+ * Cutting at the character the room runs out at is what a panel needs and not
+ * what a person reads: it leaves `Indianapolis 500 - T` and `Sensilly Soccer -
+ * Fi`, which are neither the name of the game nor anything else. Worse, on a
+ * title that ends in a number it quietly rewrites which one this is, turning
+ * `Compilation Disk #04672` into `Compilation Disk #04`.
+ *
+ * So the room is given up where a name has a seam. A subtitle goes first,
+ * because `Indianapolis 500` is still the game and `The Simulation` was only
+ * ever telling you which edition. Failing that, whole words go from the end,
+ * but only while enough of the name survives to be recognised: `Spike in
+ * Transylvani` is a poor name and `Spike in` is a worse one.
+ *
+ * A trailing number never goes. It is the one part that says which of these
+ * this is, so the words in front of it give up the room instead and
+ * `Delicious Fruits #033` becomes `Delicious #033`.
+ *
+ * Cutting mid-word remains the last resort, for the name that offers no seam
+ * at all.
+ */
+export function shortenTitle(stem: string, room: number): string {
+  if (stem.length <= room) return stem
+  const trimmed = (text: string) => text.replace(DANGLING, '')
+
+  const parts = stem.split(SUBTITLE)
+  for (let take = parts.length - 1; take >= 1; take -= 1) {
+    const head = trimmed(parts.slice(0, take).join(' - '))
+    if (head && head.length <= room) return head
+  }
+
+  const words = stem.split(/\s+/)
+  const last = words[words.length - 1] ?? ''
+  if (/\d/.test(last)) {
+    for (let take = words.length - 1; take >= 1; take -= 1) {
+      // Trimmed after joining as well: the number itself can be the thing
+      // carrying the comma, as in "Few Small Intros Of '92,".
+      const head = trimmed(`${trimmed(words.slice(0, take).join(' '))} ${last}`)
+      if (head.length <= room) return head
+    }
+    return trimmed(stem.slice(0, room))
+  }
+
+  for (let take = words.length - 1; take >= 1; take -= 1) {
+    const head = trimmed(words.slice(0, take).join(' '))
+    if (head && head.length <= room) {
+      // Half the room is the line between a name shortened and a name lost.
+      return head.length * 2 >= room ? head : trimmed(stem.slice(0, room))
+    }
+  }
+  return trimmed(stem.slice(0, room))
+}
+
 /**
  * The name a title is written under: what it is, and which disc, and nothing
  * else.
@@ -376,7 +436,7 @@ export function releaseName(
   const tail = `${marker}${suffix}${extension}`
   if (length === undefined) return safeFileName(`${stem}${tail}`)
   const room = Math.max(1, length - tail.length)
-  return safeFileName(`${stem.length <= room ? stem : stem.slice(0, room).trimEnd()}${tail}`)
+  return safeFileName(`${shortenTitle(stem, room)}${tail}`)
 }
 
 /** Puts a disambiguating suffix before the extension of an untouched name. */
