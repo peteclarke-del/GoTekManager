@@ -7,6 +7,7 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { useCaptureHarness } from './dev/captureHarness'
 import type { MountedTarget, Notice, Page } from './domain/types'
 import { useAsyncAction } from './hooks/useAsyncAction'
+import { useRecategorise } from './hooks/useRecategorise'
 import { useProfileDrafts } from './hooks/useProfileDrafts'
 import { discoverMounts } from './native/commands'
 import { FlowPage } from './pages/flow/FlowPage'
@@ -58,6 +59,10 @@ export function App() {
     loading,
     error: storeError,
   } = useWorkspace()
+
+  // A library indexed before the category rules improved is sorted once here,
+  // for the titles that were never sorted at all. See useRecategorise.
+  useRecategorise(workspace.sources, !loading)
 
   const [notice, setNotice] = useState<Notice | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
