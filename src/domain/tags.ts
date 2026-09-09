@@ -43,13 +43,7 @@ export type DumpFlag =
 
 /** How the software was published. An untagged release is commercial. */
 export type Distribution =
-  | 'pd'
-  | 'freeware'
-  | 'shareware'
-  | 'giftware'
-  | 'licenceware'
-  | 'cardware'
-  | 'mailware'
+  'pd' | 'freeware' | 'shareware' | 'giftware' | 'licenceware' | 'cardware' | 'mailware'
 
 /**
  * Which disc of a set this is.
@@ -192,6 +186,7 @@ const DISTRIBUTION: Record<string, Distribution> = {
  * Case is what separates a language from a country: TOSEC writes `(de)` for
  * German and `(DE)` for Germany, and both are two letters.
  */
+// prettier-ignore
 const LANGUAGES = new Set([
   'ar', 'bg', 'bs', 'cs', 'cy', 'da', 'de', 'el', 'en', 'eo', 'es', 'et', 'fa',
   'fi', 'fr', 'ga', 'gd', 'he', 'hr', 'hu', 'is', 'it', 'ja', 'ko', 'lt', 'lv',
@@ -199,6 +194,7 @@ const LANGUAGES = new Set([
   'yi', 'zh',
 ])
 
+// prettier-ignore
 const REGIONS = new Set([
   'AE', 'AS', 'AU', 'AT', 'BE', 'BR', 'CA', 'CH', 'CL', 'CN', 'CZ', 'DE', 'DK',
   'EE', 'EG', 'ES', 'EU', 'FI', 'FR', 'GB', 'GR', 'HK', 'HU', 'ID', 'IE', 'IL',
@@ -213,7 +209,8 @@ const VERSION = /^(v[\d.]+[a-z]?|rev\s*[\w.]+|alt)$/i
 const MULTI_LANGUAGE = /^m[2-9]$/i
 /** `(en-fr)`, `(en-de-fr)`. */
 const LANGUAGE_LIST = /^[a-z]{2}(-[a-z]{2})+$/i
-const DISK_GROUP = /^(disk|disc|side|part|file|tape)\s*#?\s*([0-9]{1,2}|[a-z])(\s*(of|\/)\s*([0-9]{1,2}))?$/i
+const DISK_GROUP =
+  /^(disk|disc|side|part|file|tape)\s*#?\s*([0-9]{1,2}|[a-z])(\s*(of|\/)\s*([0-9]{1,2}))?$/i
 /**
  * The marker written without brackets, wherever it sits in the name.
  *

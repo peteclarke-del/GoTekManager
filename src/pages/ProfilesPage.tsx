@@ -91,7 +91,9 @@ export function ProfilesPage({
       const written = await createImage(
         path,
         {
-          sizeBytes: imageSizeForContents(operations.reduce((total, item) => total + item.size, 0)),
+          sizeBytes: imageSizeForContents(
+            operations.reduce((total, item) => total + item.size, 0),
+          ),
           label: active.name,
           fat: 'auto',
           partitioned: true,
@@ -201,11 +203,22 @@ export function ProfilesPage({
           </div>
         </div>
         <div className="target-actions">
-          <button className="button" onClick={() => void addProfile(() => chooseFolder('Choose a folder or mounted GoTek volume'), 'folder')}>
+          <button
+            className="button"
+            onClick={() =>
+              void addProfile(
+                () => chooseFolder('Choose a folder or mounted GoTek volume'),
+                'folder',
+              )
+            }
+          >
             <FolderOpen />
             Choose folder
           </button>
-          <button className="button secondary" onClick={() => void addProfile(chooseImageFile, 'image')}>
+          <button
+            className="button secondary"
+            onClick={() => void addProfile(chooseImageFile, 'image')}
+          >
             <Archive />
             Open image
           </button>
@@ -243,8 +256,8 @@ export function ProfilesPage({
         )}
         {imaging.error && <p className="inline-error">{imaging.error}</p>}
         <p className="target-picker-help">
-          “Choose folder” opens the system folder picker, where you can navigate to any
-          mounted drive or local directory before making it a profile's destination.
+          “Choose folder” opens the system folder picker, where you can navigate to any mounted
+          drive or local directory before making it a profile's destination.
         </p>
         <div
           className="managed-targets setup-scroll-list"
@@ -298,7 +311,11 @@ export function ProfilesPage({
               )}
             </div>
             <div className="inline-actions">
-              <button className="icon-button" title="Edit profile" onClick={() => setEditing(active)}>
+              <button
+                className="icon-button"
+                title="Edit profile"
+                onClick={() => setEditing(active)}
+              >
                 <Pencil />
               </button>
               <button
@@ -314,8 +331,8 @@ export function ProfilesPage({
 
           {summary && !summary.exists && (
             <div className="notice error">
-              This destination is not currently available. Reconnect the device or edit
-              the profile.
+              This destination is not currently available. Reconnect the device or edit the
+              profile.
             </div>
           )}
 
@@ -347,8 +364,8 @@ export function ProfilesPage({
             />
           </div>
           <p className="target-browser-help">
-            Double-click a folder, or focus it and press Enter, to browse into it. Use
-            “Parent” to go back.
+            Double-click a folder, or focus it and press Enter, to browse into it. Use “Parent”
+            to go back.
           </p>
         </section>
       ) : (

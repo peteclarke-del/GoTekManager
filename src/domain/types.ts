@@ -37,11 +37,7 @@ export type FolderLayout = 'flat' | 'platform' | 'category' | 'custom'
  * and it is the setting that puts an upside-down panel the right way up.
  */
 export type DisplayType =
-  | 'auto'
-  | 'oled-128x32'
-  | 'oled-128x32-rotate'
-  | 'oled-128x64'
-  | 'oled-128x64-rotate'
+  'auto' | 'oled-128x32' | 'oled-128x32-rotate' | 'oled-128x64' | 'oled-128x64-rotate'
 
 /** What happens to destination files the collection does not include. */
 export type RemovalPolicy = 'keep' | 'remove'

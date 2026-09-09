@@ -111,8 +111,7 @@ export function blockedTitles(
 
     const path = destinations.get(blocker.source)
     const holder = path ? firstAt.get(path.toLowerCase()) : undefined
-    const against =
-      holder && holder !== blocker.source ? itemsBySource.get(holder) : undefined
+    const against = holder && holder !== blocker.source ? itemsBySource.get(holder) : undefined
     return [{ kind: blocker.kind, item, message: blocker.message, path, against }]
   })
 }

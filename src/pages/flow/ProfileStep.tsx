@@ -31,10 +31,7 @@ export function ProfileStep({
       <div>
         <p className="eyebrow">1 · Select profile</p>
         <h2>What GoTek are you preparing?</h2>
-        <p>
-          A profile keeps the platform, firmware, drive layout, and destination
-          together.
-        </p>
+        <p>A profile keeps the platform, firmware, drive layout, and destination together.</p>
       </div>
 
       {profiles.length ? (
@@ -86,8 +83,8 @@ export function ProfileStep({
 
       {active && !isWritable(active) && (
         <div className="notice info">
-          This profile points at a FAT image. Its contents can be browsed, but nothing
-          can be written to it yet.
+          This profile points at a FAT image. Its contents can be browsed, but nothing can be
+          written to it yet.
         </div>
       )}
 

@@ -267,9 +267,7 @@ function discSets(items: readonly MediaItem[]): DiscSet[] {
     // it is actually here, and the smallest size that covers the most wins.
     const claims = [
       ...new Set(
-        group.members
-          .map((member) => member.tags.disk?.of ?? 0)
-          .filter((size) => size > 0),
+        group.members.map((member) => member.tags.disk?.of ?? 0).filter((size) => size > 0),
       ),
     ].sort((left, right) => left - right)
 
@@ -554,7 +552,9 @@ export function planBulkAdd(
       }
       const chosen = filter.onePerTitle
         ? outcome.chosen
-        : set.members.filter((member) => passed.has(member.item.id)).map((member) => member.item)
+        : set.members
+            .filter((member) => passed.has(member.item.id))
+            .map((member) => member.item)
       const kept = new Set(chosen.map((item) => item.id))
       for (const member of set.members) {
         if (passed.has(member.item.id) && !kept.has(member.item.id)) {

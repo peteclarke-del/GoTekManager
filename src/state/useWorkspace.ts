@@ -145,10 +145,9 @@ export function useWorkspace() {
     const failed = (reason: unknown) => setError(String(reason))
     switch (action.type) {
       case 'sourceIndexed':
-        void replaceSourceItems(
-          action.source.path,
-          action.items.map(itemToStored),
-        ).catch(failed)
+        void replaceSourceItems(action.source.path, action.items.map(itemToStored)).catch(
+          failed,
+        )
         break
       case 'itemsImported':
         void upsertItems(action.items.map(itemToStored)).catch(failed)
@@ -162,9 +161,7 @@ export function useWorkspace() {
         }).catch(failed)
         break
       case 'categoryAssigned':
-        void updateItems(action.itemIds, { category: action.categoryId || null }).catch(
-          failed,
-        )
+        void updateItems(action.itemIds, { category: action.categoryId || null }).catch(failed)
         break
       case 'displayTitleSet':
         void updateItems([action.itemId], {
@@ -220,7 +217,15 @@ export function useWorkspace() {
   const collection = collectionOf(workspace, activeProfile?.id)
   const removalPolicy = removalPolicyOf(workspace, activeProfile?.id)
 
-  return { workspace, dispatch: record, activeProfile, collection, removalPolicy, loading, error }
+  return {
+    workspace,
+    dispatch: record,
+    activeProfile,
+    collection,
+    removalPolicy,
+    loading,
+    error,
+  }
 }
 
 export function useSettings() {
@@ -255,7 +260,11 @@ export function useProviders() {
           const load = readProviderConfig(JSON.parse(file.contents))
           setProblems(load.problems)
           if (load.providers.length) setShipped(load.providers)
-          else setProblems((current) => [...current, 'no usable sources; keeping the built-in list'])
+          else
+            setProblems((current) => [
+              ...current,
+              'no usable sources; keeping the built-in list',
+            ])
         } catch (reason) {
           setProblems([`${PROVIDERS_FILE} is not valid JSON: ${String(reason)}`])
         }
@@ -311,9 +320,7 @@ export function reviveTablePreferences(stored: Partial<TablePreferences>): Table
   const merged = { ...defaultTablePreferences, ...stored }
   const known = new Set(defaultTablePreferences.columnOrder)
   const kept = merged.columnOrder.filter((column) => known.has(column))
-  const missing = defaultTablePreferences.columnOrder.filter(
-    (column) => !kept.includes(column),
-  )
+  const missing = defaultTablePreferences.columnOrder.filter((column) => !kept.includes(column))
   // The action column is the row's own control and belongs at the end.
   const columnOrder = [...kept, ...missing].filter((column) => column !== 'action')
   return { ...merged, columnOrder: [...columnOrder, 'action'] }

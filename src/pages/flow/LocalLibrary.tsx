@@ -22,7 +22,12 @@ import { Options } from '../../components/Choices'
 import { Empty, InlineStatus } from '../../components/Feedback'
 import { Modal } from '../../components/Modal'
 import { BulkAddDialog } from './BulkAddDialog'
-import { acceptedFormats, platforms, requireFirmware, type Platform } from '../../domain/catalog'
+import {
+  acceptedFormats,
+  platforms,
+  requireFirmware,
+  type Platform,
+} from '../../domain/catalog'
 import { categories } from '../../domain/categories'
 import {
   elideMiddle,
@@ -172,10 +177,7 @@ export function LocalLibrary({
   const matching = page.rows
 
   /** How many titles each source contributes for this platform. */
-  const countBySource = useMemo(
-    () => new Map(Object.entries(page.bySource)),
-    [page.bySource],
-  )
+  const countBySource = useMemo(() => new Map(Object.entries(page.bySource)), [page.bySource])
 
   const { statuses, checking, checked, comparable, askForCheck } = useTargetPresence(
     profile,
@@ -192,39 +194,40 @@ export function LocalLibrary({
 
   const rows = useMemo<Row[]>(() => {
     const { key, direction } = preferences.sort
-    return matching
-      .map<Row>((item) => ({
-        item,
-        staged: staged.has(item.id),
-        presence: checking
-          ? 'Checking'
-          : !checked
-            ? 'Unchecked'
-            : PRESENCE_BY_STATUS[statuses[item.path]?.status] || 'Checking',
-        foundAt: statuses[item.path]?.foundAt,
-        location: sourceName(item),
-      }))
-      // While the contents are still being read nothing is known yet, so the
-      // filter is held back rather than emptying the table as it works.
-      .filter((row) =>
-        presenceFilter === 'all' || checking || !checked
-          ? true
-          : (presenceFilter === 'present') === isOnTarget(row.presence),
-      )
-      .filter((row) =>
-        profileFilter === 'all' ? true : (profileFilter === 'staged') === row.staged,
-      )
-      // Every other order is the database's, applied to the whole library
-      // before this page of it was taken. Presence is not something the
-      // database knows — it is the answer to a scan of the drive — so sorting
-      // by it orders the rows on screen.
-      .sort((left, right) =>
-        key === 'presence'
-          ? (PRESENCE_ORDER.indexOf(left.presence) -
-              PRESENCE_ORDER.indexOf(right.presence)) *
-            (direction === 'asc' ? 1 : -1)
-          : 0,
-      )
+    return (
+      matching
+        .map<Row>((item) => ({
+          item,
+          staged: staged.has(item.id),
+          presence: checking
+            ? 'Checking'
+            : !checked
+              ? 'Unchecked'
+              : PRESENCE_BY_STATUS[statuses[item.path]?.status] || 'Checking',
+          foundAt: statuses[item.path]?.foundAt,
+          location: sourceName(item),
+        }))
+        // While the contents are still being read nothing is known yet, so the
+        // filter is held back rather than emptying the table as it works.
+        .filter((row) =>
+          presenceFilter === 'all' || checking || !checked
+            ? true
+            : (presenceFilter === 'present') === isOnTarget(row.presence),
+        )
+        .filter((row) =>
+          profileFilter === 'all' ? true : (profileFilter === 'staged') === row.staged,
+        )
+        // Every other order is the database's, applied to the whole library
+        // before this page of it was taken. Presence is not something the
+        // database knows — it is the answer to a scan of the drive — so sorting
+        // by it orders the rows on screen.
+        .sort((left, right) =>
+          key === 'presence'
+            ? (PRESENCE_ORDER.indexOf(left.presence) - PRESENCE_ORDER.indexOf(right.presence)) *
+              (direction === 'asc' ? 1 : -1)
+            : 0,
+        )
+    )
   }, [
     matching,
     staged,
@@ -434,8 +437,8 @@ export function LocalLibrary({
           {convertible.length > 0 && (
             <p className="mode-note">
               {convertible.join(', ')} {convertible.length === 1 ? 'is a' : 'are'}{' '}
-              {platform.name} format{convertible.length === 1 ? '' : 's'} this firmware
-              cannot load directly. Convert to .hfe first.
+              {platform.name} format{convertible.length === 1 ? '' : 's'} this firmware cannot
+              load directly. Convert to .hfe first.
             </p>
           )}
           <h3>Firmware for this machine</h3>
@@ -449,50 +452,47 @@ export function LocalLibrary({
             {sources.map((source) => {
               const chosen = selectedSources.includes(source.path)
               return (
-              <div key={source.id} className={chosen ? 'selected' : ''}>
-                <button
-                  className="source-select"
-                  aria-pressed={chosen}
-                  title={`${source.path}\nShow only this source, or combine it with others`}
-                  onClick={() =>
-                    setSelectedSources((current) =>
-                      current.includes(source.path)
-                        ? current.filter((path) => path !== source.path)
-                        : [...current, source.path],
-                    )
-                  }
-                >
-                  <b>{source.name}</b>
-                  <small>
-                    {countBySource.get(source.path) || 0} {platform.name} titles
-                  </small>
-                </button>
-                <button
-                  disabled={Boolean(busySourceId)}
-                  title={`Re-index ${source.name} and its subfolders`}
-                  onClick={() => refreshLocation(source)}
-                >
-                  <RefreshCw className={busySourceId === source.id ? 'spinning' : ''} />
-                </button>
-                <button title="Rename source" onClick={() => setEditing(source)}>
-                  <Pencil />
-                </button>
-                <button
-                  title="Remove source and its indexed titles"
-                  onClick={() => removeLocation(source)}
-                >
-                  <Trash2 />
-                </button>
-              </div>
+                <div key={source.id} className={chosen ? 'selected' : ''}>
+                  <button
+                    className="source-select"
+                    aria-pressed={chosen}
+                    title={`${source.path}\nShow only this source, or combine it with others`}
+                    onClick={() =>
+                      setSelectedSources((current) =>
+                        current.includes(source.path)
+                          ? current.filter((path) => path !== source.path)
+                          : [...current, source.path],
+                      )
+                    }
+                  >
+                    <b>{source.name}</b>
+                    <small>
+                      {countBySource.get(source.path) || 0} {platform.name} titles
+                    </small>
+                  </button>
+                  <button
+                    disabled={Boolean(busySourceId)}
+                    title={`Re-index ${source.name} and its subfolders`}
+                    onClick={() => refreshLocation(source)}
+                  >
+                    <RefreshCw className={busySourceId === source.id ? 'spinning' : ''} />
+                  </button>
+                  <button title="Rename source" onClick={() => setEditing(source)}>
+                    <Pencil />
+                  </button>
+                  <button
+                    title="Remove source and its indexed titles"
+                    onClick={() => removeLocation(source)}
+                  >
+                    <Trash2 />
+                  </button>
+                </div>
               )
             })}
             {!sources.length && <p>No source locations added</p>}
           </div>
           {selectedSources.length > 0 && (
-            <button
-              className="button secondary compact"
-              onClick={() => setSelectedSources([])}
-            >
+            <button className="button secondary compact" onClick={() => setSelectedSources([])}>
               Show all {sources.length} sources
             </button>
           )}
@@ -528,7 +528,8 @@ export function LocalLibrary({
               {selectedSources.length
                 ? ` · ${selectedSources.length} source${selectedSources.length === 1 ? '' : 's'}`
                 : ''}{' '}
-              · {collection.length} in {profile.name} · {requireFirmware(profile.firmwareId).name}
+              · {collection.length} in {profile.name} ·{' '}
+              {requireFirmware(profile.firmwareId).name}
             </p>
           </div>
           <div className="coverage-filter" role="group" aria-label="Show titles by presence">
@@ -539,9 +540,7 @@ export function LocalLibrary({
                 aria-pressed={presenceFilter === value}
                 disabled={(checking || !checked) && value !== 'all'}
                 title={
-                  checked
-                    ? undefined
-                    : 'Check these titles against the target to filter by it'
+                  checked ? undefined : 'Check these titles against the target to filter by it'
                 }
                 onClick={() => setPresenceFilter(value)}
               >
@@ -577,25 +576,31 @@ export function LocalLibrary({
         {elsewhereCount > 0 && (
           <div className="profile-mismatch">
             <b>
-              {elsewhereCount} of these titles {elsewhereCount === 1 ? 'is' : 'are'} already
-              on the destination, filed somewhere else
+              {elsewhereCount} of these titles {elsewhereCount === 1 ? 'is' : 'are'} already on
+              the destination, filed somewhere else
             </b>
             <span>
               Matched on contents, so the names and folders do not have to agree
-              {sampleFoundAt ? <>, one of them is at <code>{sampleFoundAt}</code></> : null}.
-              This profile would write them to <code>{profileFolder || 'the root'}/</code>{' '}
-              using {namingLabel(profile.naming)} names, which
-              would make a second copy. Change its layout and naming to match the
-              destination and they will show as already in place.
+              {sampleFoundAt ? (
+                <>
+                  , one of them is at <code>{sampleFoundAt}</code>
+                </>
+              ) : null}
+              . This profile would write them to <code>{profileFolder || 'the root'}/</code>{' '}
+              using {namingLabel(profile.naming)} names, which would make a second copy. Change
+              its layout and naming to match the destination and they will show as already in
+              place.
             </span>
           </div>
         )}
         {!checked && comparable.length > 0 && (
           <div className="source-status info target-check">
             <span>
-              <b>{comparable.length} titles are not checked against {profile.name}.</b> Whether
-              a title is already there is decided by its contents, so answering means reading
-              every one, which for a library this size on a network share takes minutes.
+              <b>
+                {comparable.length} titles are not checked against {profile.name}.
+              </b>{' '}
+              Whether a title is already there is decided by its contents, so answering means
+              reading every one, which for a library this size on a network share takes minutes.
               Adding titles and writing them does not need it.
             </span>
             <button
@@ -610,9 +615,9 @@ export function LocalLibrary({
         )}
         {fingerprinting && (
           <InlineStatus kind="info">
-            Reading contents to identify titles: {fingerprinting.done} of{' '}
-            {fingerprinting.total}. Each file is read once and remembered, so this only
-            happens again when a file changes.
+            Reading contents to identify titles: {fingerprinting.done} of {fingerprinting.total}
+            . Each file is read once and remembered, so this only happens again when a file
+            changes.
           </InlineStatus>
         )}
         <BulkBar selection={selection} noun="titles">
@@ -673,9 +678,7 @@ export function LocalLibrary({
                     onDragStart={() => setDraggedColumn(column)}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={() => moveColumn(column)}
-                    className={
-                      preferences.sort.key === column ? `${column} sorted` : column
-                    }
+                    className={preferences.sort.key === column ? `${column} sorted` : column}
                   >
                     {column === 'action' ? null : (
                       <button
@@ -846,8 +849,8 @@ function DisplayNameDialog({
         />
       </label>
       <p className="mode-note">
-        Leave it empty to go back to the generated name. The library keeps the original
-        either way, so nothing is lost.
+        Leave it empty to go back to the generated name. The library keeps the original either
+        way, so nothing is lost.
       </p>
       <p className="feed-format">
         Will be written as <code>{folder ? `${folder}/${preview}` : preview}</code>

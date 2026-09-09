@@ -360,9 +360,7 @@ export function workspaceReducer(state: Workspace, action: WorkspaceAction): Wor
       // would throw it away moments after the user asked for it. The store has
       // both by this point, because staging wrote its row as it happened.
       const held = stagedBy(state, action.profileId)
-      const loaded = action.items.filter(
-        (item) => !held.some((entry) => entry.id === item.id),
-      )
+      const loaded = action.items.filter((item) => !held.some((entry) => entry.id === item.id))
       return withCollection(state, action.profileId, [...loaded, ...held])
     }
 

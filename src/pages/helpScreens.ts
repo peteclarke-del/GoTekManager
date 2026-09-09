@@ -62,8 +62,4 @@ export const DEVICES_SCREEN: HelpScreen = {
   detail: 'Write a profile to a stick, by copying onto it or formatting it first.',
 }
 
-export const ALL_HELP_SCREENS: HelpScreen[] = [
-  ...FLOW_SCREENS,
-  PROFILES_SCREEN,
-  DEVICES_SCREEN,
-]
+export const ALL_HELP_SCREENS: HelpScreen[] = [...FLOW_SCREENS, PROFILES_SCREEN, DEVICES_SCREEN]

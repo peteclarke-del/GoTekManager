@@ -118,5 +118,10 @@ export function joinRelative(...parts: string[]): string {
  * nothing about the original file is lost.
  */
 export function safeFileName(value: string): string {
-  return value.replace(/[\\/:*?"<>|]/g, '_').replace(/^\.+$/, '_').trim() || 'Untitled'
+  return (
+    value
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/^\.+$/, '_')
+      .trim() || 'Untitled'
+  )
 }

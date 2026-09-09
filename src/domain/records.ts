@@ -38,7 +38,10 @@ export function omitKey<T>(
 }
 
 /** Counts occurrences of a derived key, used for the result summary tiles. */
-export function countBy<T>(items: readonly T[], key: (item: T) => string): Record<string, number> {
+export function countBy<T>(
+  items: readonly T[],
+  key: (item: T) => string,
+): Record<string, number> {
   return items.reduce<Record<string, number>>((counts, item) => {
     const value = key(item)
     counts[value] = (counts[value] || 0) + 1

@@ -150,7 +150,11 @@ export function categoryFolderFor(
  * they come to disagree.
  */
 export function wordsOf(text: string): string {
-  return ` ${text.toLowerCase().split(/[^a-z0-9+]+/i).filter(Boolean).join(' ')} `
+  return ` ${text
+    .toLowerCase()
+    .split(/[^a-z0-9+]+/i)
+    .filter(Boolean)
+    .join(' ')} `
 }
 
 /**

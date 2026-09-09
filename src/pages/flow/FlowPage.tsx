@@ -137,9 +137,10 @@ export function FlowPage({
   const [configWrites, setConfigWrites] = useState(0)
   const [scanning, setScanning] = useState(false)
   const [busySourceId, setBusySourceId] = useState('')
-  const [sourceStatus, setSourceStatus] = useState<
-    { kind: 'success' | 'error' | 'info'; text: string } | null
-  >(null)
+  const [sourceStatus, setSourceStatus] = useState<{
+    kind: 'success' | 'error' | 'info'
+    text: string
+  } | null>(null)
 
   const platform = requirePlatform(profile?.platformId)
   const browser = useDirectoryBrowser(profile, true)
@@ -219,9 +220,7 @@ export function FlowPage({
   )
   const incompatible = useMemo(
     () =>
-      profile
-        ? staged.filter((item) => !isFirmwareCompatible(item, profile.firmwareId))
-        : [],
+      profile ? staged.filter((item) => !isFirmwareCompatible(item, profile.firmwareId)) : [],
     [staged, profile?.firmwareId],
   )
 
@@ -419,7 +418,10 @@ export function FlowPage({
       if (state.exists) return
       const written = await writeFirmwareConfig(profile.destination.path, contents)
       setConfigWrites((count) => count + 1)
-      notify({ kind: 'info', text: `Wrote ${written} so the drive reads this stick correctly.` })
+      notify({
+        kind: 'info',
+        text: `Wrote ${written} so the drive reads this stick correctly.`,
+      })
     } catch (reason) {
       notify({
         kind: 'error',
@@ -448,9 +450,7 @@ export function FlowPage({
         dispatch({
           type: 'collectionRemoved',
           profileId: profile.id,
-          itemIds: staged
-            .filter((item) => !unwritten.has(item.path))
-            .map((item) => item.id),
+          itemIds: staged.filter((item) => !unwritten.has(item.path)).map((item) => item.id),
         })
       } else {
         dispatch({ type: 'collectionCleared', profileId: profile.id })
@@ -472,10 +472,19 @@ export function FlowPage({
 
   const stageHeading =
     step === 2
-      ? { eyebrow: '2 · Current contents', help: 'Browse the destination and stage moves, renames, or deletions.' }
+      ? {
+          eyebrow: '2 · Current contents',
+          help: 'Browse the destination and stage moves, renames, or deletions.',
+        }
       : step === 4
-        ? { eyebrow: '4 · Verify changes', help: 'Compare the current contents, the changes, and the result.' }
-        : { eyebrow: '5 · Confirm write', help: 'Resolve any conflict, then confirm with the exact profile name.' }
+        ? {
+            eyebrow: '4 · Verify changes',
+            help: 'Compare the current contents, the changes, and the result.',
+          }
+        : {
+            eyebrow: '5 · Confirm write',
+            help: 'Resolve any conflict, then confirm with the exact profile name.',
+          }
 
   return (
     <>
@@ -614,8 +623,7 @@ export function FlowPage({
                 destination sit outside the {platform.name} profile
               </b>
               <span>
-                {mismatchFormats.join(', ')} files stay visible and are protected from
-                removal.
+                {mismatchFormats.join(', ')} files stay visible and are protected from removal.
               </span>
               <button type="button" onClick={manageProfiles}>
                 Edit profile platform
@@ -631,7 +639,9 @@ export function FlowPage({
                 differently
               </b>
               <span>
-                It has {unadopted.map(([, folder]) => <code key={folder}>{folder}/</code>)
+                It has{' '}
+                {unadopted
+                  .map(([, folder]) => <code key={folder}>{folder}/</code>)
                   .reduce<React.ReactNode[]>(
                     (list, node, index) => (index ? [...list, ', ', node] : [node]),
                     [],
@@ -705,9 +715,8 @@ export function FlowPage({
           {incompatible.length > 0 && (
             <p className="inline-error build-review-error">
               {incompatible.length} selected title
-              {incompatible.length === 1 ? ' is' : 's are'} incompatible with this
-              profile's firmware. Remove them or change the profile's firmware to
-              continue.
+              {incompatible.length === 1 ? ' is' : 's are'} incompatible with this profile's
+              firmware. Remove them or change the profile's firmware to continue.
             </p>
           )}
           {step === 4 && blocked.length > 0 && (
@@ -766,9 +775,7 @@ export function FlowPage({
           {step === 4 &&
             plan?.warnings
               // Anything already listed above is not said twice.
-              .filter(
-                (warning) => !blocked.some((title) => title.message === warning),
-              )
+              .filter((warning) => !blocked.some((title) => title.message === warning))
               .map((warning) => (
                 <p className="inline-error build-review-error" key={warning}>
                   {warning}
@@ -822,10 +829,7 @@ export function FlowPage({
 
           {step !== 2 && (
             <div className="flow-actions">
-              <button
-                className="button secondary"
-                onClick={() => setStep(step === 4 ? 3 : 4)}
-              >
+              <button className="button secondary" onClick={() => setStep(step === 4 ? 3 : 4)}>
                 <ChevronLeft />
                 Back
               </button>
@@ -942,7 +946,11 @@ export function FlowPage({
         <section className="flow-summary panel">
           <Check />
           <p className="eyebrow">6 · Summary</p>
-          <h2>{completed.failures?.length ? 'Write completed, with some titles left behind' : 'Write completed'}</h2>
+          <h2>
+            {completed.failures?.length
+              ? 'Write completed, with some titles left behind'
+              : 'Write completed'}
+          </h2>
           <p>Every copied file was flushed to the destination and size-verified.</p>
           <div className="profile-facts">
             <div>
@@ -974,9 +982,9 @@ export function FlowPage({
                 {completed.failures.length === 1 ? 'was' : 'were'} not written
               </b>
               <span>
-                Everything else was written and verified. A source that cannot be read is
-                almost always a damaged archive; nothing was put on the drive for these, so
-                re-running after replacing them will fill the gaps.
+                Everything else was written and verified. A source that cannot be read is almost
+                always a damaged archive; nothing was put on the drive for these, so re-running
+                after replacing them will fill the gaps.
               </span>
               <ul className="plan-files">
                 {completed.failures.map((entry) => (
@@ -1015,8 +1023,8 @@ export function FlowPage({
           <h2>Write failed</h2>
           <p>{failure}</p>
           <p>
-            No success has been recorded. Nothing was overwritten. Check the
-            destination and review the plan before trying again.
+            No success has been recorded. Nothing was overwritten. Check the destination and
+            review the plan before trying again.
           </p>
           <div className="flow-actions">
             <button className="button" onClick={() => setStep(5)}>
