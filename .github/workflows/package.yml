@@ -26,8 +26,18 @@ jobs:
           node-version: 20
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      # The runner image ships Google's Chrome apt repository, which nothing
+      # here uses. When that repository serves an index apt rejects, and it
+      # does from time to time, `apt-get update` fails outright and takes every
+      # Linux job with it: a release was blocked by it twice in a row, on a
+      # "Hash Sum mismatch" for a package this project never installs. Dropping
+      # the source first means a repository we do not depend on cannot stop us
+      # building.
       - name: Install Linux desktop dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev
       - run: npm ci
       - name: Type-check, check, and test
         run: npm run verify
@@ -99,9 +109,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # See the note on the same step above.
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev rpm
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev rpm
       - name: Install frontend dependencies
         run: npm ci
       - name: Build bundles
