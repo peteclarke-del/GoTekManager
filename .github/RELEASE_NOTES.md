@@ -3,6 +3,36 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.6.0
+
+**A name too long for the drive's panel is cut where the name has a seam.** It
+used to be cut at whatever character the room ran out at, which left
+`Indianapolis 500 - The Simulation` written as `Indianapolis 500 - T`: neither
+the name of the game nor anything else. On a collection of sixty-six thousand
+Amiga titles, nineteen thousand are too long for a twenty-four character panel
+and thirteen thousand of those were being cut through the middle of a word.
+
+A subtitle now goes first, because `Indianapolis 500` is still the game and
+`The Simulation` was only saying which edition of it this is. Failing that,
+whole words go from the end, and only while enough of the name survives to be
+recognised. Cutting mid-word is still there for a name that offers no seam at
+all, which on that collection is three and a half thousand titles rather than
+thirteen.
+
+**A number at the end of a title is no longer rewritten.** This was the part
+worth fixing rather than merely improving: `Compilation Disk #04672` was
+written as `Compilation Disk #04`, which is a different disk and looks like a
+perfectly good name. The number is the one part saying which of these this is,
+so it stays and the words in front of it give up the room instead, giving
+`Compilation #04672`. `Championship Manager '93` keeps the year that tells it
+from '94 for the same reason.
+
+The rule that the title gives up room and never the disc is unchanged.
+
+**If you have already written a stick with an earlier version**, the names on
+it were cut the old way and will not match the names this version writes. The
+drive will show some titles twice until that stick is written again.
+
 ## What is new in 0.5.2
 
 **A source you have just indexed says how many titles it holds.** Since 0.5.0
