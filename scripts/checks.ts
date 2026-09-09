@@ -122,6 +122,7 @@ import type {
 } from '../src/domain/types'
 import { reviveTablePreferences } from '../src/state/useWorkspace'
 import {
+  forgetLegacyWorkspace,
   loadSettings,
   loadWorkspace,
   reviveSettings,
@@ -2648,6 +2649,34 @@ check('image destinations are never writable', () => {
 // ---------------------------------------------------------------------------
 // Migration from the pre-2.0 layout
 // ---------------------------------------------------------------------------
+
+/// Adopting the copy an older version left in local storage has to be a move
+/// rather than a copy. While it stayed, anything that emptied the database
+/// brought the old workspace back: somebody who deleted their library to start
+/// again was handed their old profiles instead, and nothing in the application
+/// could refuse them. Reported by somebody who wiped the database and was met
+/// by a profile they had deleted.
+check('the copy an older version left behind is forgotten once it is taken in', () => {
+  storage.clear()
+  storage.setItem('gm.workspace.v2', JSON.stringify({ version: 2, profiles: [bbcProfile] }))
+  storage.setItem('gm.library.v2', JSON.stringify({ sources: [], items: [] }))
+  storage.setItem('gm.profiles', JSON.stringify([{ id: 'old', name: 'Amstrad CPC' }]))
+  storage.setItem('gm.items', JSON.stringify([]))
+  // Preferences are kept in local storage by the current version and are read
+  // from these very names, so they are not the older version's leavings.
+  storage.setItem('gm.tablePrefs.v2', JSON.stringify({ sort: 'name' }))
+  storage.setItem('gm.settings.v2', JSON.stringify({ theme: 'dark' }))
+
+  forgetLegacyWorkspace()
+
+  for (const gone of ['gm.workspace.v2', 'gm.library.v2', 'gm.profiles', 'gm.items']) {
+    assert.equal(storage.getItem(gone), null, gone)
+  }
+  assert.ok(storage.getItem('gm.tablePrefs.v2'))
+  assert.ok(storage.getItem('gm.settings.v2'))
+  // And with it gone, there is nothing left to be adopted a second time.
+  assert.deepEqual(loadWorkspace().profiles, [])
+})
 
 check('the previous storage layout becomes one workspace', () => {
   storage.clear()
