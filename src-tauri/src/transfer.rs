@@ -1017,7 +1017,7 @@ pub async fn execute_transfer(
     managed_extensions: Vec<String>,
     #[allow(non_snake_case)] verify_checksums: Option<bool>,
 ) -> Result<TransferPlan> {
-    blocking(move || {
+    crate::task::writing(move || {
         // The re-plan before a write walks every source again, which on a
         // network share is the slow half of applying, so it reports itself for
         // the same reason planning does.
