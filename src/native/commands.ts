@@ -9,28 +9,32 @@
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { APPLICATION_NAME } from '../domain/appUpdate'
 import { supportedExtensionList } from '../domain/catalog'
 import type { Capacity, HeldFile } from '../domain/deviceBuild'
 import type {
+  AppAbout,
   CachedDownload,
   CacheSummary,
   ConversionSupport,
   DestinationEdit,
+  DownloadOutcome,
   FileEntry,
   FirmwareConfigState,
   ImageOptions,
+  InstallOutcome,
   MountedTarget,
   OnlineProvider,
   OnlineTitle,
   PhysicalDevice,
   ProviderCatalog,
-  PublishedRelease,
   ProvisionPlan,
   ProvisionReport,
   TargetFileStatus,
   TargetSummary,
   TransferOperation,
   TransferPlan,
+  UpdateCheck,
 } from '../domain/types'
 
 /** True when running inside the packaged desktop application. */
@@ -151,9 +155,9 @@ export function firmwareConfigState(target: string): Promise<FirmwareConfigState
 /**
  * Opens a link in the user's own browser.
  *
- * Only ever https, and only ever outward: the one link this application offers
- * is a release page, and a webview that can be told to open anything is a
- * webview that can be told to open something local.
+ * Only ever https, and only ever outward: the links this application offers
+ * are its project and release pages, and a webview that can be told to open
+ * anything is a webview that can be told to open something local.
  */
 export async function openExternal(url: string): Promise<void> {
   if (!/^https:\/\//i.test(url)) throw new Error('Only https links can be opened.')
@@ -165,26 +169,57 @@ export async function openExternal(url: string): Promise<void> {
 }
 
 /**
- * The version of the application that is running.
+ * The name, version and project page of the application that is running.
  *
- * The browser preview has no application to ask, so it answers with what it was
- * built from; on the desktop the answer comes from the crate the installers are
- * named for, which is what stops Help and the installed build disagreeing.
+ * The browser preview has no application to ask, so it answers with the
+ * version it was built from; on the desktop the answer comes from the crate the
+ * installers are named for, which is what stops the About box and the
+ * installed build disagreeing.
  */
-export function appVersion(): Promise<string> {
-  if (!isDesktop()) return Promise.resolve(BUILD_VERSION)
-  return invokeNative<string>('app_version')
+export function appAbout(): Promise<AppAbout> {
+  if (!isDesktop()) {
+    return Promise.resolve({ name: APPLICATION_NAME, version: BUILD_VERSION, homepage: '' })
+  }
+  return invokeNative<AppAbout>('app_about')
 }
 
-/**
- * Every release published for this application, newest first.
- *
- * An empty list means the question could not be answered — no network, no
- * releases, an API that has moved — rather than that this is the latest.
- */
-export function publishedReleases(): Promise<PublishedRelease[]> {
-  if (!isDesktop()) return Promise.resolve([])
-  return invokeNative<PublishedRelease[]>('published_releases')
+// ---------------------------------------------------------------------------
+// Updating the application
+//
+// The window never names a file or an address for an update. The backend
+// keeps what each step found, so these only ever say "the next step".
+// ---------------------------------------------------------------------------
+
+/** The event the backend reports download progress on. */
+export const UPDATE_PROGRESS_EVENT = 'app-update-progress'
+
+/** Asks GitHub whether a newer release has been published. */
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return invokeNative<UpdateCheck>('check_for_update')
+}
+
+/** Downloads what the last check found and checks it against the release. */
+export function downloadUpdate(): Promise<DownloadOutcome> {
+  return invokeNative<DownloadOutcome>('download_update')
+}
+
+export function cancelUpdate(): Promise<void> {
+  return invokeNative<void>('cancel_update')
+}
+
+/** Installs what was downloaded. */
+export function installUpdate(): Promise<InstallOutcome> {
+  return invokeNative<InstallOutcome>('install_update')
+}
+
+/** Starts the application again, so that an installed update runs. */
+export function restartApp(): Promise<void> {
+  return invokeNative<void>('restart_app')
+}
+
+/** Closes the application, so that an update can replace it. */
+export function quitApp(): Promise<void> {
+  return invokeNative<void>('quit_app')
 }
 
 /** Writes the configuration, returning where it went. */

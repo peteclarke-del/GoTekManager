@@ -103,7 +103,7 @@ pub async fn write_firmware_config(
     contents: String,
     replace: Option<bool>,
 ) -> Result<String> {
-    blocking(move || {
+    crate::task::writing(move || {
         let root = crate::devices::resolve_destination(&target)?;
         crate::devices::probe_writable(&root)?;
         write_config(&root, &contents, replace.unwrap_or(false))

@@ -171,29 +171,53 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: packages
+      # The application's own update check downloads the installer made for the
+      # way it was installed, and will not use one that does not match this
+      # file. It names each installer as GitHub serves it: GitHub turns the
+      # spaces in an uploaded file's name into dots, so the files are renamed
+      # the same way first and the checksums name exactly what is downloaded.
+      # src-tauri/src/update.rs builds the same names (release_stem).
+      - name: Collect the installers and their checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release
+          # The .app bundle is a directory and cannot be attached; its .dmg can.
+          while IFS= read -r -d '' installer; do
+            name="$(basename "$installer")"
+            name="${name// /.}"
+            if [ -e "release/$name" ]; then
+              echo "Two platforms produced $name; not drafting a release." >&2
+              exit 1
+            fi
+            cp "$installer" "release/$name"
+          done < <(find packages -type f \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+               -o -name '*.msi' -o -name '*.exe' -o -name '*.dmg' \) -print0)
+
+          # Six targets must each have produced something. A release missing a
+          # platform is worse than a build that failed loudly.
+          count="$(find release -type f | wc -l)"
+          if [ "$count" -lt 6 ]; then
+            echo "Fewer installers than there are platforms; not drafting a release." >&2
+            exit 1
+          fi
+
+          # Written after the installers are in place, and naming only them, so
+          # the file never lists itself.
+          (cd release && sha256sum -- * > ../SHA256SUMS)
+          mv SHA256SUMS release/
+          printf 'Attaching %d installers and SHA256SUMS:\n' "$count"
+          cat release/SHA256SUMS
+
       - name: Attach the installers to a draft release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          # The .app bundle is a directory and cannot be attached; its .dmg can.
-          mapfile -t -d '' installers < <(find packages -type f \
-            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-               -o -name '*.msi' -o -name '*.exe' -o -name '*.dmg' \) -print0)
-
-          printf 'Attaching %d installers:\n' "${#installers[@]}"
-          printf '  %s\n' "${installers[@]}"
-
-          # Six targets must each have produced something. A release missing a
-          # platform is worse than a build that failed loudly.
-          if [ "${#installers[@]}" -lt 6 ]; then
-            echo "Fewer installers than there are platforms; not drafting a release." >&2
-            exit 1
-          fi
-
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
             --title "GoTek Manager ${GITHUB_REF_NAME}" \
             --notes-file .github/RELEASE_NOTES.md \
-            "${installers[@]}"
+            release/*

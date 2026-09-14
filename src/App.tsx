@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react'
-import { CircleHelp, HardDrive, LayoutDashboard, Moon, Settings2, Sun, Usb } from 'lucide-react'
+import {
+  CircleHelp,
+  HardDrive,
+  Info,
+  LayoutDashboard,
+  Moon,
+  Settings2,
+  Sun,
+  Usb,
+} from 'lucide-react'
+import { AboutDialog } from './components/AboutDialog'
 import { Empty, NoticeBar } from './components/Feedback'
 import { MountPicker } from './components/MountPicker'
 import { ProfileEditor } from './components/ProfileEditor'
 import { SettingsDialog } from './components/SettingsDialog'
 import { useCaptureHarness } from './dev/captureHarness'
 import type { MountedTarget, Notice, Page } from './domain/types'
+import { useAppUpdate } from './hooks/useAppUpdate'
 import { useAsyncAction } from './hooks/useAsyncAction'
 import { useRecategorise } from './hooks/useRecategorise'
 import { useProfileDrafts } from './hooks/useProfileDrafts'
@@ -67,6 +78,10 @@ export function App() {
 
   const [notice, setNotice] = useState<Notice | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
+  // Held here rather than by the About box, so an update carries on when the
+  // box is closed.
+  const updater = useAppUpdate()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [mounts, setMounts] = useState<MountedTarget[]>([])
   const [selectedMounts, setSelectedMounts] = useState<string[]>([])
@@ -170,6 +185,10 @@ export function App() {
             {settings.theme === 'dark' ? <Sun /> : <Moon />}
             <span>Theme</span>
           </button>
+          <button onClick={() => setAboutOpen(true)}>
+            <Info />
+            <span>About</span>
+          </button>
         </div>
       </aside>
 
@@ -247,6 +266,8 @@ export function App() {
           }}
         />
       )}
+
+      {aboutOpen && <AboutDialog updater={updater} close={() => setAboutOpen(false)} />}
 
       {pickerOpen && (
         <MountPicker

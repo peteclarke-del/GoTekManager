@@ -347,7 +347,7 @@ pub async fn execute_provision(
     request: ProvisionRequest,
     confirmation: String,
 ) -> Result<ProvisionReport> {
-    blocking(move || {
+    crate::task::writing(move || {
         if cfg!(target_os = "windows") {
             return Err(Error::new(
                 "Writing a whole device is not implemented on Windows yet. It needs volume \

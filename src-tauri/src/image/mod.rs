@@ -701,7 +701,7 @@ pub async fn create_image(
     options: ImageOptions,
     operations: Vec<crate::transfer::TransferOperation>,
 ) -> crate::error::Result<u64> {
-    crate::task::blocking(move || {
+    crate::task::writing(move || {
         let target = PathBuf::from(&path);
         if target.exists() {
             return Err(Error::new(format!("{path} already exists.")));
@@ -736,5 +736,5 @@ pub async fn extract_image(
     image: String,
     destination: String,
 ) -> crate::error::Result<Vec<String>> {
-    crate::task::blocking(move || extract(Path::new(&image), Path::new(&destination))).await
+    crate::task::writing(move || extract(Path::new(&image), Path::new(&destination))).await
 }

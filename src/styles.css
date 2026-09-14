@@ -302,16 +302,27 @@ button[aria-pressed="true"]{box-shadow:inset 0 -4px 0 #a46800;background:#fff1c7
 .blocked-titles .plan-files{max-height:132px;margin:0}
 .blocked-titles .button{justify-self:start;margin:0;height:32px;padding:0 12px;border-radius:6px;font:700 11px inherit}
 
-/* Which version this is, and the offer to ask whether a newer one exists. */
-.version-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 18px;align-items:center}
-.version-panel h2{margin:0}
-.version-panel p{margin:4px 0 0;color:var(--a11y-muted);font-size:12px}
-.version-actions{display:flex;align-items:center;gap:8px}
-.version-actions .button{margin:0;height:32px;padding:0 12px;border-radius:6px;font:700 11px inherit;white-space:nowrap}
-.version-actions .version-current{width:18px;height:18px;color:#287657}
-.app.dark .version-actions .version-current{color:#8fd6ae}
-.version-panel .mode-note,.version-panel .inline-error,.version-panel pre{grid-column:1/-1;margin:0}
-.version-panel pre{max-height:220px}
+/* The About box, and updating the application from it. */
+.about-modal{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;width:min(480px,100%)}
+.about-modal h2{margin:0}
+.about-identity{display:flex;align-items:center;gap:12px}
+.about-identity b,.about-identity span{display:block}
+.about-identity b{font-size:15px}
+.about-identity span{color:var(--a11y-muted);font-size:12px}
+.about-modal .mode-note{margin:0}
+.about-modal>.link-button{justify-self:start;font-size:12px}
+.app-update{display:grid;justify-items:start;gap:10px;margin-top:6px;padding-top:14px;border-top:1px solid var(--a11y-border)}
+.app-update .button{margin:0;width:auto;height:32px;padding:0 12px;border-radius:6px;font:700 11px inherit;white-space:nowrap}
+.app-update .spinning{animation:source-scan-spin .8s linear infinite}
+.app-update-message{margin:0;color:var(--a11y-muted);font-size:12px;user-select:text;overflow-wrap:anywhere}
+.app-update-progress{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;width:100%}
+.app-update-progress small{grid-row:2;color:var(--a11y-muted);font-size:11px}
+.app-update-progress .button{grid-row:1/3;grid-column:2}
+.app-update-progress .progress-track span[style]{animation:none;transform:none}
+.app-update-spinner{width:20px;height:20px}
+.app-update-confirm{display:flex;gap:8px}
+.app-update .link-button{font-size:12px}
+.app-update pre{width:100%;max-height:200px;margin:0}
 
 /* The foot of a table that is showing part of what it matched. */
 .table-more{display:flex;align-items:center;gap:12px;padding:10px 2px;font-size:12px;color:var(--a11y-muted)}
@@ -533,4 +544,4 @@ th.select-cell{width:34px}
    drifted: on a dark desktop the "will not fit" panel kept its light amber
    background while the text on it stayed pale, which made the buttons on it
    unreadable. `npm run check` now fails if the two ever disagree again. */
-@media(prefers-color-scheme:dark){.app.system-theme .search,.app.system-theme .dropzone{background:var(--soft)}.app.system-theme .target,.app.system-theme .select{border-color:var(--line);color:var(--ink);background:transparent}.app.system-theme aside{background:var(--nav)}.app.system-theme .queue-list>div,.app.system-theme .organise{border-color:#2b3a44}.app.system-theme .platform-list button.selected{background:#3b3425}.app.system-theme .dropzone b,.app.system-theme .empty b{color:#eaf0f5}.app.system-theme .plan-files,.app.system-theme .plan-files>div{border-color:var(--line)}.app.system-theme .scan-progress small{color:#17212b}.app.system-theme .target-state.new{color:#83d6aa}.app.system-theme .target-state.different{color:#f5ca68}.app.system-theme .target-state.on-target{color:#8dc6e3}.app.system-theme .target-state.identical,.app.system-theme .target-state.checking{color:#c2d0d8}.app.system-theme .progress-dialog>svg{color:#f2b84a}.app.system-theme .version-actions .version-current{color:#8fd6ae}.app.system-theme .browse-into:hover{color:#f2b84a}.app.system-theme .capacity .fits{color:#6fcf9a}.app.system-theme .capacity .over,.app.system-theme .picker-total .over{color:#ee8a82}.app.system-theme .too-big{background:#443718;color:#f5ca68}.app.system-theme .picker-total .fits{color:#6fcf9a}}
+@media(prefers-color-scheme:dark){.app.system-theme .search,.app.system-theme .dropzone{background:var(--soft)}.app.system-theme .target,.app.system-theme .select{border-color:var(--line);color:var(--ink);background:transparent}.app.system-theme aside{background:var(--nav)}.app.system-theme .queue-list>div,.app.system-theme .organise{border-color:#2b3a44}.app.system-theme .platform-list button.selected{background:#3b3425}.app.system-theme .dropzone b,.app.system-theme .empty b{color:#eaf0f5}.app.system-theme .plan-files,.app.system-theme .plan-files>div{border-color:var(--line)}.app.system-theme .scan-progress small{color:#17212b}.app.system-theme .target-state.new{color:#83d6aa}.app.system-theme .target-state.different{color:#f5ca68}.app.system-theme .target-state.on-target{color:#8dc6e3}.app.system-theme .target-state.identical,.app.system-theme .target-state.checking{color:#c2d0d8}.app.system-theme .progress-dialog>svg{color:#f2b84a}.app.system-theme .browse-into:hover{color:#f2b84a}.app.system-theme .capacity .fits{color:#6fcf9a}.app.system-theme .capacity .over,.app.system-theme .picker-total .over{color:#ee8a82}.app.system-theme .too-big{background:#443718;color:#f5ca68}.app.system-theme .picker-total .fits{color:#6fcf9a}}

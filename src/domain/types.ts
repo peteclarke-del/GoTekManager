@@ -171,14 +171,57 @@ export type MediaItem = FileEntry & {
   provenance?: Provenance
 }
 
-/** A release published for this application, as the update check reads it. */
-export type PublishedRelease = {
-  tag: string
+/** The running application, as the About box shows it. */
+export type AppAbout = {
+  name: string
+  version: string
+  /** The project page, or empty when none is configured. */
+  homepage: string
+}
+
+/**
+ * How an update is put in place: by apt or dnf, by replacing the AppImage, by
+ * the Windows installer, or by the user from an opened macOS disk image.
+ */
+export type UpdateMethod = 'apt' | 'dnf' | 'appImage' | 'installer' | 'diskImage'
+
+/** A release newer than the running version. */
+export type AvailableUpdate = {
+  version: string
   name: string
   notes: string
-  url: string
-  draft: boolean
-  prerelease: boolean
+  pageUrl: string
+  /** The file an update downloads, when this copy can update itself. */
+  asset?: string | null
+  size?: number | null
+  method?: UpdateMethod | null
+  /** The AppImage an update replaces. */
+  replaces?: string | null
+  /** Why this copy cannot update itself, when it cannot. */
+  blocked?: string | null
+}
+
+/** What a check for a newer version found. */
+export type UpdateCheck = {
+  current: string
+  /** Absent when the running version is the newest. */
+  update?: AvailableUpdate | null
+}
+
+/** How a download ended, when it did not fail. */
+export type DownloadOutcome = { outcome: 'ready' } | { outcome: 'held'; message: string }
+
+/** How an install ended, when it did not fail. */
+export type InstallOutcome =
+  | { outcome: 'restart' }
+  | { outcome: 'opened' }
+  | { outcome: 'handover' }
+  | { outcome: 'held'; message: string }
+
+/** How much of an update has been downloaded. */
+export type UpdateProgress = {
+  done: number
+  total?: number | null
 }
 
 // ---------------------------------------------------------------------------
