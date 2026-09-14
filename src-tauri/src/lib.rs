@@ -43,6 +43,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(update::Updates::default())
         .invoke_handler(tauri::generate_handler![
             // Discovery and browsing: read-only.
             devices::mounted_targets,
@@ -87,9 +88,14 @@ pub fn run() {
             library::unstage_items,
             library::clear_collection,
             store::read_config_file,
-            // Which version this is, and whether a newer one is published.
-            update::app_version,
-            update::published_releases,
+            // Which version this is, and updating it from the About box.
+            update::app_about,
+            update::check_for_update,
+            update::download_update,
+            update::cancel_update,
+            update::install_update,
+            update::restart_app,
+            update::quit_app,
             cache::cache_summary,
             cache::evict_cache,
             cache::clear_download_cache,

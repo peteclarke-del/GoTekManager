@@ -110,13 +110,27 @@ import {
 } from '../src/domain/providers'
 import { downloadSourceOf, groupDownloads } from '../src/domain/downloads'
 import { countBy, omitKey, removeById, upsertById } from '../src/domain/records'
-import { isNewer, newerRelease, parseVersion } from '../src/domain/version'
+import {
+  afterInstall,
+  checkFailed,
+  checked,
+  confirming,
+  controlsFor,
+  downloading,
+  installing,
+  isBusy,
+  offered,
+  updateFailed,
+  type AppUpdateState,
+} from '../src/domain/appUpdate'
+import { AppUpdateControls } from '../src/components/AboutDialog'
+import type { AppUpdater } from '../src/hooks/useAppUpdate'
 import { coverageOf, rangeOf, retained, toggled, withAll } from '../src/domain/selection'
 import type {
   FileEntry,
   MediaItem,
   Profile,
-  PublishedRelease,
+  AvailableUpdate,
   TransferPlan,
   TransferResultEntry,
 } from '../src/domain/types'
@@ -2149,58 +2163,219 @@ check('a download adds to its site rather than replacing what it holds', () => {
 // Versions
 // ---------------------------------------------------------------------------
 
-check('a version is read as its numbers, whatever the tag is dressed in', () => {
-  assert.deepEqual(parseVersion('v0.2.0'), [0, 2, 0])
-  assert.deepEqual(parseVersion('0.2.0'), [0, 2, 0])
-  assert.deepEqual(parseVersion('0.2.0-rc1'), [0, 2, 0, 1])
-  // A tag with no numbers in it is not a version, which is what stops a stray
-  // tag such as "latest" being offered as a release.
-  assert.deepEqual(parseVersion('latest'), [])
-  assert.deepEqual(parseVersion(''), [])
-})
+// Which release is newer, and which file this copy needs, is decided by the
+// backend and tested there (src-tauri/src/update.rs). What is checked here is
+// what the About box says about it and which buttons it offers.
 
-check('one version is newer than another by number, never by spelling', () => {
-  assert.equal(isNewer('v0.3.0', '0.2.0'), true)
-  assert.equal(isNewer('0.2.0', '0.2.0'), false)
-  assert.equal(isNewer('0.1.9', '0.2.0'), false)
-  // The one that catches everybody: as text, "0.10.0" sorts before "0.9.0".
-  assert.equal(isNewer('0.10.0', '0.9.0'), true)
-  assert.equal(isNewer('0.9.0', '0.10.0'), false)
-  assert.equal(isNewer('1.0.0', '0.99.99'), true)
-  // Written with different numbers of parts, and still equal.
-  assert.equal(isNewer('0.2', '0.2.0'), false)
-  assert.equal(isNewer('0.2.0', '0.2'), false)
-  assert.equal(isNewer('0.2.1', '0.2'), true)
-  // A tag that is not a version can never be newer than what is installed.
-  assert.equal(isNewer('nightly', '0.2.0'), false)
-})
+const RELEASE_PAGE = 'https://github.com/peteclarke-del/GoTekManager/releases/tag/v0.7.0'
 
-check('only a published release later than this one is offered', () => {
-  const release = (tag: string, extra: Partial<PublishedRelease> = {}): PublishedRelease => ({
-    tag,
-    name: `GoTek Manager ${tag}`,
-    notes: '',
-    url: `https://example.org/${tag}`,
-    draft: false,
-    prerelease: false,
+function update(extra: Partial<AvailableUpdate> = {}): AvailableUpdate {
+  return {
+    version: '0.7.0',
+    name: 'GoTek Manager 0.7.0',
+    notes: 'Fixes a thing.',
+    pageUrl: RELEASE_PAGE,
+    asset: 'GoTek.Manager_0.7.0_amd64.deb',
+    size: 9 * 1024 * 1024,
+    method: 'apt',
+    replaces: null,
+    blocked: null,
     ...extra,
-  })
+  }
+}
 
-  assert.equal(newerRelease([release('v0.3.0')], '0.2.0')?.tag, 'v0.3.0')
-  // Nothing newer, so nothing to offer.
-  assert.equal(newerRelease([release('v0.2.0'), release('v0.1.0')], '0.2.0'), undefined)
-  // A draft is not published, and a prerelease is something to go looking for
-  // rather than be sent to.
-  assert.equal(newerRelease([release('v0.4.0', { draft: true })], '0.2.0'), undefined)
-  assert.equal(newerRelease([release('v0.4.0', { prerelease: true })], '0.2.0'), undefined)
-  // The newest by version, not by the order the API happened to return them.
+const available = (extra: Partial<AvailableUpdate> = {}) =>
+  checked({ current: '0.6.1', update: update(extra) })
+
+check(
+  'a check says whether this is the newest version, in the same words as the other apps',
+  () => {
+    const newest = checked({ current: '0.6.1', update: null })
+    assert.equal(newest.phase, 'current')
+    assert.equal(newest.message, 'GoTek Manager 0.6.1 is the newest version')
+    assert.equal(controlsFor(newest).primary?.label, 'Check for Application Updates')
+
+    const newer = available()
+    assert.equal(newer.phase, 'available')
+    assert.equal(newer.message, 'GoTek Manager 0.7.0 is available. You have version 0.6.1.')
+    assert.deepEqual(controlsFor(newer).primary, {
+      label: 'Update to 0.7.0',
+      action: 'confirm',
+      suggested: true,
+    })
+    assert.equal(controlsFor(newer).releasePage, true)
+  },
+)
+
+check('a check that could not be answered never says this is the newest version', () => {
+  const failed = checkFailed('GitHub could not be reached: error sending request.')
+  assert.equal(failed.phase, 'failed')
   assert.equal(
-    newerRelease([release('v0.3.0'), release('v0.10.0'), release('v0.4.0')], '0.2.0')?.tag,
-    'v0.10.0',
+    failed.message,
+    'Could not check for a newer version: GitHub could not be reached: error sending request.',
   )
-  // Nothing came back at all: the question was not answered, and an empty list
-  // must never read as "you are up to date".
-  assert.equal(newerRelease([], '0.2.0'), undefined)
+  assert.ok(!failed.message.includes('newest version'))
+  // It can be asked again.
+  assert.equal(controlsFor(failed).primary?.action, 'check')
+})
+
+check('a copy that cannot update itself is sent to the release page with the reason', () => {
+  const reason =
+    "This copy was not installed from one of the release's packages, so it cannot update itself."
+  const blocked = available({ blocked: reason, method: null, asset: null })
+  assert.equal(
+    blocked.message,
+    `GoTek Manager 0.7.0 is available. You have version 0.6.1. ${reason}`,
+  )
+  assert.deepEqual(controlsFor(blocked).primary, {
+    label: 'Open Release Page',
+    action: 'page',
+    suggested: false,
+  })
+  // The main button is the release page, so it is not offered twice.
+  assert.equal(controlsFor(blocked).releasePage, false)
+  // And there is nothing to confirm.
+  assert.equal(confirming(blocked), blocked)
+  // A reason is enough on its own to send it to the release page.
+  assert.equal(controlsFor(available({ blocked: reason })).primary?.action, 'page')
+})
+
+check('updating says what will happen before anything is downloaded', () => {
+  const deb = confirming(available())
+  assert.equal(deb.phase, 'confirming')
+  assert.ok(deb.message.includes('GoTek.Manager_0.7.0_amd64.deb (9.0 MB)'), deb.message)
+  assert.ok(deb.message.includes("checked against the release's SHA256SUMS file"))
+  assert.ok(deb.message.includes('installed with apt, which asks for your password'))
+  assert.ok(deb.message.endsWith('Your settings, profiles and library are kept.'))
+  assert.equal(controlsFor(deb).primary, undefined)
+
+  const image = confirming(
+    available({ method: 'appImage', replaces: '/home/pete/Apps/GoTek.AppImage' }),
+  )
+  assert.ok(image.message.includes('put in place of /home/pete/Apps/GoTek.AppImage'))
+  const windows = confirming(available({ method: 'installer' }))
+  assert.ok(
+    windows.message.includes('GoTek Manager closes so that the installer can replace it'),
+  )
+  const mac = confirming(available({ method: 'diskImage' }))
+  assert.ok(mac.message.includes('drag the new GoTek Manager into Applications'))
+})
+
+check('the download and the install say what they are doing and offer what fits', () => {
+  const going = downloading(confirming(available()))
+  assert.equal(going.message, 'Downloading the package')
+  assert.ok(isBusy(going))
+  assert.deepEqual(controlsFor(going), {
+    releasePage: true,
+    progress: true,
+    spinner: false,
+  })
+  assert.equal(
+    downloading(confirming(available({ method: 'installer' }))).message,
+    'Downloading the installer',
+  )
+
+  const asking = installing(going)
+  assert.equal(
+    asking.message,
+    'Installing GoTek Manager 0.7.0. The system asks for your password.',
+  )
+  assert.equal(controlsFor(asking).spinner, true)
+  assert.equal(controlsFor(asking).primary, undefined)
+  // Only where there is a password prompt does it say there will be one.
+  assert.equal(
+    installing(downloading(confirming(available({ method: 'appImage' })))).message,
+    'Installing GoTek Manager 0.7.0.',
+  )
+
+  const done = afterInstall(asking, { outcome: 'restart' })
+  assert.equal(done.phase, 'installed')
+  assert.equal(
+    done.message,
+    'GoTek Manager 0.7.0 is installed. Restart GoTek Manager to use it.',
+  )
+  assert.deepEqual(controlsFor(done).primary, {
+    label: 'Restart GoTek Manager',
+    action: 'restart',
+    suggested: true,
+  })
+  assert.equal(controlsFor(done).releasePage, false)
+
+  const opened = afterInstall(installing(going), { outcome: 'opened' })
+  assert.equal(opened.phase, 'opened')
+  assert.equal(controlsFor(opened).primary?.label, 'Quit GoTek Manager')
+})
+
+check('a dismissed prompt or a cancelled download leaves the update on offer', () => {
+  const asking = installing(downloading(confirming(available())))
+  const dismissed = afterInstall(asking, {
+    outcome: 'held',
+    message: 'The password prompt was dismissed, so nothing was installed.',
+  })
+  assert.equal(dismissed.phase, 'available')
+  assert.equal(
+    dismissed.message,
+    'The password prompt was dismissed, so nothing was installed.',
+  )
+  assert.equal(controlsFor(dismissed).primary?.label, 'Update to 0.7.0')
+
+  const cancelled = offered(downloading(confirming(available())), 'The update was cancelled.')
+  assert.equal(cancelled.phase, 'available')
+  assert.equal(cancelled.message, 'The update was cancelled.')
+  // Stepping back from the question puts the offer back as it was.
+  assert.equal(offered(confirming(available())).message, available().message)
+})
+
+check('a failed update says why and keeps the release page', () => {
+  const failed = updateFailed(
+    installing(downloading(confirming(available()))),
+    "The package could not be installed: E: Unable to lock. Install it in a terminal with: sudo apt install '/x.deb'",
+  )
+  assert.equal(failed.phase, 'failed')
+  assert.ok(
+    failed.message.startsWith('The update failed: The package could not be installed: '),
+  )
+  assert.equal(controlsFor(failed).releasePage, true)
+  assert.equal(controlsFor(failed).primary?.action, 'check')
+})
+
+function updaterIn(state: AppUpdateState): AppUpdater {
+  const nothing = () => undefined
+  return {
+    state,
+    progress:
+      state.phase === 'downloading' ? { done: 3 * 1024 * 1024, total: 9 * 1024 * 1024 } : null,
+    check: () => Promise.resolve(),
+    confirm: nothing,
+    back: nothing,
+    install: () => Promise.resolve(),
+    cancel: nothing,
+    openPage: nothing,
+    restart: nothing,
+    quit: nothing,
+  }
+}
+
+check('the About box shows the button, the answer and the release page', () => {
+  const render = (state: AppUpdateState) =>
+    renderToString(createElement(AppUpdateControls, { updater: updaterIn(state) }))
+
+  const idle = render({ phase: 'idle', message: '' })
+  assert.ok(idle.includes('Check for Application Updates'))
+
+  const offer = render(available())
+  assert.ok(offer.includes('Update to 0.7.0'))
+  assert.ok(offer.includes('Release Page'))
+  assert.ok(offer.includes('Fixes a thing.'))
+
+  const going = render(downloading(confirming(available())))
+  assert.ok(going.includes('3.0 MB of 9.0 MB'), going)
+  assert.ok(going.includes('Cancel'))
+  assert.ok(!going.includes('Update to'))
+
+  const failed = render(checkFailed('GitHub could not be reached.'))
+  assert.ok(failed.includes('Could not check for a newer version'))
+  assert.ok(!failed.includes('newest version'))
 })
 
 // ---------------------------------------------------------------------------
@@ -3315,6 +3490,8 @@ check('every screen is reachable from the navigation', () => {
   for (const page of ['Library', 'Profiles', 'Devices', 'Help']) {
     assert.ok(markup.includes(`>${page}<`), `${page} is missing from the navigation`)
   }
+  // The About box, where the application is updated, is always one press away.
+  assert.ok(markup.includes('>About<'), 'About is missing from the sidebar')
 })
 
 // ---------------------------------------------------------------------------
