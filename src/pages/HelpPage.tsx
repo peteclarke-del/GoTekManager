@@ -11,13 +11,9 @@
  * drift out of date the way hand-taken ones do.
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
-import { CircleCheck, Download, RefreshCw } from 'lucide-react'
-import { newerRelease } from '../domain/version'
-import type { PublishedRelease, ThemeChoice } from '../domain/types'
-import { useAsyncAction } from '../hooks/useAsyncAction'
+import type { ReactNode } from 'react'
+import type { ThemeChoice } from '../domain/types'
 import { useResolvedTheme } from '../hooks/useResolvedTheme'
-import { appVersion, openExternal, publishedReleases } from '../native/commands'
 import { DEVICES_SCREEN, FLOW_SCREENS, PROFILES_SCREEN } from './helpScreens'
 
 const GUIDES: Array<{ question: string; answer: ReactNode }> = [
@@ -227,6 +223,29 @@ const GUIDES: Array<{ question: string; answer: ReactNode }> = [
     ),
   },
   {
+    question: 'How do I update GoTek Manager?',
+    answer: (
+      <>
+        Open <b>About</b> at the foot of the sidebar and press{' '}
+        <b>Check for Application Updates</b>. GoTek Manager asks GitHub for the latest release
+        and compares it with the version it shows. Nothing is sent until you press the button,
+        and a check that cannot reach GitHub says why rather than claiming this is the newest
+        version.
+        <br />
+        <br />
+        When a newer version is published, <b>Update to</b> downloads the file made for the way
+        this copy was installed and checks it against the release&apos;s <code>SHA256SUMS</code>{' '}
+        file before using it. A Debian or RPM package is installed by apt or dnf after the
+        system asks for your password, and an AppImage replaces the file it was started from;
+        either way GoTek Manager then offers to restart. On Windows the installer starts and
+        GoTek Manager closes so that it can be replaced. On macOS the disk image opens for you
+        to drag the new copy into Applications. A copy that cannot update itself, such as one
+        built from source, is sent to the release page instead. Nothing is installed while a
+        stick is being written, and your settings, profiles and library are kept.
+      </>
+    ),
+  },
+  {
     question: 'Can I scan a site that asks not to be scanned?',
     answer: (
       <>
@@ -269,7 +288,6 @@ export function HelpPage({ theme }: { theme: ThemeChoice }) {
 
   return (
     <div className="help">
-      <Version />
       <section className="panel">
         <h2>One guided flow</h2>
         <p>
@@ -353,82 +371,5 @@ export function HelpPage({ theme }: { theme: ThemeChoice }) {
         ))}
       </section>
     </div>
-  )
-}
-
-/**
- * Which version this is, and, when asked, whether a newer one is published.
- *
- * The check is a button rather than something that happens on startup: a tool
- * that writes to removable media should not be reaching out to the internet
- * unless someone has asked it a question.
- *
- * Not being able to answer is not a failure. No network, no releases yet, an
- * API that has moved. None of those mean anything is wrong with the copy in
- * front of the user, so they are reported as what they are: the question could
- * not be answered. Installing is left to the user and, on Linux, to their
- * package manager; this only says there is something to go and get.
- */
-function Version() {
-  const [version, setVersion] = useState('')
-  const [newer, setNewer] = useState<PublishedRelease | null>(null)
-  const [answered, setAnswered] = useState(false)
-  const check = useAsyncAction()
-
-  useEffect(() => {
-    appVersion().then(setVersion, () => setVersion(''))
-  }, [])
-
-  const askGitHub = () =>
-    void check.run(async () => {
-      const releases = await publishedReleases()
-      setAnswered(releases.length > 0)
-      setNewer(newerRelease(releases, version) ?? null)
-    })
-
-  return (
-    <section className="panel version-panel">
-      <div>
-        <h2>GoTek Manager {version || '—'}</h2>
-        <p>
-          {check.busy
-            ? 'Asking GitHub what has been published…'
-            : newer
-              ? `Version ${newer.tag} has been published.`
-              : answered
-                ? 'This is the latest published version.'
-                : 'Nothing is sent anywhere until you ask.'}
-        </p>
-      </div>
-      <div className="version-actions">
-        <button className="button secondary compact" disabled={check.busy} onClick={askGitHub}>
-          <RefreshCw className={check.busy ? 'spinning' : ''} />
-          Check for updates
-        </button>
-        {newer && (
-          <button className="button compact" onClick={() => void openExternal(newer.url)}>
-            <Download />
-            Open the release page
-          </button>
-        )}
-        {!newer && answered && <CircleCheck className="version-current" />}
-      </div>
-      {check.error && <p className="inline-error">{check.error}</p>}
-      {!check.busy && !check.error && !answered && newer === null && version && (
-        <p className="mode-note version-note">
-          A check that comes back with nothing, whether from no network or a repository with no
-          releases, is not an answer, and is never read as "this is the latest".
-        </p>
-      )}
-      {newer && (
-        <>
-          <p className="mode-note">
-            <b>{newer.name}</b>. Installing is yours to do, from the release page; on Linux your
-            package manager holds the copy that is installed.
-          </p>
-          {newer.notes && <pre className="drive-config-file">{newer.notes}</pre>}
-        </>
-      )}
-    </section>
   )
 }

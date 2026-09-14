@@ -38,6 +38,13 @@ fn cache_root(app: &tauri::AppHandle) -> Result<PathBuf> {
         .context("Unable to resolve the application cache folder")
 }
 
+/// Where a downloaded update of the application waits to be installed.
+pub fn updates_folder(app: &tauri::AppHandle) -> Result<PathBuf> {
+    let folder = cache_root(app)?.join("updates");
+    fs::create_dir_all(&folder)?;
+    Ok(folder)
+}
+
 /// Cached provider catalogues and downloads, grouped per provider.
 pub fn online_root(app: &tauri::AppHandle) -> Result<PathBuf> {
     Ok(cache_root(app)?.join("online-library"))
