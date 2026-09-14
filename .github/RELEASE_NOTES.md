@@ -3,6 +3,39 @@ GoTek floppy emulator: it indexes your library, works out which titles a given
 machine and firmware can actually load, and writes them to a stick with the
 drive's own configuration alongside them.
 
+## What is new in 0.7.0
+
+**GoTek Manager can update itself.** An About box, opened from the foot of the
+sidebar, says which version this is and has a **Check for Application Updates**
+button. It asks GitHub for the latest release and compares it with the running
+version. Nothing is sent until the button is pressed, and a check that cannot
+reach or read GitHub says why rather than claiming this is the newest version.
+It replaces the **Check for updates** button on the Help page, which could only
+open the release page.
+
+When a newer version is published, **Update to** downloads the file built for
+the way this copy was installed, and checks it against the `SHA256SUMS` file
+published with the release before doing anything with it. A Debian package is
+installed with `apt-get` and an RPM package with `dnf`, after the system asks
+for your password. An AppImage replaces the file it was started from. On
+Windows the installer of the same kind is started and GoTek Manager closes so
+that it can be replaced, and on macOS the disk image is opened for you to drag
+the new copy into Applications. A copy built from source, or one whose
+installation cannot be identified for certain, is sent to the release page
+instead. Nothing is installed while a stick is being written, and your
+settings, profiles and library are kept.
+
+**Getting this version.** The About box can only install a release that carries
+a `SHA256SUMS` file, and this is the first one that does. From 0.6.1 or
+earlier, download 0.7.0 from the release page as before; the Help page's check
+in those versions will take you there. Later versions can then be installed
+from the About box.
+
+**The TLS library is updated for a security advisory.** Every download the
+application makes goes through rustls, which moves to 0.23.45 for
+RUSTSEC-2026-0285: version 0.23.43 accepted TLS 1.3 handshake messages across
+encryption level boundaries.
+
 ## What is new in 0.6.1
 
 **The theme that follows your desktop now looks like the dark theme.** Picking
@@ -273,6 +306,8 @@ rather than quietly downgrade.
 
 The Linux ARM64 build covers the Raspberry Pi. None of the packages are signed,
 so Windows SmartScreen and macOS Gatekeeper will both want convincing.
+`SHA256SUMS` gives the SHA-256 digest of every installer, and
+`sha256sum -c --ignore-missing SHA256SUMS` checks the ones you downloaded.
 
 ## Please read before writing to a device
 
