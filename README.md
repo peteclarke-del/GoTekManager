@@ -158,6 +158,9 @@ profile's exact name.
   immediate, so several large profiles cost no more to open than one.
 - In-app help covering the guided flow, illustrated with screenshots captured
   from the running application in both light and dark palettes.
+- An About box that checks GitHub for a newer release when asked, and installs
+  it the way the running copy was installed. See
+  [Updating GoTek Manager](#updating-gotek-manager).
 
 Writing a whole device is **not** implemented on Windows: it needs volume
 locking through the Win32 API, and shipping that untested could corrupt a disk.
@@ -200,6 +203,37 @@ as high-risk.
   only files in the formats this drive can actually load that the collection does
   not contain; anything else, firmware configuration included, is kept and
   flagged as a profile mismatch.
+
+## Updating GoTek Manager
+
+Open **About** at the foot of the sidebar and press **Check for Application
+Updates**. GoTek Manager asks GitHub for the latest release and compares it
+with the version it shows. Nothing is checked until you press the button, and a
+check that cannot reach GitHub says why rather than claiming this is the newest
+version.
+
+When a newer version is published, **Update to** downloads the file built for
+the way this copy was installed, and checks it against the `SHA256SUMS` file
+published with the release before doing anything with it:
+
+| Installed from | What the update does |
+| --- | --- |
+| Debian package | Installs the new `.deb` with `pkexec apt-get install`, after the system asks for your password |
+| RPM package | Installs the new `.rpm` with `pkexec dnf install`, after the password prompt. Without dnf, the release page is offered instead |
+| AppImage | Replaces the AppImage file it was started from, keeping its permissions |
+| Windows installer | Starts the installer of the same kind for the same processor, and closes GoTek Manager so that the installer can replace it |
+| macOS disk image | Opens the new `.dmg` for you to drag GoTek Manager into Applications |
+
+Packages and AppImages then offer to restart GoTek Manager. How a copy was
+installed is read from the record the bundler writes into every build, checked
+against where the executable actually is. A copy built from source, or anything
+else that cannot be identified for certain, is sent to the release page
+instead.
+
+Dismissing the password prompt installs nothing and leaves the update on offer.
+If apt or dnf fails, the message gives the command to install the downloaded
+package in a terminal. Nothing is installed while a stick is being written, and
+your settings, profiles and library are kept.
 
 ## Development
 
@@ -289,6 +323,9 @@ runners with `npm run package:windows` (MSI/NSIS) and `npm run package:macos`
 (`.app`/DMG).
 
 The included GitHub Actions workflow builds all of these on their native
-operating systems when manually dispatched or when a `v*` tag is pushed.
+operating systems when manually dispatched or when a `v*` tag is pushed. A tag
+also drafts a release with the installers attached, named as GitHub serves
+them, and a `SHA256SUMS` file for them, which the application's own update
+check requires.
 Signing and notarisation credentials must be added before publishing public
 Windows or macOS releases.
