@@ -308,8 +308,13 @@ sudo apt-get install -y rpm
 Install the resulting `.deb` with:
 
 ```bash
-sudo apt install ./src-tauri/target/release/bundle/deb/gotek-manager_0.1.0_amd64.deb
+sudo apt install ./src-tauri/target/release/bundle/deb/*.deb
 ```
+
+The bundler names the file after the product and version, for example
+`GoTek Manager_0.7.0_amd64.deb`. The same package downloaded from a release is
+named `GoTek.Manager_0.7.0_amd64.deb`, because GitHub replaces spaces in asset
+names with dots.
 
 `gotek-manager` is the fixed native executable name in every build. Debian and
 RPM packages install it into the system command path. Windows installers provide
