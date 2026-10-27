@@ -168,7 +168,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Collect every platform's packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: packages
       # The application's own update check downloads the installer made for the
